@@ -76,8 +76,8 @@ class DeploymentService
         
         // Create tasks table if not exists (for simplicity, using a simple queue)
         $db->query(
-            "INSERT INTO deployment_tasks (node_id, task_data, created_at) VALUES (?, ?, NOW())",
-            [$nodeId, json_encode($task)]
+            "INSERT INTO deployment_tasks (node_id, task_data, created_at, task_type) VALUES (?, ?, NOW(), ?)",
+            [$nodeId, json_encode($task), $task['type']]
         );
     }
 
