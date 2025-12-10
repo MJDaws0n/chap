@@ -15,6 +15,7 @@ $statusColor = $statusColors[$deployment->status] ?? 'bg-gray-600';
 $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying']);
 ?>
 <div class="space-y-6">
+                            <?php echo '<script> alert(\''; print_r($deployment); echo '\')</script>';?>
     <!-- Breadcrumb & Header -->
     <div class="flex items-center justify-between">
         <div>
@@ -148,12 +149,13 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
                             <code class="text-xs bg-gray-700 px-2 py-1 rounded"><?= substr($deployment->commit_sha, 0, 7) ?></code>
                         </div>
                     <?php endif; ?>
-                    <?php if ($deployment->triggered_by): ?>
+                    <!-- <?php if ($deployment->triggered_by): ?> -->
                         <div class="flex items-center justify-between">
                             <span class="text-gray-400">Triggered by</span>
-                            <span><?= e($deployment->triggered_by) ?></span>
+                            <span> Not implemented </span>
+                            <!-- <span><?= e($deployment->triggered_by) ?></span> -->
                         </div>
-                    <?php endif; ?>
+                    <!-- <?php endif; ?> -->
                 </div>
             </div>
 
