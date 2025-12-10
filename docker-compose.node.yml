@@ -1,0 +1,48 @@
+# Chap Node Agent - Run on each deployment server
+# This connects back to your central Chap server
+#
+# Installation:
+#   1. Download this file to your server
+#   2. Create a .env file with your node credentials (see below)
+#   3. Run: docker compose -f docker-compose.node.yml up -d
+#
+# Required environment variables (create .env file):
+#   NODE_ID=unique-node-name
+#   NODE_TOKEN=token-from-chap-dashboard
+#   CHAP_SERVER_URL=ws://your-chap-server:8081
+#
+# Get your NODE_ID and NODE_TOKEN from the Chap dashboard:
+#   1. Go to Nodes → Add Node
+#   2. Copy the generated credentials
+
+version: '3.8'
+
+services:
+  node:
+    image: ghcr.io/mjdaws0n/chap-node:latest
+    # Or build locally if you have the source:
+    # build:
+    #   context: ./node
+    #   dockerfile: Dockerfile
+    container_name: chap-node
+    restart: unless-stopped
+    environment:
+      - NODE_ID=${NODE_ID:?NODE_ID is required - get this from the Chap dashboard}
+      - NODE_TOKEN=${NODE_TOKEN:?NODE_TOKEN is required - get this from the Chap dashboard}
+      - CHAP_SERVER_URL=${CHAP_SERVER_URL:?CHAP_SERVER_URL is required - e.g. ws://your-server:8081}
+      - CHAP_DATA_DIR=/data
+    volumes:
+      # Required: Docker socket to manage containers on this host
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Required: Persistent storage for deployments
+      - chap_data:/data
+    networks:
+      - chap-node-network
+
+volumes:
+  chap_data:
+    driver: local
+
+networks:
+  chap-node-network:
+    driver: bridge

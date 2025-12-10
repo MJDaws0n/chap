@@ -1,0 +1,108 @@
+# Chap Development Environment
+# Runs server AND a local node for development/testing
+#
+# Usage:
+#   cp .env.example .env
+#   docker compose up -d
+#
+# For production, use:
+#   - docker-compose.server.yml (on your central server)
+#   - docker-compose.node.yml (on each deployment server)
+
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: chap-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-chap_root_secret}
+      MYSQL_DATABASE: ${DB_DATABASE:-chap}
+      MYSQL_USER: ${DB_USERNAME:-chap}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-chap_secret}
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./server/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - chap-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PHP Server with Apache
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: chap-server
+    restart: unless-stopped
+    environment:
+      - APP_NAME=Chap
+      - APP_ENV=${APP_ENV:-development}
+      - APP_DEBUG=${APP_DEBUG:-true}
+      - APP_URL=${APP_URL:-http://localhost:8080}
+      - APP_SECRET=${APP_SECRET:-change_this_to_random_secret_key}
+      
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_DATABASE=${DB_DATABASE:-chap}
+      - DB_USERNAME=${DB_USERNAME:-chap}
+      - DB_PASSWORD=${DB_PASSWORD:-chap_secret}
+      
+      - WS_PORT=8081
+      
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:8080/auth/github/callback}
+    ports:
+      - "${APP_PORT:-8080}:80"
+      - "${WS_PORT:-8081}:8081"
+    volumes:
+      - ./server/src:/var/www/html/src
+      - ./server/public:/var/www/html/public
+      - ./server/routes.php:/var/www/html/routes.php
+      - ./server/bin:/var/www/html/bin
+      - ./server/migrations:/var/www/html/migrations
+      - ./templates:/var/www/html/templates
+      - server_storage:/var/www/html/storage
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - chap-network
+
+  # Local Node Agent (for development/testing only)
+  # In production, nodes run on separate servers using docker-compose.node.yml
+  node:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    container_name: chap-node-dev
+    restart: unless-stopped
+    environment:
+      - NODE_ID=${NODE_ID:?NODE_ID is required - get this from the Chap dashboard}
+      - NODE_TOKEN=${NODE_TOKEN:?NODE_TOKEN is required - get this from the Chap dashboard}
+      - CHAP_SERVER_URL=${CHAP_SERVER_URL:?CHAP_SERVER_URL is required - e.g. ws://your-server:8081}
+      - CHAP_DATA_DIR=/data
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - node_data:/data
+    depends_on:
+      - server
+    networks:
+      - chap-network
+
+volumes:
+  mysql_data:
+  server_storage:
+  node_data:
+
+networks:
+  chap-network:
+    driver: bridge

@@ -1,0 +1,50 @@
+# Dependencies
+/server/vendor/
+/node/node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+/server/storage/logs/*
+!/server/storage/logs/.gitkeep
+
+# Cache
+/server/storage/cache/*
+!/server/storage/cache/.gitkeep
+
+# Sessions
+/server/storage/sessions/*
+!/server/storage/sessions/.gitkeep
+
+# Uploads
+/server/storage/uploads/*
+!/server/storage/uploads/.gitkeep
+
+# Build artifacts
+/server/public/build/
+
+# Docker volumes
+mysql-data/
+
+# Testing
+/server/.phpunit.result.cache
+/server/coverage/
+/node/coverage/
+
+# Misc
+*.bak
+*.tmp
