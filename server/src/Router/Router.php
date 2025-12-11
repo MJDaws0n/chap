@@ -235,6 +235,11 @@ class Router
         if ($this->isApiRequest()) {
             json(['error' => 'Not Found'], 404);
         } else {
+            // If user is not authenticated, redirect to login instead of showing 404
+            if (!\Chap\Auth\AuthManager::check()) {
+                redirect('/login');
+                return;
+            }
             echo view('errors/404');
         }
     }
