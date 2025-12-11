@@ -117,6 +117,25 @@ class ProjectController extends BaseController
     }
 
     /**
+     * Show edit form
+     */
+    public function edit(string $uuid): void
+    {
+        $team = $this->currentTeam();
+        $project = Project::findByUuid($uuid);
+
+        if (!$project || $project->team_id !== $team->id) {
+            flash('error', 'Project not found');
+            $this->redirect('/projects');
+        }
+
+        $this->view('projects/edit', [
+            'title' => 'Edit Project',
+            'project' => $project,
+        ]);
+    }
+
+    /**
      * Update project
      */
     public function update(string $uuid): void
@@ -131,6 +150,11 @@ class ProjectController extends BaseController
                 flash('error', 'Project not found');
                 $this->redirect('/projects');
             }
+        }
+
+        if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/projects/' . $uuid . '/edit');
         }
 
         $data = $this->all();
