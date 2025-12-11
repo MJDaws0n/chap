@@ -17,7 +17,7 @@ class Deployment extends BaseModel
     ];
 
     public int $application_id;
-    public int $node_id;
+    public ?int $node_id = null;
     public ?string $commit_sha = null;
     public ?string $commit_message = null;
     public string $status = 'queued';
@@ -192,7 +192,28 @@ class Deployment extends BaseModel
             return [];
         }
         
-        return array_filter(explode("\n", $this->logs));
+        $lines = array_filter(explode("\n", trim($this->logs)));
+        $structured = [];
+        
+        foreach ($lines as $line) {
+            // Parse log format: [2025-12-11 11:36:57] [info] message
+            if (preg_match('/^\[([^\]]+)\]\s*\[([^\]]+)\]\s*(.*)$/', $line, $matches)) {
+                $structured[] = [
+                    'timestamp' => $matches[1],
+                    'level' => $matches[2],
+                    'message' => $matches[3]
+                ];
+            } else {
+                // Fallback for lines without proper format
+                $structured[] = [
+                    'timestamp' => '',
+                    'level' => 'info',
+                    'message' => $line
+                ];
+            }
+        }
+        
+        return $structured;
     }
 
     /**

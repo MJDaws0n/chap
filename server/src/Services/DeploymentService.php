@@ -20,6 +20,16 @@ class DeploymentService
     {
         $db = App::db();
 
+        // Check if application has a node assigned
+        if (!$application->node_id) {
+            throw new \Exception('Application does not have a node assigned. Please assign a node first.');
+        }
+
+        $node = Node::find($application->node_id);
+        if (!$node) {
+            throw new \Exception('The assigned node no longer exists. Please assign a valid node.');
+        }
+
         // Update application status
         $db->update('applications', ['status' => 'deploying'], 'id = ?', [$application->id]);
 
@@ -63,8 +73,9 @@ class DeploymentService
 
         // Store task for WebSocket server to send
         self::storeTask($node->id, $task);
-        
-        $deployment->appendLog('Deployment queued for node: ' . $node->name, 'info');
+
+        $deployment->appendLog('🚀 Deployment queued for node: ' . $node->name, 'info');
+        $deployment->appendLog('⚡ Task will be delivered instantly (WebSocket server polls every second)', 'info');
     }
 
     /**
@@ -106,6 +117,24 @@ class DeploymentService
                 ],
             ];
             self::storeTask($node->id, $task);
+
+            // Also send an app:event with full application+deployment info
+            try {
+                WebSocketServer::sendToNode($node->id, [
+                    'type' => 'app:event',
+                    'payload' => [
+                        'action' => 'deployment_cancelled',
+                        'application' => $deployment->application()?->toDeployPayload() ?? [],
+                        'deployment' => [
+                            'uuid' => $deployment->uuid,
+                            'status' => $deployment->status,
+                            'commit_sha' => $deployment->commit_sha,
+                        ],
+                    ],
+                ]);
+            } catch (\Throwable $e) {
+                // ignore
+            }
         }
     }
 
@@ -127,10 +156,23 @@ class DeploymentService
             'type' => 'container:stop',
             'payload' => [
                 'application_uuid' => $application->uuid,
+                'build_pack' => $application->build_pack,
             ],
         ];
 
         self::storeTask($node->id, $task);
+
+        try {
+            WebSocketServer::sendToNode($node->id, [
+                'type' => 'app:event',
+                'payload' => [
+                    'action' => 'stop',
+                    'application' => $application->toDeployPayload(),
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            // fallback to queue
+        }
     }
 
     /**
@@ -151,10 +193,23 @@ class DeploymentService
             'type' => 'container:restart',
             'payload' => [
                 'application_uuid' => $application->uuid,
+                'build_pack' => $application->build_pack,
             ],
         ];
 
         self::storeTask($node->id, $task);
+
+        try {
+            WebSocketServer::sendToNode($node->id, [
+                'type' => 'app:event',
+                'payload' => [
+                    'action' => 'restart',
+                    'application' => $application->toDeployPayload(),
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            // fallback to queue
+        }
     }
 
     /**
@@ -179,6 +234,26 @@ class DeploymentService
         $deployment->appendLog('Rolling back to deployment: ' . $previousDeployment->uuid, 'info');
 
         self::queueDeployment($deployment, $application);
+
+        // Notify node immediately if possible about rollback
+        $node = Node::find($application->node_id);
+        if ($node) {
+            try {
+                WebSocketServer::sendToNode($node->id, [
+                    'type' => 'app:event',
+                    'payload' => [
+                        'action' => 'rollback',
+                        'application' => $application->toDeployPayload(),
+                        'deployment' => [
+                            'uuid' => $deployment->uuid,
+                            'rollback_of' => $previousDeployment->uuid,
+                        ],
+                    ],
+                ]);
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
 
         return $deployment;
     }

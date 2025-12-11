@@ -6,19 +6,28 @@ use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
 use Chap\Models\Node;
 use Chap\Services\DeploymentService;
+use Chap\WebSocket\Server;
 
 /**
  * WebSocket Server for Node Communication
  */
-class NodeHandler implements MessageComponentInterface
-{
-    protected \SplObjectStorage $clients;
-    protected array $nodeConnections = []; // node_id => connection
+class NodeHandler implements MessageComponentInterface {
+
+    protected $clients;
+    protected $nodeConnections = [];
 
     public function __construct()
     {
         $this->clients = new \SplObjectStorage;
+        // Register this handler with the singleton server helper so
+        // other services can push messages to connected nodes.
+        try {
+            Server::setHandler($this);
+        } catch (\Throwable $e) {
+            // If Server class is not available for some reason, ignore.
+        }
     }
+
 
     public function onOpen(ConnectionInterface $conn)
     {
@@ -50,6 +59,10 @@ class NodeHandler implements MessageComponentInterface
                 $this->handlePing($from, $data);
                 break;
 
+            case 'heartbeat':
+                $this->handleHeartbeat($from, $data);
+                break;
+
             case 'task:ack':
                 $this->handleTaskAck($from, $data);
                 break;
@@ -74,8 +87,84 @@ class NodeHandler implements MessageComponentInterface
                 $this->handleContainerLogs($from, $data);
                 break;
 
+            // Node agent metrics reporting
+            case 'node:metrics':
+                $this->handleNodeMetrics($from, $data);
+                break;
+
+            // Node agent system info reporting
+            case 'node:system_info':
+                // Already handled above, but ensure no error
+                break;
+
+            // Node agent container logs
+            case 'containerLogs':
+                // Accept logs from agent, no-op for now
+                break;
+
+            // Node agent exec result
+            case 'execResult':
+                // Accept exec result from agent, no-op for now
+                break;
+
+            // Node agent pull result
+            case 'pulled':
+            case 'pullFailed':
+                // Accept image pull result from agent, no-op for now
+                break;
+
+            // Node agent stopped/restarted
+            case 'stopped':
+            case 'restarted':
+                // Accept container stop/restart result from agent, no-op for now
+                break;
+
             default:
                 $this->sendError($from, 'Unknown message type: ' . $data['type']);
+        }
+    }
+
+    /**
+     * Handle heartbeat command from server
+     */
+    protected function handleHeartbeat(ConnectionInterface $conn, array $data): void
+    {
+        // Optionally update node status, log, or respond
+        $nodeId = $conn->nodeId ?? null;
+        if ($nodeId) {
+            $node = Node::find($nodeId);
+            if ($node) {
+                $node->markOnline();
+            }
+        }
+        // Respond with ack if needed
+        $this->send($conn, [
+            'type' => 'heartbeat:ack',
+            'payload' => ['received' => 'heartbeat'],
+        ]);
+        
+        // Send any pending tasks on heartbeat
+        if ($nodeId) {
+            $this->sendPendingTasks($conn, $nodeId);
+        }
+    }
+
+    /**
+     * Handle node metrics reporting
+     */
+    protected function handleNodeMetrics(ConnectionInterface $conn, array $data): void
+    {
+        $nodeId = $conn->nodeId ?? null;
+        if (!$nodeId) {
+            return;
+        }
+
+        $node = Node::find($nodeId);
+        if ($node) {
+            // Update node with metrics from payload
+            $payload = $data['payload'] ?? [];
+            $node->updateFromHeartbeat($payload);
+            echo "Received metrics from node {$node->name}\n";
         }
     }
 
@@ -136,6 +225,8 @@ class NodeHandler implements MessageComponentInterface
 
         // Mark node as online
         $node->markOnline();
+
+        echo "Node connection stored: ID={$node->id}, Name={$node->name}, Total connections: " . count($this->nodeConnections) . "\n";
 
         $this->send($conn, [
             'type' => 'server:auth:success',
@@ -285,6 +376,24 @@ class NodeHandler implements MessageComponentInterface
     }
 
     /**
+     * Check for pending tasks and send to all connected nodes
+     * Called by periodic timer
+     */
+    public function checkAndSendPendingTasks(): void
+    {
+        foreach ($this->nodeConnections as $nodeId => $conn) {
+            $tasks = DeploymentService::getPendingTasks($nodeId);
+            
+            if (!empty($tasks)) {
+                echo "[Task Poller] Found " . count($tasks) . " pending task(s) for node {$nodeId}, sending...\n";
+                foreach ($tasks as $task) {
+                    $this->send($conn, $task);
+                }
+            }
+        }
+    }
+
+    /**
      * Send message to connection
      */
     protected function send(ConnectionInterface $conn, array $data): void
@@ -317,10 +426,14 @@ class NodeHandler implements MessageComponentInterface
      */
     public function sendToNode(int $nodeId, array $data): bool
     {
+        echo "[sendToNode] Attempting to send to node ID={$nodeId}, Connected nodes: " . implode(',', array_keys($this->nodeConnections)) . "\n";
+        
         if (!isset($this->nodeConnections[$nodeId])) {
+            echo "[sendToNode] Node {$nodeId} not found in connections\n";
             return false;
         }
 
+        echo "[sendToNode] Sending message type={$data['type']} to node {$nodeId}\n";
         $this->send($this->nodeConnections[$nodeId], $data);
         return true;
     }

@@ -13,6 +13,40 @@ const fs = require('fs');
 const path = require('path');
 
 class Storage {
+
+        /**
+         * Get path for an application's git repository
+         */
+        getRepoDir(applicationId) {
+            const dir = path.join(this.getAppDir(applicationId), 'repo');
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            return dir;
+        }
+
+        /**
+         * Get disk usage for the base storage directory
+         * Returns { total, free, used } in bytes
+         */
+        getDiskUsage() {
+            // Use statvfs via os module if available, else fallback to 'df' command
+            try {
+                const stat = fs.statSync(this.baseDir);
+                // Node.js does not provide statvfs, so use 'df -k' as a fallback
+                const { execSync } = require('child_process');
+                const output = execSync(`df -k '${this.baseDir}'`).toString().split('\n')[1];
+                const parts = output.trim().split(/\s+/);
+                // Filesystem 1K-blocks Used Available Use% Mounted on
+                const total = parseInt(parts[1], 10) * 1024;
+                const used = parseInt(parts[2], 10) * 1024;
+                const free = parseInt(parts[3], 10) * 1024;
+                return { total, used, free };
+            } catch (err) {
+                // Fallback: return zeros if error
+                return { total: 0, used: 0, free: 0 };
+            }
+        }
     constructor(baseDir = '/chap-data') {
         this.baseDir = process.env.CHAP_DATA_DIR || baseDir;
         this.dirs = {

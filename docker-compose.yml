@@ -93,6 +93,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - node_data:/data
+      - ./node/src:/app/src  # Mount source code for live reloading in development
     depends_on:
       - server
     networks:

@@ -15,7 +15,6 @@ $statusColor = $statusColors[$deployment->status] ?? 'bg-gray-600';
 $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying']);
 ?>
 <div class="space-y-6">
-                            <?php echo '<script> alert(\''; print_r($deployment); echo '\')</script>';?>
     <!-- Breadcrumb & Header -->
     <div class="flex items-center justify-between">
         <div>
@@ -194,40 +193,47 @@ async function fetchLogs() {
         const response = await fetch('/deployments/<?= $deployment->uuid ?>/logs');
         const data = await response.json();
         
-        if (data.logs && data.logs.length > lastLogCount) {
+        console.log('Fetched logs:', data); // Debug log
+        
+        if (data.logs && data.logs.length !== lastLogCount) {
             // Clear existing logs
             logsContainer.innerHTML = '';
             
-            // Add all logs
-            data.logs.forEach(log => {
-                const div = document.createElement('div');
-                div.className = 'flex items-start space-x-2 py-1';
-                
-                let logClass = 'text-gray-300';
-                if ((log.message || '').toLowerCase().includes('error')) {
-                    logClass = 'text-red-400';
-                } else if ((log.message || '').toLowerCase().includes('warning')) {
-                    logClass = 'text-yellow-400';
-                } else if ((log.message || '').toLowerCase().includes('success')) {
-                    logClass = 'text-green-400';
-                }
-                div.classList.add(logClass);
-                
-                div.innerHTML = `
-                    <span class="text-gray-500 flex-shrink-0">${log.timestamp || ''}</span>
-                    <span class="whitespace-pre-wrap">${escapeHtml(log.message || '')}</span>
-                `;
-                logsContainer.appendChild(div);
-            });
+            if (data.logs.length === 0) {
+                logsContainer.innerHTML = '<p class="text-gray-500">Waiting for logs...</p>';
+            } else {
+                // Add all logs
+                data.logs.forEach(log => {
+                    const div = document.createElement('div');
+                    div.className = 'flex items-start space-x-2 py-1';
+                    
+                    let logClass = 'text-gray-300';
+                    const message = (log.message || '').toLowerCase();
+                    if (message.includes('error') || message.includes('failed')) {
+                        logClass = 'text-red-400';
+                    } else if (message.includes('warning')) {
+                        logClass = 'text-yellow-400';
+                    } else if (message.includes('success') || message.includes('completed') || message.includes('✓') || message.includes('✅')) {
+                        logClass = 'text-green-400';
+                    }
+                    div.classList.add(logClass);
+                    
+                    div.innerHTML = `
+                        <span class="text-gray-500 flex-shrink-0">${escapeHtml(log.timestamp || '')}</span>
+                        <span class="whitespace-pre-wrap">${escapeHtml(log.message || '')}</span>
+                    `;
+                    logsContainer.appendChild(div);
+                });
+            }
             
             lastLogCount = data.logs.length;
             logsContainer.scrollTop = logsContainer.scrollHeight;
         }
         
         // Check if deployment is complete
-        if (!['queued', 'building', 'deploying'].includes(data.status)) {
+        if (data.status && !['queued', 'building', 'deploying'].includes(data.status)) {
             // Reload page to update status
-            window.location.reload();
+            setTimeout(() => window.location.reload(), 1000);
         }
     } catch (error) {
         console.error('Failed to fetch logs:', error);
@@ -239,6 +245,9 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
+
+// Initial fetch
+fetchLogs();
 
 // Poll every 2 seconds
 setInterval(fetchLogs, 2000);

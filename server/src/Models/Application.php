@@ -3,6 +3,8 @@
 namespace Chap\Models;
 
 use Chap\App;
+use Chap\WebSocket\Server as WebSocketServer;
+use Chap\Services\DeploymentService;
 
 /**
  * Application Model
@@ -189,6 +191,44 @@ class Application extends BaseModel
             'error' => 'red',
             default => 'gray'
         };
+    }
+
+    /**
+     * Delete application and its containers
+     */
+    public function delete(): bool
+    {
+        // Send delete command to node to remove containers
+        if ($this->node_id) {
+            $node = Node::find($this->node_id);
+            if ($node) {
+                $task = [
+                    'type' => 'application:delete',
+                    'payload' => [
+                        'application_uuid' => $this->uuid,
+                        'application_id' => $this->uuid,
+                        'build_pack' => $this->build_pack,
+                    ],
+                ];
+                
+                // Store task in database for WebSocket polling
+                $db = App::db();
+                $db->query(
+                    "INSERT INTO deployment_tasks (node_id, task_data, created_at, task_type) VALUES (?, ?, NOW(), ?)",
+                    [$node->id, json_encode($task), $task['type']]
+                );
+                
+                // Also try to send immediately if WebSocket is available
+                try {
+                    WebSocketServer::sendToNode($node->id, $task);
+                } catch (\Throwable $e) {
+                    // WebSocket might not be available, that's okay - will be picked up by polling
+                }
+            }
+        }
+
+        // Delete from database
+        return parent::delete();
     }
 
     /**

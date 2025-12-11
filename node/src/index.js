@@ -16,7 +16,7 @@ const config = {
     nodeId: process.env.NODE_ID || '',
     nodeToken: process.env.NODE_TOKEN || '',
     reconnectInterval: 5000,
-    heartbeatInterval: 30000,
+    heartbeatInterval: 5000, // Check for tasks every 5 seconds
     dataDir: process.env.CHAP_DATA_DIR || '/data'
 };
 
@@ -113,9 +113,16 @@ function handleMessage(message) {
         case 'server:error':
             console.error('[Agent] Server error:', message.payload?.error);
             break;
+        case 'heartbeat:ack':
+            console.log('[Agent] Server heartbeat acknowledged');
+            break;
+        
+        case 'app:event':
+            // Log application-related events sent by the server for debugging
+            console.log('[Agent] App event from server:', JSON.stringify(message.payload, null, 2));
+            break;
             
         case 'task:deploy':
-            console.log('TESTING');
             handleDeploy(message);
             break;
             
@@ -125,6 +132,10 @@ function handleMessage(message) {
             
         case 'container:restart':
             handleRestart(message);
+            break;
+            
+        case 'application:delete':
+            handleApplicationDelete(message);
             break;
             
         case 'container:logs':
@@ -159,7 +170,12 @@ async function handleDeploy(message) {
     const appConfig = payload.application || {};
     const applicationId = appConfig.uuid || appConfig.id;
     
-    console.log(`[Agent] Starting deployment ${deploymentId} for app ${applicationId}`);
+    console.log('\n' + '='.repeat(60));
+    console.log(`[Agent] 🚀 DEPLOYMENT STARTED`);
+    console.log(`[Agent] Deployment ID: ${deploymentId}`);
+    console.log(`[Agent] Application ID: ${applicationId}`);
+    console.log(`[Agent] Application Name: ${appConfig.name || 'Unknown'}`);
+    console.log('='.repeat(60) + '\n');
     
     // Acknowledge receipt
     send('task:ack', { 
@@ -172,36 +188,48 @@ async function handleDeploy(message) {
     
     try {
         // Send starting status
-        sendLog(deploymentId, 'Deployment started', 'info');
+        sendLog(deploymentId, '🚀 Deployment started', 'info');
+        console.log(`[Agent] ✓ Deployment acknowledged and queued`);
         
         let imageName = '';
         
+        // DEBUG: Log the entire appConfig to see what we're receiving
+        console.log(`[Agent] 🔍 DEBUG appConfig:`, JSON.stringify(appConfig, null, 2));
+        
         // Determine build type from application config
         const buildType = appConfig.build_pack || appConfig.type || 'docker';
+        console.log(`[Agent] 📦 Build type: ${buildType}`);
+        console.log(`[Agent] 🔍 DEBUG - build_pack value: "${appConfig.build_pack}"`);
+        console.log(`[Agent] 🔍 DEBUG - type value: "${appConfig.type}"`);
+        sendLog(deploymentId, `Build type: ${buildType}`, 'info');
         
         // Build or pull image based on type
-        if (buildType === 'git' || appConfig.git_repository) {
+        if (buildType === 'compose' || buildType === 'docker-compose') {
+            await deployCompose(deploymentId, appConfig);
+            return;
+        } else if (buildType === 'git') {
             imageName = await buildFromGit(deploymentId, appConfig);
         } else if (buildType === 'dockerfile') {
             imageName = await buildFromDockerfile(deploymentId, appConfig);
         } else if (buildType === 'docker' || appConfig.docker_image) {
             imageName = appConfig.docker_image || appConfig.dockerImage;
             await pullImage(deploymentId, imageName);
-        } else if (buildType === 'compose') {
-            await deployCompose(deploymentId, appConfig);
-            return;
         } else {
             throw new Error(`Unknown build type: ${buildType}`);
         }
         
         // Deploy container
-        sendLog(deploymentId, 'Starting container...', 'info');
+        console.log(`[Agent] 🚀 Deploying container...`);
+        sendLog(deploymentId, '🚀 Starting container...', 'info');
         
         // Stop existing container if any
+        console.log(`[Agent] 🛑 Stopping existing container (if any)...`);
         await stopContainer(`chap-${applicationId}`);
         
         // Run new container
+        console.log(`[Agent] 🏃 Running new container...`);
         const containerId = await runContainer(deploymentId, applicationId, imageName, appConfig);
+        console.log(`[Agent] ✓ Container started: ${containerId}`);
         
         // Send completion
         send('task:complete', {
@@ -211,10 +239,21 @@ async function handleDeploy(message) {
             }
         });
         
-        console.log(`[Agent] Deployment ${deploymentId} completed`);
+        console.log('\n' + '='.repeat(60));
+        console.log(`[Agent] ✅ DEPLOYMENT COMPLETED SUCCESSFULLY`);
+        console.log(`[Agent] Deployment ID: ${deploymentId}`);
+        console.log(`[Agent] Container ID: ${containerId}`);
+        console.log('='.repeat(60) + '\n');
+        sendLog(deploymentId, '✅ Deployment completed successfully!', 'info');
         
     } catch (err) {
-        console.error(`[Agent] Deployment ${deploymentId} failed:`, err);
+        console.error('\n' + '='.repeat(60));
+        console.error(`[Agent] ❌ DEPLOYMENT FAILED`);
+        console.error(`[Agent] Deployment ID: ${deploymentId}`);
+        console.error(`[Agent] Error: ${err.message}`);
+        console.error('='.repeat(60) + '\n');
+        console.error(err.stack);
+        sendLog(deploymentId, `❌ Deployment failed: ${err.message}`, 'error');
         send('task:failed', { 
             payload: {
                 deployment_id: deploymentId,
@@ -239,22 +278,35 @@ async function buildFromGit(deploymentId, appConfig) {
     const dockerfilePath = appConfig.dockerfile_path || appConfig.dockerfilePath || 'Dockerfile';
     
     // Clone or update repository
-    sendLog(deploymentId, `Cloning ${gitRepository}...`, 'info');
+    console.log(`[Agent] 📥 Fetching repository: ${gitRepository}`);
+    console.log(`[Agent] 🌿 Branch: ${gitBranch}`);
+    sendLog(deploymentId, `📥 Fetching repository: ${gitRepository}`, 'info');
+    sendLog(deploymentId, `Branch: ${gitBranch}`, 'info');
     
     // Check if repo exists and try to update it
     if (fs.existsSync(path.join(repoDir, '.git'))) {
         try {
+            console.log(`[Agent] 🔄 Repository exists, updating...`);
+            sendLog(deploymentId, '🔄 Repository exists, updating...', 'info');
             await execCommand(`git fetch origin`, { cwd: repoDir });
             await execCommand(`git checkout ${gitBranch}`, { cwd: repoDir });
             await execCommand(`git pull origin ${gitBranch}`, { cwd: repoDir });
-            sendLog(deploymentId, 'Repository updated', 'info');
+            console.log(`[Agent] ✓ Repository updated`);
+            sendLog(deploymentId, '✓ Repository updated', 'info');
         } catch (err) {
             // If update fails, remove and re-clone
+            console.log(`[Agent] ⚠ Update failed, re-cloning...`);
+            sendLog(deploymentId, 'Update failed, re-cloning...', 'info');
             await execCommand(`rm -rf ${repoDir}`);
             await execCommand(`git clone --branch ${gitBranch} ${gitRepository} ${repoDir}`);
+            console.log(`[Agent] ✓ Repository cloned`);
+            sendLog(deploymentId, '✓ Repository cloned', 'info');
         }
     } else {
+        console.log(`[Agent] 📥 Cloning repository...`);
         await execCommand(`git clone --branch ${gitBranch} ${gitRepository} ${repoDir}`);
+        console.log(`[Agent] ✓ Repository cloned`);
+        sendLog(deploymentId, '✓ Repository cloned', 'info');
     }
     
     // Copy to build directory
@@ -266,21 +318,31 @@ async function buildFromGit(deploymentId, appConfig) {
     
     // Run install command if specified
     if (appConfig.installCommand) {
-        sendLog(deploymentId, `Running install command...`, 'info');
-        await execCommand(appConfig.installCommand, { cwd: contextDir });
+        console.log(`[Agent] 📦 Running install command: ${appConfig.installCommand}`);
+        sendLog(deploymentId, `📦 Running install: ${appConfig.installCommand}`, 'info');
+        const installOutput = await execCommand(appConfig.installCommand, { cwd: contextDir });
+        console.log(`[Agent] ✓ Install completed`);
+        sendLog(deploymentId, '✓ Install completed', 'info');
     }
     
     // Run build command if specified
     if (appConfig.buildCommand) {
-        sendLog(deploymentId, `Running build command...`, 'info');
-        await execCommand(appConfig.buildCommand, { cwd: contextDir });
+        console.log(`[Agent] 🔨 Running build command: ${appConfig.buildCommand}`);
+        sendLog(deploymentId, `🔨 Running build: ${appConfig.buildCommand}`, 'info');
+        const buildOutput = await execCommand(appConfig.buildCommand, { cwd: contextDir });
+        console.log(`[Agent] ✓ Build completed`);
+        sendLog(deploymentId, '✓ Build completed', 'info');
     }
     
     // Build Docker image
     const imageName = `chap-app-${applicationId}:${deploymentId}`;
     
-    sendLog(deploymentId, `Building Docker image...`, 'info');
+    console.log(`[Agent] 🐳 Building Docker image: ${imageName}`);
+    sendLog(deploymentId, `🐳 Building Docker image: ${imageName}`, 'info');
+    sendLog(deploymentId, `Using Dockerfile: ${dockerfilePath}`, 'info');
     await execCommand(`docker build -t ${imageName} -f ${dockerfilePath} .`, { cwd: contextDir });
+    console.log(`[Agent] ✓ Docker image built successfully`);
+    sendLog(deploymentId, '✓ Docker image built successfully', 'info');
     
     // Clean old builds but keep recent ones
     storage.cleanOldBuilds(applicationId, 3);
@@ -313,8 +375,11 @@ async function buildFromDockerfile(deploymentId, appConfig) {
  * Pull Docker image
  */
 async function pullImage(deploymentId, imageName) {
-    sendLog(deploymentId, `Pulling image ${imageName}...`, 'info');
+    console.log(`[Agent] 📥 Pulling Docker image: ${imageName}`);
+    sendLog(deploymentId, `📥 Pulling image: ${imageName}`, 'info');
     await execCommand(`docker pull ${imageName}`);
+    console.log(`[Agent] ✓ Image pulled successfully`);
+    sendLog(deploymentId, '✓ Image pulled successfully', 'info');
 }
 
 /**
@@ -323,21 +388,116 @@ async function pullImage(deploymentId, imageName) {
 async function deployCompose(deploymentId, appConfig) {
     const applicationId = appConfig.uuid || appConfig.applicationId;
     const composeDir = storage.getComposeDir(applicationId);
-    const dockerCompose = appConfig.docker_compose || appConfig.dockerCompose;
-    const envVars = appConfig.environment_variables || appConfig.environmentVariables;
     
-    fs.writeFileSync(path.join(composeDir, 'docker-compose.yml'), dockerCompose);
+    console.log(`[Agent] 🐳 Deploying with Docker Compose`);
+    sendLog(deploymentId, '🐳 Deploying with Docker Compose', 'info');
     
-    // Write env file if provided
-    if (envVars && typeof envVars === 'object') {
-        const envContent = Object.entries(envVars)
-            .map(([k, v]) => `${k}=${v}`)
-            .join('\n');
-        fs.writeFileSync(path.join(composeDir, '.env'), envContent);
+    // Get repository files first if this is a Git-based app
+    if (appConfig.git_repository || appConfig.gitRepository) {
+        const gitRepository = appConfig.git_repository || appConfig.gitRepository;
+        const gitBranch = appConfig.git_branch || appConfig.gitBranch || 'main';
+        const repoDir = storage.getRepoDir(applicationId);
+        
+        console.log(`[Agent] 📥 Fetching repository for compose: ${gitRepository}`);
+        sendLog(deploymentId, `📥 Fetching repository: ${gitRepository}`, 'info');
+        
+        // Clone or update repository
+        if (fs.existsSync(path.join(repoDir, '.git'))) {
+            try {
+                await execCommand(`git fetch origin`, { cwd: repoDir });
+                await execCommand(`git checkout ${gitBranch}`, { cwd: repoDir });
+                await execCommand(`git pull origin ${gitBranch}`, { cwd: repoDir });
+                console.log(`[Agent] ✓ Repository updated`);
+                sendLog(deploymentId, '✓ Repository updated', 'info');
+            } catch (err) {
+                await execCommand(`rm -rf ${repoDir}`);
+                await execCommand(`git clone --branch ${gitBranch} ${gitRepository} ${repoDir}`);
+                console.log(`[Agent] ✓ Repository cloned`);
+                sendLog(deploymentId, '✓ Repository cloned', 'info');
+            }
+        } else {
+            await execCommand(`git clone --branch ${gitBranch} ${gitRepository} ${repoDir}`);
+            console.log(`[Agent] ✓ Repository cloned`);
+            sendLog(deploymentId, '✓ Repository cloned', 'info');
+        }
+        
+        // Copy repository files to compose directory
+        console.log(`[Agent] 📋 Copying files to compose directory`);
+        sendLog(deploymentId, '📋 Preparing compose environment...', 'info');
+        await execCommand(`rm -rf ${composeDir}/*`);
+        await execCommand(`cp -r ${repoDir}/. ${composeDir}/`);
+        console.log(`[Agent] ✓ Files copied to compose directory`);
     }
     
-    sendLog(deploymentId, 'Starting services with Docker Compose...', 'info');
-    await execCommand(`docker compose -p chap-${applicationId} up -d`, { cwd: composeDir });
+    const dockerCompose = appConfig.docker_compose || appConfig.dockerCompose;
+    const envVars = appConfig.environment_variables || appConfig.environmentVariables || {};
+    
+    // Write docker-compose.yml if provided via config (overrides the one from repo)
+    if (dockerCompose) {
+        console.log(`[Agent] 📝 Writing docker-compose.yml from config`);
+        fs.writeFileSync(path.join(composeDir, 'docker-compose.yml'), dockerCompose);
+    }
+    
+    // Write .env file with environment variables
+    console.log(`[Agent] 🔐 Writing environment variables (${Object.keys(envVars).length} vars)`);
+    const envContent = Object.entries(envVars)
+        .map(([k, v]) => `${k}=${v}`)
+        .join('\n');
+    fs.writeFileSync(path.join(composeDir, '.env'), envContent);
+    
+    // Log the .env contents (without sensitive values)
+    console.log(`[Agent] Environment variables:`, Object.keys(envVars).join(', '));
+    sendLog(deploymentId, `Environment: ${Object.keys(envVars).join(', ')}`, 'info');
+    
+    // Stop any existing compose project
+    try {
+        console.log(`[Agent] 🛑 Stopping existing services...`);
+        await execCommand(`docker compose -p chap-${applicationId} down`, { cwd: composeDir });
+    } catch (err) {
+        // Ignore if nothing to stop
+    }
+    
+    console.log(`[Agent] 🚀 Starting services with Docker Compose...`);
+    sendLog(deploymentId, '🚀 Starting services with Docker Compose...', 'info');
+    
+    // Start compose services with build
+    try {
+        const composeOutput = await execCommand(`docker compose -p chap-${applicationId} up -d --build`, { cwd: composeDir });
+        console.log(`[Agent] ✓ Docker Compose services started`);
+        sendLog(deploymentId, '✓ Docker Compose services started', 'info');
+    } catch (err) {
+        console.error(`[Agent] ❌ Docker Compose failed:`, err.message);
+        sendLog(deploymentId, `❌ Docker Compose failed: ${err.message}`, 'error');
+        throw err;
+    }
+    
+    // Wait a moment for containers to start
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Get the list of started containers
+    try {
+        const psOutput = await execCommand(`docker compose -p chap-${applicationId} ps --format json`, { cwd: composeDir });
+        const containers = psOutput.trim().split('\n').filter(Boolean).map(line => {
+            try {
+                return JSON.parse(line);
+            } catch {
+                return null;
+            }
+        }).filter(Boolean);
+        
+        console.log(`[Agent] 📦 Services running: ${containers.length}`);
+        sendLog(deploymentId, `📦 Started ${containers.length} container(s)`, 'info');
+        
+        containers.forEach(container => {
+            console.log(`[Agent]   - ${container.Service || container.Name}: ${container.State}`);
+            sendLog(deploymentId, `  ✓ ${container.Service || container.Name}: ${container.State}`, 'info');
+        });
+    } catch (err) {
+        console.warn(`[Agent] ⚠ Could not list containers:`, err.message);
+    }
+    
+    console.log(`[Agent] ✅ Docker Compose deployment completed`);
+    sendLog(deploymentId, '✅ Docker Compose deployment completed successfully!', 'info');
     
     send('task:complete', {
         payload: {
@@ -417,8 +577,12 @@ async function runContainer(deploymentId, applicationId, imageName, appConfig) {
         cmd += ` ${appConfig.startCommand}`;
     }
     
-    sendLog(deploymentId, `Starting container ${containerName}...`);
+    console.log(`[Agent] 🐳 Docker run command:`);
+    console.log(`[Agent]   ${cmd}`);
+    sendLog(deploymentId, `Starting container: ${containerName}`, 'info');
     const containerId = (await execCommand(cmd)).trim();
+    console.log(`[Agent] ✓ Container ${containerName} started`);
+    sendLog(deploymentId, `✓ Container started: ${containerName}`, 'info');
     
     return containerId;
 }
@@ -436,19 +600,117 @@ async function stopContainer(containerName) {
 }
 
 /**
+ * Handle application deletion - remove all containers and data
+ */
+async function handleApplicationDelete(message) {
+    const payload = message.payload || {};
+    const applicationUuid = payload.application_uuid || payload.applicationId;
+    
+    console.log(`[Agent] 🗑️  Deleting application: ${applicationUuid}`);
+    
+    try {
+        // Stop and remove regular container
+        const containerName = `chap-${applicationUuid}`;
+        try {
+            await execCommand(`docker stop ${containerName}`);
+            await execCommand(`docker rm ${containerName}`);
+            console.log(`[Agent] ✓ Removed container: ${containerName}`);
+        } catch (err) {
+            // Container might not exist
+        }
+        
+        // Stop and remove docker compose services
+        const composeDir = storage.getComposeDir(applicationUuid);
+        if (fs.existsSync(composeDir)) {
+            try {
+                await execCommand(`docker compose -p chap-${applicationUuid} down -v`, { cwd: composeDir });
+                console.log(`[Agent] ✓ Removed compose services for: ${applicationUuid}`);
+            } catch (err) {
+                // Compose project might not exist
+            }
+        }
+        
+        // Remove all data directories
+        const repoDir = storage.getRepoDir(applicationUuid);
+        const buildDir = storage.getBuildDir(applicationUuid);
+        const volumeDir = storage.getVolumeDir(applicationUuid);
+        
+        try {
+            if (fs.existsSync(repoDir)) {
+                await execCommand(`rm -rf ${repoDir}`);
+                console.log(`[Agent] ✓ Removed repo directory`);
+            }
+            if (fs.existsSync(buildDir)) {
+                await execCommand(`rm -rf ${buildDir}`);
+                console.log(`[Agent] ✓ Removed build directory`);
+            }
+            if (fs.existsSync(composeDir)) {
+                await execCommand(`rm -rf ${composeDir}`);
+                console.log(`[Agent] ✓ Removed compose directory`);
+            }
+            if (fs.existsSync(volumeDir)) {
+                await execCommand(`rm -rf ${volumeDir}`);
+                console.log(`[Agent] ✓ Removed volume directory`);
+            }
+        } catch (err) {
+            console.warn(`[Agent] ⚠️  Failed to clean some directories:`, err.message);
+        }
+        
+        console.log(`[Agent] ✅ Application deleted: ${applicationUuid}`);
+        send('application:deleted', { 
+            payload: {
+                application_uuid: applicationUuid
+            }
+        });
+    } catch (err) {
+        console.error(`[Agent] ❌ Failed to delete application:`, err.message);
+        send('application:delete:failed', { 
+            payload: {
+                application_uuid: applicationUuid,
+                error: err.message
+            }
+        });
+    }
+}
+
+/**
  * Handle stop request
  */
 async function handleStop(message) {
-    const { applicationId, containerId } = message;
-    const containerName = containerId || `chap-${applicationId}`;
+    const payload = message.payload || {};
+    const applicationUuid = payload.application_uuid || payload.applicationId;
+    const buildPack = payload.build_pack || 'docker';
     
-    console.log(`[Agent] Stopping container ${containerName}`);
+    console.log(`[Agent] 🛑 Stopping application: ${applicationUuid}`);
     
     try {
-        await execCommand(`docker stop ${containerName}`);
-        send('stopped', { applicationId, containerId: containerName });
+        // Check if this is a compose app
+        const composeDir = storage.getComposeDir(applicationUuid);
+        if ((buildPack === 'compose' || buildPack === 'docker-compose') && fs.existsSync(composeDir)) {
+            // Stop compose services
+            console.log(`[Agent] Stopping compose services...`);
+            await execCommand(`docker compose -p chap-${applicationUuid} stop`, { cwd: composeDir });
+            console.log(`[Agent] ✓ Compose services stopped`);
+        } else {
+            // Stop regular container
+            const containerName = `chap-${applicationUuid}`;
+            await execCommand(`docker stop ${containerName}`);
+            console.log(`[Agent] ✓ Container ${containerName} stopped`);
+        }
+        
+        send('stopped', { 
+            payload: {
+                application_uuid: applicationUuid
+            }
+        });
     } catch (err) {
-        console.error(`[Agent] Failed to stop container:`, err);
+        console.error(`[Agent] ❌ Failed to stop:`, err.message);
+        send('stopped', { 
+            payload: {
+                application_uuid: applicationUuid,
+                error: err.message
+            }
+        });
     }
 }
 
@@ -456,16 +718,41 @@ async function handleStop(message) {
  * Handle restart request
  */
 async function handleRestart(message) {
-    const { applicationId, containerId } = message;
-    const containerName = containerId || `chap-${applicationId}`;
+    const payload = message.payload || {};
+    const applicationUuid = payload.application_uuid || payload.applicationId;
+    const buildPack = payload.build_pack || 'docker';
     
-    console.log(`[Agent] Restarting container ${containerName}`);
+    console.log(`[Agent] 🔄 Restarting application: ${applicationUuid}`);
     
     try {
-        await execCommand(`docker restart ${containerName}`);
-        send('restarted', { applicationId, containerId: containerName });
+        // Check if this is a compose app
+        const composeDir = storage.getComposeDir(applicationUuid);
+        if ((buildPack === 'compose' || buildPack === 'docker-compose') && fs.existsSync(composeDir)) {
+            // Restart compose services
+            console.log(`[Agent] Restarting compose services...`);
+            await execCommand(`docker compose -p chap-${applicationUuid} restart`, { cwd: composeDir });
+            console.log(`[Agent] ✓ Compose services restarted`);
+        } else {
+            // Restart regular container
+            const containerName = `chap-${applicationUuid}`;
+            await execCommand(`docker restart ${containerName}`);
+            console.log(`[Agent] ✓ Container ${containerName} restarted`);
+        }
+        
+        send('restarted', { 
+            payload: {
+                application_uuid: applicationUuid,
+                container_name: containerName
+            }
+        });
     } catch (err) {
-        console.error(`[Agent] Failed to restart container:`, err);
+        console.error(`[Agent] ❌ Failed to restart container ${containerName}:`, err.message);
+        send('restarted', { 
+            payload: {
+                application_uuid: applicationUuid,
+                error: err.message
+            }
+        });
     }
 }
 

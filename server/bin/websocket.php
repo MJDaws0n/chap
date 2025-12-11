@@ -14,6 +14,7 @@ use Ratchet\WebSocket\WsServer;
 use Chap\WebSocket\NodeHandler;
 use Chap\App;
 use Chap\Config;
+use React\EventLoop\Loop;
 
 // Load configuration and boot app
 Config::load();
@@ -24,15 +25,25 @@ $port = config('websocket.port', 8081);
 
 echo "Starting Chap WebSocket Server on port {$port}...\n";
 
+// Create the handler
+$handler = new NodeHandler();
+
 $server = IoServer::factory(
     new HttpServer(
-        new WsServer(
-            new NodeHandler()
-        )
+        new WsServer($handler)
     ),
     $port
 );
 
+// Get the event loop
+$loop = $server->loop;
+
+// Add periodic timer to check for pending tasks every 1 second
+$loop->addPeriodicTimer(1, function () use ($handler) {
+    $handler->checkAndSendPendingTasks();
+});
+
 echo "WebSocket server running at ws://0.0.0.0:{$port}\n";
+echo "Task polling enabled (checks every 1 second)\n";
 
 $server->run();

@@ -85,6 +85,8 @@ Route::middleware(['auth'], function() {
     Route::get('/applications/{id}/logs', 'ApplicationController@logs');
     Route::get('/applications/{id}/environment', 'ApplicationController@environment');
     Route::post('/applications/{id}/environment', 'ApplicationController@updateEnvironment');
+    Route::post('/applications/{id}/stop', 'ApplicationController@stop');
+    Route::post('/applications/{id}/restart', 'ApplicationController@restart');
     
     // Deployments
     Route::post('/applications/{appId}/deploy', 'DeploymentController@deploy');
