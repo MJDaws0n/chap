@@ -24,6 +24,34 @@
                 placeholder="production-server-1"
                 value="<?= htmlspecialchars($old['name'] ?? '') ?>"
             >
+                <script>
+                const nameInput = document.getElementById('name');
+                nameInput.addEventListener('input', function(e) {
+                    const caret = nameInput.selectionStart;
+                    let value = nameInput.value;
+                    // Replace spaces with dash as you type
+                    value = value.replace(/ /g, '-');
+                    // Only allow a-z, 0-9, and dash, force lowercase
+                    value = value.replace(/[^a-z0-9-]/gi, '').toLowerCase();
+                    if (nameInput.value !== value) {
+                        nameInput.value = value;
+                        nameInput.setSelectionRange(caret, caret);
+                    }
+                });
+                nameInput.addEventListener('paste', function(e) {
+                    e.preventDefault();
+                    let paste = (e.clipboardData || window.clipboardData).getData('text');
+                    paste = paste.replace(/ /g, '-').replace(/[^a-z0-9-]/gi, '').toLowerCase();
+                    nameInput.value = paste;
+                });
+                </script>
+                <script>
+                const nodeForm = nameInput.closest('form');
+                nodeForm.addEventListener('submit', function(e) {
+                    // Remove trailing dashes before submit
+                    nameInput.value = nameInput.value.replace(/-+$/, '');
+                });
+                </script>
             <p class="mt-1 text-xs text-gray-500">A unique identifier for this server (lowercase, no spaces)</p>
             <?php if (!empty($errors['name'])): ?>
                 <p class="mt-1 text-sm text-red-400"><?= htmlspecialchars($errors['name']) ?></p>

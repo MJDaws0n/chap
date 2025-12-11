@@ -61,6 +61,11 @@ class NodeController extends BaseController
         $errors = [];
         if (empty($data['name'])) {
             $errors['name'] = 'Name is required';
+        } else {
+            // Must be lowercase, no spaces, only a-z, 0-9, and dashes (multiple dashes allowed)
+            if (!preg_match('/^[a-z0-9-]+$/', $data['name'])) {
+                $errors['name'] = 'Node name must be lowercase, no spaces, only letters, numbers, and dashes (e.g. production-server-1)';
+            }
         }
 
         if (!empty($errors)) {
