@@ -31,6 +31,10 @@ services:
       - NODE_TOKEN=${NODE_TOKEN:?NODE_TOKEN is required - get this from the Chap dashboard}
       - CHAP_SERVER_URL=${CHAP_SERVER_URL:?CHAP_SERVER_URL is required - e.g. ws://your-server:8081}
       - CHAP_DATA_DIR=/data
+      # Security settings (optional overrides)
+      - CHAP_MAX_CPUS=${CHAP_MAX_CPUS:-2}
+      - CHAP_MAX_MEMORY=${CHAP_MAX_MEMORY:-2g}
+      - CHAP_MAX_PIDS=${CHAP_MAX_PIDS:-256}
     volumes:
       # Required: Docker socket to manage containers on this host
       - /var/run/docker.sock:/var/run/docker.sock
@@ -38,6 +42,24 @@ services:
       - chap_data:/data
     networks:
       - chap-node-network
+    # Security: Run as non-root user (requires docker group)
+    # user: "1000:999"  # Uncomment and adjust UID:GID as needed
+    # Security: Resource limits for the agent itself
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    # Security: Health check
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 volumes:
   chap_data:
