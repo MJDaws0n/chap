@@ -175,36 +175,49 @@ $statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
             <div class="bg-gray-800 rounded-lg p-6">
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-lg font-semibold">Environment Variables</h2>
-                    <button onclick="toggleEnvEdit()" class="text-blue-400 hover:text-blue-300 text-sm">Edit</button>
+                    <button type="button" class="text-blue-400 hover:text-blue-300 text-sm" onclick="(function(){ const el = document.querySelector('[x-ref=\'envEditor\']'); if(!el || !el.__x) return; el.__x.$data.addRow(); })()">Manual</button>
                 </div>
-                
+
+                <?php
+                    $envArr = $application->getEnvironmentVariables();
+                    $envVarsRaw = '';
+                    if (!empty($envArr)) {
+                        foreach ($envArr as $k => $v) {
+                            $envVarsRaw .= $k . '=' . $v . "\n";
+                        }
+                        $envVarsRaw = rtrim($envVarsRaw, "\n");
+                    }
+                ?>
                 <form method="POST" action="/applications/<?= $application->uuid ?>" id="env-form">
                     <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                     <input type="hidden" name="_method" value="PUT">
 
-                    <?php $envVars = $application->getEnvironmentVariables(); ?>
-                    <?php if (empty($envVars)): ?>
-                        <p class="text-gray-400" id="no-env-msg">No environment variables configured.</p>
-                    <?php else: ?>
-                        <div class="space-y-2" id="env-display">
-                            <?php foreach ($envVars as $key => $value): ?>
-                                <div class="flex items-center justify-between bg-gray-700 px-4 py-2 rounded">
-                                    <code class="text-sm"><?= e($key) ?></code>
-                                    <code class="text-sm text-gray-400">••••••••</code>
+                    <div x-data="envEditor({ initial: <?= json_encode($envVarsRaw) ?> })" x-ref="envEditor" class="space-y-2">
+                                <div class="flex items-center space-x-2">
+                                    <div class="text-xs text-gray-400">Environment Variables</div>
+                                    <button type="button" @click="addRow()" class="ml-auto bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">New Variable</button>
                                 </div>
-                            <?php endforeach; ?>
-                        </div>
-                    <?php endif; ?>
 
-                    <div id="env-edit" class="hidden">
-                        <textarea name="environment_variables" rows="8"
-                            class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white font-mono text-sm"><?php
-                            foreach ($envVars as $key => $value) {
-                                echo e($key) . '=' . e($value) . "\n";
-                            }
-                        ?></textarea>
+                        <div class="space-y-2">
+                            <template x-for="(row, idx) in rows" :key="idx">
+                                    <div class="flex items-center space-x-2 bg-gray-700 px-3 py-2 rounded">
+                                        <input x-model="row.key" placeholder="KEY" class="w-1/3 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm" @input="updateSerialized()">
+                                        <div class="flex-1 relative" @mouseenter="row.revealed = true" @mouseleave="row.revealed = false">
+                                            <input :type="row.manual ? 'text' : (row.revealed ? 'text' : 'password')" x-model="row.value" placeholder="value" class="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm" @input="updateSerialized()">
+                                            <div class="absolute right-0 top-0 h-full flex items-center pr-2 space-x-1">
+                                                <button type="button" @click="row.manual = !row.manual; updateSerialized()" class="text-xs text-gray-300 px-2"> <span x-text="row.manual ? 'Auto' : 'Manual'"></span></button>
+                                                <button type="button" @click="removeRow(idx)" class="text-red-400 px-2">Remove</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                            </template>
+                            <div x-show="rows.length === 0" class="text-gray-400 text-sm">No environment variables configured.</div>
+                        </div>
+
+                        <textarea name="environment_variables" x-model="serialized" class="hidden"></textarea>
+
                         <div class="flex justify-end space-x-4 mt-4">
-                            <button type="button" onclick="cancelEnvEdit()" class="px-4 py-2 text-gray-400 hover:text-white">Cancel</button>
+                            <button type="button" onclick="document.getElementById('env-form').reset();" class="px-4 py-2 text-gray-400 hover:text-white">Cancel</button>
                             <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg">Save Variables</button>
                         </div>
                     </div>
@@ -276,27 +289,40 @@ $statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
 </div>
 
 <script>
-let envEditMode = false;
-
-function toggleEnvEdit() {
-    envEditMode = !envEditMode;
-    const display = document.getElementById('env-display');
-    const noMsg = document.getElementById('no-env-msg');
-    const edit = document.getElementById('env-edit');
-    
-    if (envEditMode) {
-        if (display) display.classList.add('hidden');
-        if (noMsg) noMsg.classList.add('hidden');
-        edit.classList.remove('hidden');
-    } else {
-        if (display) display.classList.remove('hidden');
-        if (noMsg) noMsg.classList.remove('hidden');
-        edit.classList.add('hidden');
+function envEditor(opts={}){
+    const initial = opts.initial || '';
+    return {
+        rows: [],
+        serialized: '',
+        init() {
+            this.parseEnvString(initial);
+            this.updateSerialized();
+        },
+        addRow(key = '', value = '', manual = false) {
+            this.rows.push({ key: key, value: value, revealed: false, manual: manual });
+            this.updateSerialized();
+        },
+        removeRow(i) {
+            this.rows.splice(i, 1);
+            this.updateSerialized();
+        },
+        updateSerialized() {
+            this.serialized = this.rows.map(r => (r.key ? r.key + '=' + r.value : '')).filter(Boolean).join('\n');
+        },
+        parseEnvString(str) {
+            this.rows = [];
+            if (!str) return;
+            const lines = str.split(/\r?\n/);
+            for (let line of lines) {
+                line = line.trim();
+                if (!line || line.startsWith('#')) continue;
+                const idx = line.indexOf('=');
+                if (idx === -1) continue;
+                const key = line.substring(0, idx).trim();
+                const value = line.substring(idx+1);
+                this.addRow(key, value, false);
+            }
+        }
     }
-}
-
-function cancelEnvEdit() {
-    document.getElementById('env-form').reset();
-    toggleEnvEdit();
 }
 </script>

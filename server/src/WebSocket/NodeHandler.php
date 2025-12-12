@@ -64,7 +64,7 @@ class NodeHandler implements MessageComponentInterface {
                 break;
 
             case 'task:ack':
-                $this->handleTaskAck($from, $data);
+                $this->handleTaskAckCaller($from, $data);
                 break;
 
             case 'task:log':
@@ -307,6 +307,38 @@ class NodeHandler implements MessageComponentInterface {
         
         echo "Task {$taskId} acknowledged: {$status}\n";
     }
+    
+    // Backwards-compatible: call DB updater
+    protected function handleTaskAckCaller(ConnectionInterface $conn, array $data): void
+    {
+        $this->handleTaskAck($conn, $data);
+        $this->handleTaskAck_updateDb($conn, $data);
+    }
+
+    /**
+     * When a node acknowledges a task, update the task row so it won't be retried.
+     */
+    protected function handleTaskAck_updateDb(ConnectionInterface $conn, array $data): void
+    {
+        $taskId = $data['payload']['task_id'] ?? '';
+        $status = $data['payload']['status'] ?? '';
+
+        if (empty($taskId)) return;
+
+        try {
+            $db = \Chap\App::db();
+            // Find task rows that contain this task_id in their JSON payload
+            $rows = $db->fetchAll("SELECT id FROM deployment_tasks WHERE JSON_EXTRACT(task_data, '$.payload.task_id') = ? LIMIT 10", [$taskId]);
+            if (!empty($rows)) {
+                $ids = array_column($rows, 'id');
+                $placeholders = implode(',', array_fill(0, count($ids), '?'));
+                $db->query("UPDATE deployment_tasks SET status = 'acknowledged', updated_at = NOW() WHERE id IN ({$placeholders})", $ids);
+                echo "Marked " . count($ids) . " task(s) acknowledged for task_id={$taskId}\n";
+            }
+        } catch (\Throwable $e) {
+            echo "Failed to mark task ack for {$taskId}: " . $e->getMessage() . "\n";
+        }
+    }
 
     /**
      * Handle task log
@@ -452,6 +484,8 @@ class NodeHandler implements MessageComponentInterface {
         $tasks = DeploymentService::getPendingTasks($nodeId);
         
         foreach ($tasks as $task) {
+            $tid = $task['payload']['task_id'] ?? ($task['id'] ?? null) ?? 'unknown';
+            echo "[sendPendingTasks] Sending task type={$task['type']} task_id={$tid} to node {$nodeId}\n";
             $this->send($conn, $task);
         }
     }

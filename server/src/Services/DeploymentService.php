@@ -555,16 +555,17 @@ class DeploymentService
         try {
             $db = App::db();
             
+            // Pick pending tasks, and also retry 'sent' tasks that haven't been updated recently (10s)
             $tasks = $db->fetchAll(
-                "SELECT * FROM deployment_tasks WHERE node_id = ? AND status = 'pending' ORDER BY created_at ASC LIMIT 10",
+                "SELECT * FROM deployment_tasks WHERE node_id = ? AND (status = 'pending' OR (status = 'sent' AND updated_at < (NOW() - INTERVAL 10 SECOND))) ORDER BY created_at ASC LIMIT 10",
                 [$nodeId]
             );
 
-            // Delete fetched tasks (they're being sent now)
+            // Mark fetched tasks as 'sent' so they aren't deleted before node ack
             if (!empty($tasks)) {
                 $ids = array_column($tasks, 'id');
                 $placeholders = implode(',', array_fill(0, count($ids), '?'));
-                $db->query("DELETE FROM deployment_tasks WHERE id IN ({$placeholders})", $ids);
+                $db->query("UPDATE deployment_tasks SET status = 'sent', updated_at = NOW() WHERE id IN ({$placeholders})", $ids);
             }
 
             return array_map(fn($t) => json_decode($t['task_data'], true), $tasks);

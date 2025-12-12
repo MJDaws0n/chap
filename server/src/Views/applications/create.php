@@ -170,13 +170,33 @@
         <div class="bg-gray-800 rounded-lg p-6">
             <h2 class="text-lg font-semibold mb-4">Environment Variables</h2>
             <div>
-                <label for="environment_variables" class="block text-sm font-medium text-gray-300 mb-2">Variables (KEY=value format)</label>
-                <textarea name="environment_variables" id="environment_variables" rows="6"
-                    class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white font-mono text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                    placeholder="NODE_ENV=production
-DATABASE_URL=mysql://...
-SECRET_KEY=your-secret"><?= e(old('environment_variables')) ?></textarea>
-                <p class="text-xs text-gray-500 mt-1">One variable per line in KEY=value format</p>
+                <label class="block text-sm font-medium text-gray-300 mb-2">Variables</label>
+                <?php $initialEnv = old('environment_variables', ''); ?>
+                <div x-data="envEditor({ initial: <?= json_encode($initialEnv) ?> })" class="space-y-2">
+                    <div class="flex items-center space-x-2">
+                        <div class="text-xs text-gray-400">Environment Variables</div>
+                        <button type="button" @click="addRow()" class="ml-auto bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">New Variable</button>
+                    </div>
+
+                    <div class="space-y-2">
+                        <template x-for="(row, idx) in rows" :key="idx">
+                            <div class="flex items-center space-x-2 bg-gray-700 px-3 py-2 rounded">
+                                <input x-model="row.key" placeholder="KEY" class="w-1/3 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm" @input="updateSerialized()">
+                                <div class="flex-1 relative" @mouseenter="row.revealed = true" @mouseleave="row.revealed = false">
+                                    <input :type="row.manual ? 'text' : (row.revealed ? 'text' : 'password')" x-model="row.value" placeholder="value" class="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm" @input="updateSerialized()">
+                                    <div class="absolute right-0 top-0 h-full flex items-center pr-2 space-x-1">
+                                        <button type="button" @click="row.manual = !row.manual; updateSerialized()" class="text-xs text-gray-300 px-2"> <span x-text="row.manual ? 'Auto' : 'Manual'"></span></button>
+                                        <button type="button" @click="removeRow(idx)" class="text-red-400 px-2">Remove</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                        <div x-show="rows.length === 0" class="text-gray-400 text-sm">No environment variables configured.</div>
+                    </div>
+
+                    <textarea name="environment_variables" x-model="serialized" class="hidden" id="environment_variables"></textarea>
+                </div>
+                <p class="text-xs text-gray-500 mt-1">Add environment variables as key/value pairs. Values are hidden by default.</p>
             </div>
         </div>
 
@@ -246,3 +266,42 @@ SECRET_KEY=your-secret"><?= e(old('environment_variables')) ?></textarea>
 
 <!-- Alpine.js for custom dropdown -->
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+
+<script>
+function envEditor(opts={}){
+    const initial = opts.initial || '';
+    return {
+        rows: [],
+        serialized: '',
+        init() {
+            this.parseEnvString(initial);
+            this.updateSerialized();
+        },
+        addRow(key = '', value = '', manual = false) {
+            this.rows.push({ key: key, value: value, revealed: false, manual: manual });
+            this.updateSerialized();
+        },
+        removeRow(i) {
+            this.rows.splice(i, 1);
+            this.updateSerialized();
+        },
+        updateSerialized() {
+            this.serialized = this.rows.map(r => (r.key ? r.key + '=' + r.value : '')).filter(Boolean).join('\n');
+        },
+        parseEnvString(str) {
+            this.rows = [];
+            if (!str) return;
+            const lines = str.split(/\r?\n/);
+            for (let line of lines) {
+                line = line.trim();
+                if (!line || line.startsWith('#')) continue;
+                const idx = line.indexOf('=');
+                if (idx === -1) continue;
+                const key = line.substring(0, idx).trim();
+                const value = line.substring(idx+1);
+                this.addRow(key, value, false);
+            }
+        }
+    }
+}
+</script>
