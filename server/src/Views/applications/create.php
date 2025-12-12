@@ -39,15 +39,48 @@
                 </div>
 
                 <div>
-                    <label for="node_uuid" class="block text-sm font-medium text-gray-300 mb-2">Deploy to Node</label>
-                    <select name="node_uuid" id="node_uuid"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                        <option value="">Select a node (optional)</option>
-                        <?php foreach ($nodes as $node): ?>
-                            <option value="<?= $node->uuid ?>"><?= e($node->name) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                    <p class="text-xs text-gray-500 mt-1">You can assign a node later</p>
+                    <label for="node_uuid" class="block text-sm font-medium text-gray-300 mb-2">Deploy to Node <span class="text-red-400">*</span></label>
+                    <!-- Custom searchable dropdown -->
+                    <?php
+                        $alpineNodes = json_encode(array_map(function($n) { return ['uuid' => $n->uuid, 'name' => $n->name]; }, $nodes));
+                        $alpineDefault = isset($nodes[0]) ? $nodes[0]->uuid : '';
+                    ?>
+                    <div x-data='{
+                        open: false,
+                        search: "",
+                        selected: "<?= $alpineDefault ?>",
+                        nodes: <?= $alpineNodes ?>,
+                        get filtered() {
+                            if (!this.search) return this.nodes;
+                            return this.nodes.filter(n => n.name.toLowerCase().includes(this.search.toLowerCase()));
+                        },
+                        select(uuid) {
+                            this.selected = uuid;
+                            this.open = false;
+                        },
+                        selectedName() {
+                            const n = this.nodes.find(n => n.uuid === this.selected);
+                            return n ? n.name : "";
+                        }
+                    }' class="relative">
+                        <input type="hidden" name="node_uuid" x-bind:value="selected" required>
+                        <button type="button" @click="open = !open" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white text-left flex justify-between items-center focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                            <span x-text="selectedName()"></span>
+                            <svg class="w-4 h-4 ml-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        </button>
+                        <div x-show="open" @click.away="open = false" class="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-auto">
+                            <div class="p-2">
+                                <input type="text" x-model="search" placeholder="Search nodes..." class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm" autocomplete="off">
+                            </div>
+                            <template x-for="node in filtered" :key="node.uuid">
+                                <div @click="select(node.uuid)" class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white" :class="{'bg-blue-700/30': node.uuid === selected}">
+                                    <span x-text="node.name"></span>
+                                </div>
+                            </template>
+                            <div x-show="filtered.length === 0" class="px-4 py-2 text-gray-400">No nodes found</div>
+                        </div>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1">Node assignment is required</p>
                 </div>
 
                 <div class="md:col-span-2">
@@ -198,6 +231,7 @@ SECRET_KEY=your-secret"><?= e(old('environment_variables')) ?></textarea>
             </div>
         </div>
 
+        <!-- Backend: Make sure to require node_uuid in validation/controller logic. -->
         <!-- Actions -->
         <div class="flex justify-end space-x-4">
             <a href="/environments/<?= $environment->uuid ?>" class="px-4 py-2 text-gray-400 hover:text-white">Cancel</a>
@@ -209,3 +243,6 @@ SECRET_KEY=your-secret"><?= e(old('environment_variables')) ?></textarea>
 </div>
 
 <?php unset($_SESSION['_errors'], $_SESSION['_old_input']); ?>
+
+<!-- Alpine.js for custom dropdown -->
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>

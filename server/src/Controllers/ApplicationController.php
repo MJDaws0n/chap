@@ -77,7 +77,9 @@ class ApplicationController extends BaseController
         if (empty($data['name'])) {
             $errors['name'] = 'Name is required';
         }
-        if (!empty($data['node_uuid'])) {
+        if (empty($data['node_uuid'])) {
+            $errors['node_uuid'] = 'Node selection is required';
+        } else {
             $node = Node::findByUuid($data['node_uuid']);
             if (!$node || $node->team_id !== $team->id) {
                 $errors['node_uuid'] = 'Invalid node';
