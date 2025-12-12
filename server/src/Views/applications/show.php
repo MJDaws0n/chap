@@ -277,7 +277,7 @@ $statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
             <div class="bg-gray-800 rounded-lg p-6 border border-red-600/30">
                 <h2 class="text-lg font-semibold text-red-400 mb-4">Danger Zone</h2>
                 <form method="POST" action="/applications/<?= $application->uuid ?>" 
-                      onsubmit="return confirm('Are you sure? This cannot be undone.')">
+                      onsubmit="event.preventDefault(); chapSwal({title: 'Are you sure?', text: 'This cannot be undone.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel'}).then((result) => { if(result.isConfirmed) this.submit(); }); return false;">
                     <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                     <input type="hidden" name="_method" value="DELETE">
                     <button type="submit" class="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg">

@@ -23,7 +23,7 @@
             <a href="/environments/<?= e($environment->uuid) ?>/edit" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
                 Edit
             </a>
-            <form action="/environments/<?= e($environment->uuid) ?>" method="POST" class="inline" onsubmit="return confirm('Are you sure? All applications will be deleted.')">
+            <form action="/environments/<?= e($environment->uuid) ?>" method="POST" class="inline" onsubmit="event.preventDefault(); chapSwal({title: 'Delete Environment?', text: 'Are you sure? All applications will be deleted.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel'}).then((result) => { if(result.isConfirmed) this.submit(); }); return false;">
                 <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                 <input type="hidden" name="_method" value="DELETE">
                 <button type="submit" class="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg transition-colors">

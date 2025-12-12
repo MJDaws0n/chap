@@ -33,7 +33,7 @@
             <span class="inline-flex px-3 py-1 text-sm rounded-full border <?= $colorClass ?>">
                 <?= ucfirst($status) ?>
             </span>
-            <form action="/nodes/<?= e($node->uuid) ?>" method="POST" class="inline" onsubmit="return confirm('Are you sure you want to delete this node?')">
+            <form action="/nodes/<?= e($node->uuid) ?>" method="POST" class="inline" onsubmit="event.preventDefault(); chapSwal({title: 'Delete Node?', text: 'Are you sure you want to delete this node?', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel'}).then((result) => { if(result.isConfirmed) this.submit(); }); return false;">
                 <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                 <input type="hidden" name="_method" value="DELETE">
                 <button type="submit" class="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg transition-colors">

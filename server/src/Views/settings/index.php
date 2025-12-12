@@ -46,7 +46,7 @@
                 <code class="text-green-400 text-sm"><?= e(url('/api/v1')) ?></code>
             </div>
             <button type="button" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors" 
-                    onclick="alert('Token generation not implemented yet')">
+                    onclick="chapSwal({title: 'Not implemented', text: 'Token generation not implemented yet', icon: 'info', confirmButtonText: 'OK'}); return false;">
                 Generate New Token
             </button>
         </div>

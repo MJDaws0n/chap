@@ -81,7 +81,7 @@
                 Once your account is deleted, all of its resources and data will be permanently deleted.
                 Before deleting your account, please download any data or information that you wish to retain.
             </p>
-            <form action="/profile" method="POST" onsubmit="return confirm('Are you sure you want to delete your account? This action cannot be undone.')">
+            <form action="/profile" method="POST" onsubmit="event.preventDefault(); chapSwal({title: 'Delete Account?', text: 'Are you sure you want to delete your account? This action cannot be undone.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel'}).then((result) => { if(result.isConfirmed) this.submit(); }); return false;">
                 <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                 <input type="hidden" name="_method" value="DELETE">
                 <button type="submit" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors">

@@ -111,7 +111,7 @@
                 <p class="font-medium">Delete Service</p>
                 <p class="text-sm text-gray-400">This will permanently delete the service and all its data.</p>
             </div>
-            <form method="POST" action="/services/<?= $service->uuid ?>" onsubmit="return confirm('Are you sure? This cannot be undone.')">
+            <form method="POST" action="/services/<?= $service->uuid ?>" onsubmit="event.preventDefault(); chapSwal({title: 'Are you sure?', text: 'This cannot be undone.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel'}).then((result) => { if(result.isConfirmed) this.submit(); }); return false;">
                 <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                 <input type="hidden" name="_method" value="DELETE">
                 <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg">

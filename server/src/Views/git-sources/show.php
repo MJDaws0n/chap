@@ -118,7 +118,7 @@ $typeLabel = $typeLabels[$gitSource->type] ?? ucfirst($gitSource->type);
                 <p class="font-medium">Delete Git Source</p>
                 <p class="text-sm text-gray-400">This will disconnect the Git source. Existing deployments will not be affected.</p>
             </div>
-            <form method="POST" action="/git-sources/<?= $gitSource->uuid ?>" onsubmit="return confirm('Are you sure you want to delete this Git source?')">
+            <form method="POST" action="/git-sources/<?= $gitSource->uuid ?>" onsubmit="event.preventDefault(); chapSwal({title: 'Delete Git Source?', text: 'Are you sure you want to delete this Git source?', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel'}).then((result) => { if(result.isConfirmed) this.submit(); }); return false;">
                 <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                 <input type="hidden" name="_method" value="DELETE">
                 <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg">

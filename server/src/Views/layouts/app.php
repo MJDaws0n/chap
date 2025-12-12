@@ -7,6 +7,8 @@
     <meta name="csrf-token" content="<?= csrf_token() ?>">
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="/js/chapSwal.js"></script>
     <style>
         [x-cloak] { display: none !important; }
     </style>
@@ -156,7 +158,6 @@
     <script>
         // CSRF token for AJAX requests
         window.csrfToken = '<?= csrf_token() ?>';
-        
         // Helper function for API calls
         async function api(url, method = 'GET', data = null) {
             const options = {
@@ -171,5 +172,8 @@
             return response.json();
         }
     </script>
+    <!-- SweetAlert2 and Chap custom theme -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.js"></script>
+    <script src="/js/chapSwal.js"></script>
 </body>
 </html>
