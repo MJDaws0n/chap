@@ -175,4 +175,28 @@ class EnvironmentController extends BaseController
             $this->redirect('/projects/' . $projectUuid);
         }
     }
+
+    /**
+     * Show create environment form
+     */
+    public function create(string $projectUuid): void
+    {
+        $team = $this->currentTeam();
+        $project = Project::findByUuid($projectUuid);
+
+        if (!$project || $project->team_id !== $team->id) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Project not found'], 404);
+            } else {
+                flash('error', 'Project not found');
+                $this->redirect('/projects');
+            }
+            return;
+        }
+
+        $this->view('environments/create', [
+            'title' => 'Create Environment',
+            'project' => $project,
+        ]);
+    }
 }

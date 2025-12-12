@@ -841,17 +841,119 @@ async function handleRestart(message) {
  * Handle logs request (with security limits)
  */
 async function handleLogs(message) {
-    const { applicationId, containerId, tail = 100 } = message;
-    const containerName = containerId || `chap-${applicationId}`;
+    const payload = message.payload || {};
+    const applicationUuid = payload.application_uuid || payload.applicationId;
+    const requestedContainerId = payload.container_id;
+    const tail = payload.tail || 100;
     
     // Security: Limit tail to reasonable amount
     const safeTail = Math.min(Math.max(parseInt(tail, 10) || 100, 1), 1000);
     
+    console.log(`[Agent] 📋 Fetching logs for application: ${applicationUuid}`);
+    
     try {
-        const logs = await execCommand(`docker logs --tail ${safeTail} ${containerName}`);
-        send('containerLogs', { applicationId, logs });
+        let containers = [];
+        
+        // Try to get containers from compose project first
+        const composeDir = storage.getComposeDir(applicationUuid);
+        try {
+            // Use docker ps to get actual container names for the compose project
+            const psOutput = await execCommand(`docker ps -a --filter "label=com.docker.compose.project=chap-${applicationUuid}" --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}"`);
+            containers = psOutput.trim().split('\n').filter(Boolean).map(line => {
+                const [id, fullName, image, status] = line.split('|');
+                // Extract service name from full container name (e.g., "chap-xxx-app-1" -> "app-1")
+                const nameParts = fullName.split('-');
+                const serviceName = nameParts.length > 1 ? nameParts.slice(-2).join('-') : fullName;
+                return {
+                    id: id,
+                    name: serviceName,
+                    fullName: fullName,
+                    status: status.toLowerCase().includes('up') ? 'running' : 'exited',
+                    image: image
+                };
+            });
+            console.log(`[Agent] Found ${containers.length} compose containers`);
+        } catch (err) {
+            console.log(`[Agent] No compose containers, trying single container`);
+        }
+        
+        // If no compose containers, try single container
+        if (containers.length === 0) {
+            try {
+                const containerName = `chap-${applicationUuid}`;
+                const inspectOutput = await execCommand(`docker inspect ${containerName} --format '{{.Id}}|{{.Name}}|{{.State.Status}}|{{.Config.Image}}'`);
+                const [id, name, status, image] = inspectOutput.trim().split('|');
+                containers = [{
+                    id: id.substring(0, 12),
+                    name: name.replace(/^\//, ''),
+                    fullName: name.replace(/^\//, ''),
+                    status: status,
+                    image: image
+                }];
+            } catch {
+                // No containers found
+            }
+        }
+        
+        console.log(`[Agent] Total containers found: ${containers.length}`);
+        containers.forEach(c => console.log(`[Agent]   - ${c.name} (${c.id}): ${c.status}`));
+        
+        // If a specific container was requested, get its logs
+        let logs = [];
+        if (requestedContainerId) {
+            // Find the container - could be ID or name
+            const container = containers.find(c => 
+                c.id === requestedContainerId || 
+                c.id.startsWith(requestedContainerId) ||
+                c.name === requestedContainerId ||
+                c.fullName === requestedContainerId
+            );
+            
+            const targetContainer = container ? container.fullName : requestedContainerId;
+            console.log(`[Agent] Fetching logs for container: ${targetContainer}`);
+            
+            try {
+                const logOutput = await execCommand(`docker logs --tail ${safeTail} ${targetContainer} 2>&1`);
+                logs = logOutput.split('\n').filter(Boolean).map(line => ({
+                    timestamp: new Date().toISOString(),
+                    message: line,
+                    level: line.toLowerCase().includes('error') ? 'error' : 
+                           line.toLowerCase().includes('warn') ? 'warning' : 'info'
+                }));
+                console.log(`[Agent] Got ${logs.length} log lines`);
+            } catch (err) {
+                console.error(`[Agent] Failed to get logs for ${targetContainer}:`, err.message);
+            }
+        }
+        
+        // Send containers list and logs back to server
+        const requestId = payload.task_id || payload.request_id || null;
+        const responsePayload = {
+            application_uuid: applicationUuid,
+            containers: containers.map(c => ({
+                id: c.id,
+                name: c.name,
+                status: c.status,
+                image: c.image
+            })),
+            logs,
+            requested_container: requestedContainerId
+        };
+        if (requestId) responsePayload.task_id = requestId;
+
+        send('container:logs:response', { 
+            payload: responsePayload
+        });
     } catch (err) {
-        console.error(`[Agent] Failed to get logs:`, err);
+        console.error(`[Agent] Failed to get logs:`, err.message);
+        send('container:logs:response', { 
+            payload: {
+                application_uuid: applicationUuid,
+                containers: [],
+                logs: [],
+                error: err.message
+            }
+        });
     }
 }
 

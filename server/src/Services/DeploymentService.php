@@ -261,7 +261,7 @@ class DeploymentService
     /**
      * Handle deployment completion from node
      */
-    public static function handleCompletion(string $deploymentUuid, bool $success, ?string $error = null): void
+    public static function handleCompletion(string $deploymentUuid, bool $success, ?string $error = null, ?string $containerId = null): void
     {
         $deployment = Deployment::findByUuid($deploymentUuid);
         if (!$deployment) {
@@ -273,9 +273,229 @@ class DeploymentService
         if ($success) {
             $deployment->markRunning();
             $db->update('applications', ['status' => 'running'], 'id = ?', [$deployment->application_id]);
+            
+            // Store container_id in deployment record
+            if ($containerId) {
+                $db->update('deployments', ['container_id' => $containerId], 'id = ?', [$deployment->id]);
+                self::trackContainer($deployment, $containerId);
+            }
         } else {
             $deployment->markFailed($error ?? 'Unknown error');
             $db->update('applications', ['status' => 'error'], 'id = ?', [$deployment->application_id]);
+        }
+    }
+    
+    /**
+     * Track container in database
+     */
+    private static function trackContainer(Deployment $deployment, string $dockerContainerId): void
+    {
+        try {
+            $db = App::db();
+            $application = $deployment->application();
+            
+            if (!$application) {
+                return;
+            }
+            
+            // Check if container already exists
+            $existing = $db->fetch(
+                "SELECT id FROM containers WHERE container_id = ?",
+                [$dockerContainerId]
+            );
+            
+            if ($existing) {
+                // Update existing container
+                $db->update('containers', [
+                    'deployment_id' => $deployment->id,
+                    'application_id' => $application->id,
+                    'status' => 'running',
+                    'updated_at' => date('Y-m-d H:i:s')
+                ], 'id = ?', [$existing['id']]);
+            } else {
+                // Create new container record
+                $containerName = $application->name . '-' . substr($dockerContainerId, 0, 12);
+                
+                $db->insert('containers', [
+                    'uuid' => uuid(),
+                    'node_id' => $deployment->node_id,
+                    'deployment_id' => $deployment->id,
+                    'application_id' => $application->id,
+                    'container_id' => $dockerContainerId,
+                    'name' => $containerName,
+                    'image' => $application->docker_image ?? 'unknown',
+                    'status' => 'running',
+                    'started_at' => date('Y-m-d H:i:s'),
+                ]);
+            }
+            
+            echo "Container {$dockerContainerId} tracked for deployment {$deployment->uuid}\n";
+        } catch (\Exception $e) {
+            error_log("Failed to track container: " . $e->getMessage());
+        }
+    }
+    
+    /**
+     * Sync containers from node metrics report
+     */
+    public static function syncContainersFromNode(int $nodeId, array $containers): void
+    {
+        try {
+            $db = App::db();
+            
+            foreach ($containers as $containerData) {
+                $dockerId = $containerData['id'] ?? '';
+                $name = $containerData['name'] ?? '';
+                $image = $containerData['image'] ?? '';
+                $status = $containerData['status'] ?? '';
+                
+                if (empty($dockerId)) {
+                    continue;
+                }
+                
+                // Parse status to determine if running
+                $isRunning = stripos($status, 'up') !== false;
+                $containerStatus = $isRunning ? 'running' : 'exited';
+                
+                // Check if container exists
+                $existing = $db->fetch(
+                    "SELECT id, application_id FROM containers WHERE container_id = ?",
+                    [$dockerId]
+                );
+                
+                if ($existing) {
+                    // Update existing container
+                    $db->update('containers', [
+                        'status' => $containerStatus,
+                        'image' => $image,
+                        'updated_at' => date('Y-m-d H:i:s')
+                    ], 'id = ?', [$existing['id']]);
+                } else {
+                    // Try to find application_id from container name
+                    // Container names typically include application UUID or name
+                    $applicationId = self::findApplicationIdFromContainerName($name);
+                    
+                    if ($applicationId) {
+                        // Create new container record
+                        $db->insert('containers', [
+                            'uuid' => uuid(),
+                            'node_id' => $nodeId,
+                            'application_id' => $applicationId,
+                            'container_id' => $dockerId,
+                            'name' => $name,
+                            'image' => $image,
+                            'status' => $containerStatus,
+                            'started_at' => date('Y-m-d H:i:s'),
+                        ]);
+                        
+                        echo "Discovered and tracked new container: {$name} ({$dockerId})\n";
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            error_log("Failed to sync containers from node: " . $e->getMessage());
+        }
+    }
+    
+    /**
+     * Try to find application ID from container name
+     */
+    private static function findApplicationIdFromContainerName(string $containerName): ?int
+    {
+        try {
+            $db = App::db();
+            
+            // Container names often include the application UUID
+            // Try to match against application UUIDs in the name
+            $applications = $db->fetchAll("SELECT id, uuid, name FROM applications");
+            
+            foreach ($applications as $app) {
+                // Check if UUID is in container name
+                if (stripos($containerName, $app['uuid']) !== false) {
+                    return (int) $app['id'];
+                }
+                
+                // Check if app name (sanitized) is in container name
+                $sanitizedName = strtolower(preg_replace('/[^a-z0-9]+/', '-', $app['name']));
+                if (stripos($containerName, $sanitizedName) !== false) {
+                    return (int) $app['id'];
+                }
+            }
+            
+            return null;
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+    
+    /**
+     * Sync containers for a specific application from node response
+     */
+    public static function syncContainersForApplication(string $applicationUuid, array $containers, ?int $nodeId): void
+    {
+        try {
+            $db = App::db();
+            
+            // Find the application
+            $app = $db->fetch("SELECT id FROM applications WHERE uuid = ?", [$applicationUuid]);
+            if (!$app) {
+                return;
+            }
+            $applicationId = (int) $app['id'];
+            
+            // Get the latest deployment for this application
+            $deployment = $db->fetch(
+                "SELECT id FROM deployments WHERE application_id = ? ORDER BY id DESC LIMIT 1",
+                [$applicationId]
+            );
+            $deploymentId = $deployment ? (int) $deployment['id'] : null;
+            
+            foreach ($containers as $containerData) {
+                $dockerId = $containerData['id'] ?? '';
+                $name = $containerData['name'] ?? '';
+                $image = $containerData['image'] ?? '';
+                $status = $containerData['status'] ?? 'running';
+                
+                if (empty($dockerId) && empty($name)) {
+                    continue;
+                }
+                
+                // Normalize status
+                $containerStatus = (stripos($status, 'running') !== false || stripos($status, 'up') !== false) ? 'running' : 'exited';
+                
+                // Check if container exists by docker ID or name
+                $existing = $db->fetch(
+                    "SELECT id FROM containers WHERE (container_id = ? OR name = ?) AND application_id = ?",
+                    [$dockerId, $name, $applicationId]
+                );
+                
+                if ($existing) {
+                    // Update existing
+                    $db->update('containers', [
+                        'container_id' => $dockerId ?: $existing['container_id'],
+                        'status' => $containerStatus,
+                        'image' => $image,
+                        'updated_at' => date('Y-m-d H:i:s')
+                    ], 'id = ?', [$existing['id']]);
+                } else {
+                    // Insert new
+                    $db->insert('containers', [
+                        'uuid' => uuid(),
+                        'node_id' => $nodeId,
+                        'deployment_id' => $deploymentId,
+                        'application_id' => $applicationId,
+                        'container_id' => $dockerId,
+                        'name' => $name,
+                        'image' => $image,
+                        'status' => $containerStatus,
+                        'started_at' => date('Y-m-d H:i:s'),
+                    ]);
+                }
+            }
+            
+            echo "Synced " . count($containers) . " containers for application {$applicationUuid}\n";
+        } catch (\Exception $e) {
+            error_log("Failed to sync containers for application: " . $e->getMessage());
         }
     }
 
@@ -291,6 +511,43 @@ class DeploymentService
     }
 
     /**
+     * Handle container log line from node agent
+     */
+    public static function handleContainerLog(string $containerId, string $line, string $level = 'info', ?int $nodeId = null): void
+    {
+        try {
+            $db = App::db();
+            
+            // Find the container by its docker_id or name
+            $container = $db->fetch(
+                "SELECT c.id, c.application_id FROM containers c WHERE c.docker_id = ? OR c.name = ? LIMIT 1",
+                [$containerId, $containerId]
+            );
+            
+            if (!$container) {
+                // Try to find by partial docker ID match (first 12 chars)
+                $shortId = substr($containerId, 0, 12);
+                $container = $db->fetch(
+                    "SELECT c.id, c.application_id FROM containers c WHERE c.docker_id LIKE ? LIMIT 1",
+                    [$shortId . '%']
+                );
+            }
+            
+            $containerDbId = $container['id'] ?? null;
+            $applicationId = $container['application_id'] ?? null;
+            
+            // Insert log line
+            $db->query(
+                "INSERT INTO container_logs (container_id, application_id, node_id, level, line, created_at) VALUES (?, ?, ?, ?, ?, NOW())",
+                [$containerDbId, $applicationId, $nodeId, $level, $line]
+            );
+        } catch (\Exception $e) {
+            // Log error but don't crash - table might not exist yet
+            error_log("Failed to store container log: " . $e->getMessage());
+        }
+    }
+
+    /**
      * Get pending tasks for a node
      */
     public static function getPendingTasks(int $nodeId): array
@@ -299,11 +556,11 @@ class DeploymentService
             $db = App::db();
             
             $tasks = $db->fetchAll(
-                "SELECT * FROM deployment_tasks WHERE node_id = ? ORDER BY created_at ASC LIMIT 10",
+                "SELECT * FROM deployment_tasks WHERE node_id = ? AND status = 'pending' ORDER BY created_at ASC LIMIT 10",
                 [$nodeId]
             );
 
-            // Delete fetched tasks
+            // Delete fetched tasks (they're being sent now)
             if (!empty($tasks)) {
                 $ids = array_column($tasks, 'id');
                 $placeholders = implode(',', array_fill(0, count($ids), '?'));

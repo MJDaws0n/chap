@@ -172,6 +172,89 @@
             return response.json();
         }
     </script>
+    <script>
+        // Transform native <select> elements into themed custom dropdowns
+        // Skips selects that have Alpine bindings (x-model) so those pages manage them directly.
+        document.addEventListener('DOMContentLoaded', () => {
+            function createDropdownFromSelect(select) {
+                const name = select.getAttribute('name');
+                const id = select.getAttribute('id');
+                const classes = select.getAttribute('class') || '';
+
+                const container = document.createElement('div');
+                container.className = 'relative';
+
+                // keep the original select (hide it) so existing scripts and form submission keep working
+                select.style.display = 'none';
+
+                // Button to show current selection
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white w-full text-left flex justify-between items-center';
+                button.setAttribute('aria-haspopup', 'listbox');
+
+                const labelSpan = document.createElement('span');
+                // find selected option text
+                const selOpt = select.options[select.selectedIndex];
+                labelSpan.textContent = selOpt ? selOpt.text : '';
+
+                const chev = document.createElement('svg');
+                chev.setAttribute('viewBox','0 0 24 24');
+                chev.setAttribute('fill','none');
+                chev.className = 'w-4 h-4 ml-2 text-gray-400';
+                chev.innerHTML = '<path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>';
+
+                button.appendChild(labelSpan);
+                button.appendChild(chev);
+
+                // Options container
+                const list = document.createElement('div');
+                list.className = 'absolute z-50 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-auto hidden';
+
+                // build options
+                Array.from(select.options).forEach(opt => {
+                    const item = document.createElement('div');
+                    item.className = 'px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white';
+                    item.textContent = opt.text;
+                    item.dataset.value = opt.value;
+                    item.addEventListener('click', () => {
+                        // set original select value and trigger its change event so existing handlers run
+                        select.value = opt.value;
+                        labelSpan.textContent = opt.text;
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                        list.classList.add('hidden');
+                    });
+                    list.appendChild(item);
+                });
+
+                // Toggle list visibility
+                button.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    list.classList.toggle('hidden');
+                });
+
+                // Close on outside click
+                document.addEventListener('click', (e) => {
+                    if (!container.contains(e.target)) list.classList.add('hidden');
+                });
+
+                container.appendChild(button);
+                container.appendChild(list);
+
+                // insert custom container after the select (select stays hidden so existing listeners and form submit still work)
+                select.parentNode.insertBefore(container, select.nextSibling);
+            }
+
+            const selects = document.querySelectorAll('select');
+            selects.forEach(sel => {
+                // don't transform selects that are bound to Alpine (x-model) - those are handled in-page
+                if (sel.hasAttribute('x-model')) return;
+                // allow opt-out with data-native="true"
+                if (sel.getAttribute('data-native') === 'true') return;
+                createDropdownFromSelect(sel);
+            });
+        });
+    </script>
     <!-- SweetAlert2 and Chap custom theme -->
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.js"></script>
     <script src="/js/chapSwal.js"></script>

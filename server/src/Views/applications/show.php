@@ -35,6 +35,12 @@ $statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
             <?php endif; ?>
         </div>
         <div class="flex space-x-3">
+            <a href="/applications/<?= $application->uuid ?>/logs" class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+                <span>Live Logs</span>
+            </a>
             <?php if ($application->status === 'running'): ?>
                 <form method="POST" action="/applications/<?= $application->uuid ?>/restart" class="inline">
                     <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
@@ -112,9 +118,8 @@ $statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
             <div class="bg-gray-800 rounded-lg p-6">
                 <div class="flex items-center justify-between mb-4">
                     <h2 class="text-lg font-semibold">Configuration</h2>
-                    <button onclick="toggleEdit()" class="text-blue-400 hover:text-blue-300 text-sm">Edit</button>
                 </div>
-                
+
                 <form method="POST" action="/applications/<?= $application->uuid ?>" id="config-form" class="space-y-6">
                     <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                     <input type="hidden" name="_method" value="PUT">
@@ -123,14 +128,12 @@ $statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
                         <div>
                             <label class="block text-sm text-gray-400 mb-1">Name</label>
                             <input type="text" name="name" value="<?= e($application->name) ?>"
-                                class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white config-input"
-                                disabled>
+                                class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
                         </div>
 
                         <div>
                             <label class="block text-sm text-gray-400 mb-1">Node</label>
-                            <select name="node_uuid" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white config-input" disabled>
-                                <option value="">Not assigned</option>
+                            <select name="node_uuid" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
                                 <?php foreach ($nodes as $node): ?>
                                     <option value="<?= $node->uuid ?>" <?= $application->node_id === $node->id ? 'selected' : '' ?>>
                                         <?= e($node->name) ?>
@@ -142,44 +145,27 @@ $statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
                         <div>
                             <label class="block text-sm text-gray-400 mb-1">Git Repository</label>
                             <input type="text" name="git_repository" value="<?= e($application->git_repository) ?>"
-                                class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white config-input"
-                                disabled>
+                                class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
                         </div>
 
                         <div>
                             <label class="block text-sm text-gray-400 mb-1">Branch</label>
                             <input type="text" name="git_branch" value="<?= e($application->git_branch) ?>"
-                                class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white config-input"
-                                disabled>
+                                class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
                         </div>
 
                         <div>
                             <label class="block text-sm text-gray-400 mb-1">Build Pack</label>
-                            <select name="build_pack" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white config-input" disabled>
+                            <select name="build_pack" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
                                 <option value="dockerfile" <?= $application->build_pack === 'dockerfile' ? 'selected' : '' ?>>Dockerfile</option>
                                 <option value="nixpacks" <?= $application->build_pack === 'nixpacks' ? 'selected' : '' ?>>Nixpacks</option>
                                 <option value="static" <?= $application->build_pack === 'static' ? 'selected' : '' ?>>Static Site</option>
                                 <option value="docker-compose" <?= $application->build_pack === 'docker-compose' ? 'selected' : '' ?>>Docker Compose</option>
                             </select>
                         </div>
-
-                        <div>
-                            <label class="block text-sm text-gray-400 mb-1">Port</label>
-                            <input type="number" name="port" value="<?= e($application->port) ?>"
-                                class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white config-input"
-                                disabled>
-                        </div>
-
-                        <div class="md:col-span-2">
-                            <label class="block text-sm text-gray-400 mb-1">Domains</label>
-                            <input type="text" name="domains" value="<?= e($application->domains) ?>"
-                                class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white config-input"
-                                disabled>
-                        </div>
                     </div>
 
-                    <div id="save-buttons" class="hidden flex justify-end space-x-4 pt-4 border-t border-gray-700">
-                        <button type="button" onclick="cancelEdit()" class="px-4 py-2 text-gray-400 hover:text-white">Cancel</button>
+                    <div id="save-buttons" class="flex justify-end space-x-4 pt-4 border-t border-gray-700">
                         <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg">Save Changes</button>
                     </div>
                 </form>
@@ -290,29 +276,7 @@ $statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
 </div>
 
 <script>
-let editMode = false;
 let envEditMode = false;
-
-function toggleEdit() {
-    editMode = !editMode;
-    const inputs = document.querySelectorAll('.config-input');
-    const buttons = document.getElementById('save-buttons');
-    
-    inputs.forEach(input => {
-        input.disabled = !editMode;
-    });
-    
-    if (editMode) {
-        buttons.classList.remove('hidden');
-    } else {
-        buttons.classList.add('hidden');
-    }
-}
-
-function cancelEdit() {
-    document.getElementById('config-form').reset();
-    toggleEdit();
-}
 
 function toggleEnvEdit() {
     envEditMode = !envEditMode;

@@ -387,6 +387,196 @@ class ApplicationController extends BaseController
     }
 
     /**
+     * Live logs page for application
+     */
+    public function logs(string $uuid): void
+    {
+        $team = $this->currentTeam();
+        $application = Application::findByUuid($uuid);
+
+        if (!$this->canAccessApplication($application, $team)) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Application not found'], 404);
+            } else {
+                flash('error', 'Application not found');
+                $this->redirect('/projects');
+            }
+            return;
+        }
+
+        // If API request (AJAX from frontend)
+        if ($this->isApiRequest()) {
+            $containerId = $this->input('container_id');
+            $tail = (int) ($this->input('tail') ?: 100);
+            
+            // Get containers and logs directly from Docker on the node
+            $result = $this->getContainersAndLogsFromNode($application, $containerId, $tail);
+            
+            $this->json($result);
+            return;
+        }
+
+        // Initial page load - just render the view, JS will fetch containers
+        $this->view('applications/logs', [
+            'title' => 'Live Logs - ' . $application->name,
+            'application' => $application,
+            'environment' => $application->environment(),
+            'project' => $application->environment()->project(),
+            'containers' => [], // Will be fetched via AJAX
+        ]);
+    }
+    
+    /**
+     * Get containers and logs from the node agent
+     */
+    private function getContainersAndLogsFromNode(Application $application, ?string $containerId = null, int $tail = 100): array
+    {
+        $nodeId = $application->node_id;
+        if (!$nodeId) {
+            // Try to get node from latest deployment
+            $db = \Chap\App::db();
+            $deployment = $db->fetch(
+                "SELECT node_id FROM deployments WHERE application_id = ? AND node_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                [$application->id]
+            );
+            $nodeId = $deployment['node_id'] ?? null;
+        }
+        
+        if (!$nodeId) {
+            return ['containers' => [], 'logs' => [], 'error' => 'No node assigned'];
+        }
+        
+        // Create a task to get containers/logs from node
+        $db = \Chap\App::db();
+        $taskId = uuid();
+        
+        $db->insert('deployment_tasks', [
+            'node_id' => $nodeId,
+            'task_type' => 'container:logs',
+            'task_data' => json_encode([
+                'type' => 'container:logs',
+                'payload' => [
+                    'task_id' => $taskId,
+                    'application_uuid' => $application->uuid,
+                    'container_id' => $containerId,
+                    'tail' => $tail
+                ]
+            ]),
+            'status' => 'pending'
+        ]);
+        // Wait for response (poll the cache file the WebSocket handler creates)
+        // Use per-request cache filename to avoid races when multiple requests occur for same application
+        $cacheFile = "/tmp/logs_response_{$application->uuid}_{$taskId}.json";
+        $startTime = time();
+        $timeout = 8; // 8 second timeout
+
+        // Delete old cache first
+        if (file_exists($cacheFile)) {
+            @unlink($cacheFile);
+        }
+
+        // If node appears offline, return early to avoid waiting for timeout
+        $node = \Chap\Models\Node::find($nodeId);
+        if ($node && method_exists($node, 'isOnline') && !$node->isOnline()) {
+            return ['containers' => [], 'logs' => [], 'error' => 'Node is offline'];
+        }
+
+        while ((time() - $startTime) < $timeout) {
+            usleep(100000); // 100ms
+
+            if (file_exists($cacheFile)) {
+                $data = json_decode(file_get_contents($cacheFile), true);
+                if ($data && isset($data['timestamp']) && $data['timestamp'] > $startTime) {
+                    return [
+                        'containers' => $data['containers'] ?? [],
+                        'logs' => $data['logs'] ?? []
+                    ];
+                }
+            }
+        }
+
+        // Timeout - return empty with error
+        return ['containers' => [], 'logs' => [], 'error' => 'Timeout waiting for node response'];
+    }
+
+    /**
+     * Get containers for an application
+     */
+    private function getContainersForApplication(Application $application): array
+    {
+        $db = \Chap\App::db();
+        
+        // First try to get containers from containers table
+        $results = $db->fetchAll(
+            "SELECT DISTINCT c.* FROM containers c 
+             LEFT JOIN deployments d ON c.deployment_id = d.id 
+             WHERE c.application_id = ? OR d.application_id = ? 
+             ORDER BY c.created_at DESC",
+            [$application->id, $application->id]
+        );
+        
+        if (!empty($results)) {
+            return array_map(fn($data) => \Chap\Models\Container::fromArray($data), $results);
+        }
+        
+        // Fallback: Create virtual container entries from deployments that have container_id
+        $deployments = $db->fetchAll(
+            "SELECT d.id, d.uuid, d.container_id, d.node_id, d.image_tag, d.status 
+             FROM deployments d 
+             WHERE d.application_id = ? AND d.container_id IS NOT NULL AND d.container_id != ''
+             ORDER BY d.created_at DESC 
+             LIMIT 5",
+            [$application->id]
+        );
+        
+        $containers = [];
+        foreach ($deployments as $dep) {
+            // Create a virtual container object
+            $container = new \stdClass();
+            $container->id = $dep['id']; // Use deployment ID as container ID for lookups
+            $container->container_id = $dep['container_id'];
+            $container->name = $application->name . '-' . substr($dep['container_id'], 0, 12);
+            $container->status = ($dep['status'] === 'running') ? 'running' : 'exited';
+            $container->image = $dep['image_tag'] ?? $application->docker_image ?? 'unknown';
+            $container->node_id = $dep['node_id'];
+            $containers[] = $container;
+        }
+        
+        return $containers;
+    }
+
+    /**
+     * Get logs for a container (placeholder - will be enhanced with real log storage)
+     */
+    private function getContainerLogs(int $containerId, int $tail = 100): array
+    {
+        $db = \Chap\App::db();
+        
+        // Check if container_logs table exists and fetch from it
+        try {
+            $logs = $db->fetchAll(
+                "SELECT * FROM container_logs 
+                 WHERE container_id = ? 
+                 ORDER BY created_at DESC 
+                 LIMIT ?",
+                [$containerId, $tail]
+            );
+            
+            // Reverse to get chronological order
+            $logs = array_reverse($logs);
+            
+            return array_map(fn($log) => [
+                'timestamp' => $log['created_at'] ?? '',
+                'message' => $log['line'] ?? '',
+                'level' => $log['level'] ?? 'info',
+            ], $logs);
+        } catch (\Exception $e) {
+            // Table doesn't exist yet or other error
+            return [];
+        }
+    }
+
+    /**
      * Check if user can access application
      */
     private function canAccessApplication(?Application $application, $team): bool
