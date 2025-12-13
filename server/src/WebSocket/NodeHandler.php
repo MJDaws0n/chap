@@ -91,6 +91,11 @@ class NodeHandler implements MessageComponentInterface {
                 $this->handleContainerLogsResponse($from, $data);
                 break;
 
+            // Session validation for browser WebSocket connections
+            case 'session:validate':
+                $this->handleSessionValidate($from, $data);
+                break;
+
             // Node agent metrics reporting
             case 'node:metrics':
                 $this->handleNodeMetrics($from, $data);
@@ -492,15 +497,23 @@ class NodeHandler implements MessageComponentInterface {
 
     /**
      * Check for pending tasks and send to all connected nodes
-     * Called by periodic timer
+     * Called by periodic timer (every 100ms)
      */
     public function checkAndSendPendingTasks(): void
     {
-        foreach ($this->nodeConnections as $nodeId => $conn) {
-            $tasks = DeploymentService::getPendingTasks($nodeId);
-            
-            if (!empty($tasks)) {
-                echo "[Task Poller] Found " . count($tasks) . " pending task(s) for node {$nodeId}, sending...\n";
+        // Skip if no nodes connected
+        if (empty($this->nodeConnections)) {
+            return;
+        }
+        
+        // Get all pending tasks in one query for all connected nodes
+        $nodeIds = array_keys($this->nodeConnections);
+        $allTasks = DeploymentService::getPendingTasksForNodes($nodeIds);
+        
+        // Group by node and send
+        foreach ($allTasks as $nodeId => $tasks) {
+            if (!empty($tasks) && isset($this->nodeConnections[$nodeId])) {
+                $conn = $this->nodeConnections[$nodeId];
                 foreach ($tasks as $task) {
                     $this->send($conn, $task);
                 }
@@ -560,6 +573,153 @@ class NodeHandler implements MessageComponentInterface {
     {
         foreach ($this->nodeConnections as $conn) {
             $this->send($conn, $data);
+        }
+    }
+
+    /**
+     * Handle session validation request from node
+     * Node calls this to validate a browser's session before allowing log streaming
+     */
+    protected function handleSessionValidate(ConnectionInterface $from, array $data): void
+    {
+        $sessionId = $data['session_id'] ?? null;
+        $applicationUuid = $data['application_uuid'] ?? null;
+        $requestId = $data['request_id'] ?? null;
+
+        // Log all incoming data for debugging
+        error_log("[handleSessionValidate] Incoming: " . json_encode($data));
+        echo "[handleSessionValidate] Incoming: " . json_encode($data) . "\n";
+
+        if (!$sessionId || !$applicationUuid) {
+            $error = 'Missing session_id or application_uuid';
+            error_log("[handleSessionValidate] $error");
+            $this->send($from, [
+                'type' => 'session:validate:response',
+                'request_id' => $requestId,
+                'authorized' => false,
+                'error' => $error
+            ]);
+            return;
+        }
+
+        try {
+            $db = \Chap\App::db();
+
+            // Look up session in database
+            $session = $db->fetch(
+                "SELECT * FROM sessions WHERE id = ?",
+                [$sessionId]
+            );
+
+            if (!$session) {
+                $error = "Session not found: {$sessionId}";
+                error_log("[handleSessionValidate] $error");
+                $this->send($from, [
+                    'type' => 'session:validate:response',
+                    'request_id' => $requestId,
+                    'authorized' => false,
+                    'error' => $error
+                ]);
+                return;
+            }
+
+            // Check session expiry (default 2 hour lifetime)
+            $lifetime = 120 * 60; // 2 hours in seconds
+            if (time() - $session['last_activity'] > $lifetime) {
+                $error = "Session expired: {$sessionId}";
+                error_log("[handleSessionValidate] $error");
+                $this->send($from, [
+                    'type' => 'session:validate:response',
+                    'request_id' => $requestId,
+                    'authorized' => false,
+                    'error' => $error
+                ]);
+                return;
+            }
+
+            // Find application by UUID
+            $application = $db->fetch(
+                "SELECT * FROM applications WHERE uuid = ?",
+                [$applicationUuid]
+            );
+
+            if (!$application) {
+                $error = "Application not found: {$applicationUuid}";
+                error_log("[handleSessionValidate] $error");
+                $this->send($from, [
+                    'type' => 'session:validate:response',
+                    'request_id' => $requestId,
+                    'authorized' => false,
+                    'error' => $error
+                ]);
+                return;
+            }
+
+            // Debug: log the application row
+            error_log('[handleSessionValidate] Application row: ' . json_encode($application));
+
+            // Only check that the user owns the application
+            if (empty($application['user_id'])) {
+                $error = "Application user_id is missing or null (row: " . json_encode($application) . ")";
+                error_log("[handleSessionValidate] $error");
+                $this->send($from, [
+                    'type' => 'session:validate:response',
+                    'request_id' => $requestId,
+                    'authorized' => false,
+                    'error' => $error
+                ]);
+                return;
+            }
+            if ($application['user_id'] != $session['user_id']) {
+                $error = "Access denied: user does not own application (session user_id={$session['user_id']}, application user_id={$application['user_id']})";
+                error_log("[handleSessionValidate] $error");
+                $this->send($from, [
+                    'type' => 'session:validate:response',
+                    'request_id' => $requestId,
+                    'authorized' => false,
+                    'error' => $error
+                ]);
+                return;
+            }
+
+            // --- Commented out team/project checks ---
+            // $project = $db->fetch(
+            //     "SELECT * FROM projects WHERE id = ?",
+            //     [$application['project_id']]
+            // );
+            // if (!$project || $project['team_id'] !== $session['team_id']) {
+            //     $error = "Access denied for user {$session['user_id']} to app {$applicationUuid}";
+            //     error_log("[handleSessionValidate] $error");
+            //     $this->send($from, [
+            //         'type' => 'session:validate:response',
+            //         'request_id' => $requestId,
+            //         'authorized' => false,
+            //         'error' => $error
+            //     ]);
+            //     return;
+            // }
+
+            // Session is valid and user has access
+            error_log("[handleSessionValidate] Session valid, user {$session['user_id']} authorized for app {$applicationUuid}");
+            $this->send($from, [
+                'type' => 'session:validate:response',
+                'request_id' => $requestId,
+                'authorized' => true,
+                'user_id' => $session['user_id'],
+                // 'team_id' => $session['team_id'],
+                'application_id' => $application['id']
+            ]);
+
+        } catch (\Exception $e) {
+            $error = '[handleSessionValidate] Exception: ' . $e->getMessage();
+            error_log($error . "\n" . $e->getTraceAsString());
+            echo "[handleSessionValidate] Error: {$e->getMessage()}\n";
+            $this->send($from, [
+                'type' => 'session:validate:response',
+                'request_id' => $requestId,
+                'authorized' => false,
+                'error' => $error
+            ]);
         }
     }
 }

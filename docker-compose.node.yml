@@ -40,6 +40,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Required: Persistent storage for deployments
       - chap_data:/data
+    ports:
+      # Browser WebSocket for direct log streaming
+      - "${BROWSER_WS_PORT:-6002}:6002"
     networks:
       - chap-node-network
     # Security: Run as non-root user (requires docker group)

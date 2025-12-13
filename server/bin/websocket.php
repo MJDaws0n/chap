@@ -38,12 +38,12 @@ $server = IoServer::factory(
 // Get the event loop
 $loop = $server->loop;
 
-// Add periodic timer to check for pending tasks frequently (250ms) to reduce request latency
-$loop->addPeriodicTimer(0.25, function () use ($handler) {
+// Add periodic timer to check for pending tasks very frequently (100ms) for low-latency logs
+$loop->addPeriodicTimer(0.1, function () use ($handler) {
     $handler->checkAndSendPendingTasks();
 });
 
 echo "WebSocket server running at ws://0.0.0.0:{$port}\n";
-echo "Task polling enabled (checks every 250ms)\n";
+echo "Task polling enabled (checks every 100ms)\n";
 
 $server->run();

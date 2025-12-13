@@ -25,6 +25,11 @@ ENV CHAP_SERVER_URL=ws://chap-server:8081
 ENV CHAP_DATA_DIR=/data
 ENV NODE_ID=
 ENV NODE_TOKEN=
+ENV BROWSER_WS_PORT=6002
+ENV BROWSER_WS_HOST=0.0.0.0
+
+# Expose browser WebSocket port for direct log streaming
+EXPOSE 6002
 
 # Run the agent
 CMD ["npm", "start"]

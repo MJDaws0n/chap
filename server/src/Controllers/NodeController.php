@@ -85,6 +85,7 @@ class NodeController extends BaseController
             'team_id' => $team->id,
             'name' => $data['name'],
             'description' => $data['description'] ?? null,
+            'logs_websocket_url' => $data['logs_websocket_url'] ?? null,
             'token' => $token,
             'status' => 'pending',
         ]);
@@ -158,6 +159,7 @@ class NodeController extends BaseController
         $node->update([
             'name' => $data['name'] ?? $node->name,
             'description' => $data['description'] ?? $node->description,
+            'logs_websocket_url' => $data['logs_websocket_url'] ?? $node->logs_websocket_url,
         ]);
 
         if ($this->isApiRequest()) {

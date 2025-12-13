@@ -58,6 +58,10 @@
                 <dd class="mt-1"><?= $node->agent_version ? e($node->agent_version) : '<span class="text-gray-600">Not connected</span>' ?></dd>
             </div>
             <div>
+                <dt class="text-gray-400 text-sm">Live Logs WebSocket</dt>
+                <dd class="mt-1 font-mono text-sm"><?= $node->logs_websocket_url ? e($node->logs_websocket_url) : '<span class="text-gray-600">Not configured (using polling)</span>' ?></dd>
+            </div>
+            <div>
                 <dt class="text-gray-400 text-sm">Last Seen</dt>
                 <dd class="mt-1"><?= $node->last_seen_at ? time_ago($node->last_seen_at) : '<span class="text-gray-600">Never</span>' ?></dd>
             </div>
@@ -66,6 +70,28 @@
                 <dd class="mt-1"><?= $node->created_at ? time_ago($node->created_at) : '-' ?></dd>
             </div>
         </dl>
+        
+        <!-- Edit Node Form -->
+        <form method="POST" action="/nodes/<?= e($node->uuid) ?>" class="mt-6 pt-4 border-t border-gray-700">
+            <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+            <input type="hidden" name="_method" value="PUT">
+            <div class="space-y-4">
+                <div>
+                    <label for="logs_websocket_url" class="block text-sm font-medium text-gray-300 mb-1">Live Logs WebSocket URL</label>
+                    <input 
+                        type="text" 
+                        id="logs_websocket_url" 
+                        name="logs_websocket_url" 
+                        class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="wss://node.example.com:6002"
+                        value="<?= e($node->logs_websocket_url ?? '') ?>"
+                    >
+                </div>
+                <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg">
+                    Update
+                </button>
+            </div>
+        </form>
     </div>
 
     <!-- Connection Token Card -->

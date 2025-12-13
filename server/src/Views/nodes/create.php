@@ -70,6 +70,19 @@
             >
         </div>
 
+        <div>
+            <label for="logs_websocket_url" class="block text-sm font-medium text-gray-300 mb-2">Live Logs WebSocket URL <span class="text-gray-500">(optional)</span></label>
+            <input 
+                type="text" 
+                id="logs_websocket_url" 
+                name="logs_websocket_url" 
+                class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="wss://node.example.com:6002 or ws://192.168.1.10:6002"
+                value="<?= htmlspecialchars($old['logs_websocket_url'] ?? '') ?>"
+            >
+            <p class="mt-1 text-xs text-gray-500">Direct WebSocket URL for live logs (browsers connect here). Leave blank to use polling.</p>
+        </div>
+
         <div class="bg-blue-900/20 border border-blue-700 rounded-lg p-4">
             <div class="flex items-start space-x-3">
                 <svg class="w-5 h-5 text-blue-400 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

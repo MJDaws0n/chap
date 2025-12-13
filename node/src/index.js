@@ -4,6 +4,7 @@
  */
 
 const WebSocket = require('ws');
+const { WebSocketServer } = require('ws');
 const { spawn, exec } = require('child_process');
 const os = require('os');
 const fs = require('fs');
@@ -18,18 +19,36 @@ const config = {
     nodeToken: process.env.NODE_TOKEN || '',
     reconnectInterval: 5000,
     heartbeatInterval: 5000, // Check for tasks every 5 seconds
-    dataDir: process.env.CHAP_DATA_DIR || '/data'
+    dataDir: process.env.CHAP_DATA_DIR || '/data',
+    // Browser WebSocket server config
+    browserWsPort: parseInt(process.env.BROWSER_WS_PORT || '6002', 10),
+    browserWsHost: process.env.BROWSER_WS_HOST || '0.0.0.0',
+    // SSL config for browser WebSocket (WSS)
+    browserWsSslCert: process.env.BROWSER_WS_SSL_CERT || null,
+    browserWsSslKey: process.env.BROWSER_WS_SSL_KEY || null
 };
 
 // Initialize storage manager
 const storage = new StorageManager(config.dataDir);
 storage.init();
 
+// Utility: safely normalize IDs coming from external sources
+function safeId(x) {
+    return String(x || '').trim();
+}
+
 // State
 let ws = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
 let isConnected = false;
+
+// Browser WebSocket server state
+let browserWss = null;
+// Map of applicationUuid -> Set of authenticated browser connections
+const browserConnections = new Map();
+// Map of pending session validation requests
+const pendingValidations = new Map();
 
 /**
  * Connect to the Chap server
@@ -155,9 +174,63 @@ function handleMessage(message) {
         case 'pong':
             send('pong');
             break;
+        
+        case 'session:validate:response':
+            handleSessionValidateResponse(message);
+            break;
             
         default:
             console.warn(`[Agent] Unknown message type: ${message.type}`);
+    }
+}
+
+/**
+ * Handle session validation response from PHP server
+ */
+function handleSessionValidateResponse(message) {
+    const requestId = message.request_id;
+    // Debug log the incoming session:validate:response
+    console.log(`[BrowserWS] Received session:validate:response for ${message.application_uuid}:`, JSON.stringify(message));
+
+    const pending = pendingValidations.get(requestId);
+    if (!pending) {
+        console.warn(`[BrowserWS] No pending validation for request ${requestId}`);
+        return;
+    }
+
+    pendingValidations.delete(requestId);
+    const { browserWs, applicationUuid, sessionId } = pending;
+
+    if (message.authorized) {
+        console.log(`[BrowserWS] Session validated for app ${applicationUuid}, user ${message.user_id}`);
+
+        // Store connection info
+        browserWs.authenticated = true;
+        browserWs.applicationUuid = applicationUuid;
+        browserWs.userId = message.user_id;
+        browserWs.teamId = message.team_id;
+
+        // Add to connections map
+        if (!browserConnections.has(applicationUuid)) {
+            browserConnections.set(applicationUuid, new Set());
+        }
+        browserConnections.get(applicationUuid).add(browserWs);
+
+        // Send success message to browser
+        browserWs.send(JSON.stringify({
+            type: 'auth:success',
+            message: 'Authenticated successfully'
+        }));
+
+        // Start streaming logs for this application
+        startLogStreamForBrowser(browserWs, applicationUuid);
+    } else {
+        console.log(`[BrowserWS] Session validation failed: ${message.error}`);
+        browserWs.send(JSON.stringify({
+            type: 'auth:failed',
+            error: message.error || 'Authentication failed'
+        }));
+        browserWs.close(4001, 'Authentication failed');
     }
 }
 
@@ -225,7 +298,7 @@ async function handleDeploy(message) {
         
         // Stop existing container if any
         console.log(`[Agent] 🛑 Stopping existing container (if any)...`);
-        await stopContainer(`chap-${applicationId}`);
+        await stopContainer(`chap-${safeId(applicationId)}`);
         
         // Run new container
         console.log(`[Agent] 🏃 Running new container...`);
@@ -352,7 +425,7 @@ async function buildFromGit(deploymentId, appConfig) {
     }
     
     // Build Docker image with resource limits
-    const imageName = `chap-app-${applicationId}:${deploymentId}`;
+    const imageName = `chap-app-${safeId(applicationId)}:${deploymentId}`;
     
     console.log(`[Agent] 🐳 Building Docker image: ${imageName}`);
     sendLog(deploymentId, `🐳 Building Docker image: ${imageName}`, 'info');
@@ -378,7 +451,7 @@ async function buildFromGit(deploymentId, appConfig) {
 async function buildFromDockerfile(deploymentId, appConfig) {
     const applicationId = appConfig.uuid || appConfig.applicationId;
     const buildDir = storage.getBuildDir(applicationId, deploymentId);
-    const imageName = `chap-app-${applicationId}:${deploymentId}`;
+    const imageName = `chap-app-${safeId(applicationId)}:${deploymentId}`;
     
     security.auditLog('build_from_dockerfile_start', { applicationId, deploymentId });
     
@@ -534,7 +607,8 @@ async function deployCompose(deploymentId, appConfig) {
     // Stop any existing compose project
     try {
         console.log(`[Agent] 🛑 Stopping existing services...`);
-        await execCommand(`docker compose -p chap-${applicationId} down`, { cwd: composeDir });
+        const safeAppId = String(applicationId).trim();
+        await execCommand(`docker compose -p chap-${safeAppId} down`, { cwd: composeDir });
     } catch (err) {
         // Ignore if nothing to stop
     }
@@ -544,7 +618,8 @@ async function deployCompose(deploymentId, appConfig) {
     
     // Start compose services with build (using isolated network)
     try {
-        const composeOutput = await execCommand(`docker compose -p chap-${applicationId} up -d --build`, { cwd: composeDir });
+        const safeAppId = String(applicationId).trim();
+        const composeOutput = await execCommand(`docker compose -p chap-${safeAppId} up -d --build`, { cwd: composeDir });
         console.log(`[Agent] ✓ Docker Compose services started`);
         sendLog(deploymentId, '✓ Docker Compose services started', 'info');
     } catch (err) {
@@ -558,7 +633,7 @@ async function deployCompose(deploymentId, appConfig) {
     
     // Get the list of started containers
     try {
-        const psOutput = await execCommand(`docker compose -p chap-${applicationId} ps --format json`, { cwd: composeDir });
+        const psOutput = await execCommand(`docker compose -p chap-${safeId(applicationId)} ps --format json`, { cwd: composeDir });
         const containers = psOutput.trim().split('\n').filter(Boolean).map(line => {
             try {
                 return JSON.parse(line);
@@ -593,7 +668,7 @@ async function deployCompose(deploymentId, appConfig) {
  * Run a container (with security hardening)
  */
 async function runContainer(deploymentId, applicationId, imageName, appConfig) {
-    const containerName = `chap-${applicationId}`;
+    const containerName = `chap-${safeId(applicationId)}`;
     const volumeDir = storage.getVolumeDir(applicationId);
     
     // Security: Validate image name
@@ -691,7 +766,7 @@ async function handleApplicationDelete(message) {
     
     try {
         // Stop and remove regular container
-        const containerName = `chap-${applicationUuid}`;
+        const containerName = `chap-${safeId(applicationUuid)}`;
         try {
             await execCommand(`docker stop ${containerName}`);
             await execCommand(`docker rm ${containerName}`);
@@ -704,8 +779,9 @@ async function handleApplicationDelete(message) {
         const composeDir = storage.getComposeDir(applicationUuid);
         if (fs.existsSync(composeDir)) {
             try {
-                await execCommand(`docker compose -p chap-${applicationUuid} down -v`, { cwd: composeDir });
-                console.log(`[Agent] ✓ Removed compose services for: ${applicationUuid}`);
+                const safeAppId = String(applicationUuid).trim();
+                await execCommand(`docker compose -p chap-${safeAppId} down -v`, { cwd: composeDir });
+                console.log(`[Agent] ✓ Removed compose services for: ${safeAppId}`);
             } catch (err) {
                 // Compose project might not exist
             }
@@ -770,11 +846,12 @@ async function handleStop(message) {
         if ((buildPack === 'compose' || buildPack === 'docker-compose') && fs.existsSync(composeDir)) {
             // Stop compose services
             console.log(`[Agent] Stopping compose services...`);
-            await execCommand(`docker compose -p chap-${applicationUuid} stop`, { cwd: composeDir });
+            const safeAppId = String(applicationUuid).trim();
+            await execCommand(`docker compose -p chap-${safeAppId} stop`, { cwd: composeDir });
             console.log(`[Agent] ✓ Compose services stopped`);
         } else {
             // Stop regular container
-            const containerName = `chap-${applicationUuid}`;
+            const containerName = `chap-${safeId(applicationUuid)}`;
             await execCommand(`docker stop ${containerName}`);
             console.log(`[Agent] ✓ Container ${containerName} stopped`);
         }
@@ -811,11 +888,12 @@ async function handleRestart(message) {
         if ((buildPack === 'compose' || buildPack === 'docker-compose') && fs.existsSync(composeDir)) {
             // Restart compose services
             console.log(`[Agent] Restarting compose services...`);
-            await execCommand(`docker compose -p chap-${applicationUuid} restart`, { cwd: composeDir });
+            const safeAppId = String(applicationUuid).trim();
+            await execCommand(`docker compose -p chap-${safeAppId} restart`, { cwd: composeDir });
             console.log(`[Agent] ✓ Compose services restarted`);
         } else {
             // Restart regular container
-            const containerName = `chap-${applicationUuid}`;
+            const containerName = `chap-${safeId(applicationUuid)}`;
             await execCommand(`docker restart ${containerName}`);
             console.log(`[Agent] ✓ Container ${containerName} restarted`);
         }
@@ -843,8 +921,8 @@ async function handleRestart(message) {
 async function handleLogs(message) {
     const payload = message.payload || {};
     const applicationUuid = payload.application_uuid || payload.applicationId;
-    const requestedContainerId = payload.container_id;
-    const tail = payload.tail || 100;
+    const requestedContainerId = payload.container_id ? safeId(payload.container_id) : null;
+    const tail = Math.min(Math.max(parseInt(payload.tail, 10) || 100, 1), 1000);
     
     // Security: Limit tail to reasonable amount
     const safeTail = Math.min(Math.max(parseInt(tail, 10) || 100, 1), 1000);
@@ -857,8 +935,9 @@ async function handleLogs(message) {
         // Try to get containers from compose project first
         const composeDir = storage.getComposeDir(applicationUuid);
         try {
-            // Use docker ps to get actual container names for the compose project
-            const psOutput = await execCommand(`docker ps -a --filter "label=com.docker.compose.project=chap-${applicationUuid}" --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}"`);
+                // Use docker ps to get actual container names for the compose project
+                const safeAppId = String(applicationUuid).trim();
+                const psOutput = await execCommand(`docker ps -a --filter "label=com.docker.compose.project=chap-${safeAppId}" --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}"`);
             containers = psOutput.trim().split('\n').filter(Boolean).map(line => {
                 const [id, fullName, image, status] = line.split('|');
                 // Extract service name from full container name (e.g., "chap-xxx-app-1" -> "app-1")
@@ -880,7 +959,7 @@ async function handleLogs(message) {
         // If no compose containers, try single container
         if (containers.length === 0) {
             try {
-                const containerName = `chap-${applicationUuid}`;
+                const containerName = `chap-${safeId(applicationUuid)}`;
                 const inspectOutput = await execCommand(`docker inspect ${containerName} --format '{{.Id}}|{{.Name}}|{{.State.Status}}|{{.Config.Image}}'`);
                 const [id, name, status, image] = inspectOutput.trim().split('|');
                 containers = [{
@@ -962,7 +1041,7 @@ async function handleLogs(message) {
  */
 async function handleExec(message) {
     const { applicationId, containerId, command } = message;
-    const containerName = containerId || `chap-${applicationId}`;
+    const containerName = containerId || `chap-${safeId(applicationId)}`;
     
     // Security: Validate command
     const validation = security.validateExecCommand(command);
@@ -1133,11 +1212,373 @@ function scheduleReconnect() {
     console.log(`[Agent] Reconnecting in ${config.reconnectInterval / 1000}s...`);
 }
 
+// ============================================
+// Browser WebSocket Server for Direct Log Streaming
+// ============================================
+
+/**
+ * Start the browser WebSocket server
+ * Uses WSS (secure) if SSL certificates are configured, otherwise WS
+ */
+function startBrowserWsServer() {
+    const useSSL = config.browserWsSslCert && config.browserWsSslKey && 
+                   fs.existsSync(config.browserWsSslCert) && fs.existsSync(config.browserWsSslKey);
+    
+    if (useSSL) {
+        // Create HTTPS server for WSS
+        const https = require('https');
+        const httpsServer = https.createServer({
+            cert: fs.readFileSync(config.browserWsSslCert),
+            key: fs.readFileSync(config.browserWsSslKey)
+        });
+        
+        browserWss = new WebSocketServer({ server: httpsServer });
+        
+        httpsServer.listen(config.browserWsPort, config.browserWsHost, () => {
+            console.log(`[BrowserWS] Secure WSS server started on ${config.browserWsHost}:${config.browserWsPort}`);
+        });
+    } else {
+        // Plain WS (no SSL)
+        browserWss = new WebSocketServer({ 
+            port: config.browserWsPort,
+            host: config.browserWsHost
+        });
+        
+        console.log(`[BrowserWS] Server started on ${config.browserWsHost}:${config.browserWsPort} (no SSL)`);
+    }
+    
+    browserWss.on('connection', (browserWs, req) => {
+        const clientIp = req.socket.remoteAddress;
+        console.log(`[BrowserWS] New connection from ${clientIp}`);
+        
+        browserWs.authenticated = false;
+        browserWs.applicationUuid = null;
+        browserWs.logProcess = null;
+        
+        // Set a timeout for authentication
+        browserWs.authTimeout = setTimeout(() => {
+            if (!browserWs.authenticated) {
+                console.log(`[BrowserWS] Auth timeout for ${clientIp}`);
+                browserWs.close(4000, 'Authentication timeout');
+            }
+        }, 10000); // 10 second timeout
+        
+        browserWs.on('message', (data) => {
+            try {
+                const message = JSON.parse(data.toString());
+                handleBrowserMessage(browserWs, message);
+            } catch (err) {
+                console.error('[BrowserWS] Failed to parse message:', err);
+                browserWs.send(JSON.stringify({ type: 'error', error: 'Invalid message format' }));
+            }
+        });
+        
+        browserWs.on('close', () => {
+            console.log(`[BrowserWS] Connection closed for ${clientIp}`);
+            clearTimeout(browserWs.authTimeout);
+            cleanupBrowserConnection(browserWs);
+        });
+        
+        browserWs.on('error', (err) => {
+            console.error(`[BrowserWS] Error for ${clientIp}:`, err.message);
+        });
+    });
+    
+    browserWss.on('error', (err) => {
+        console.error('[BrowserWS] Server error:', err);
+    });
+}
+
+/**
+ * Handle messages from browser connections
+ */
+function handleBrowserMessage(browserWs, message) {
+    switch (message.type) {
+        case 'auth':
+            handleBrowserAuth(browserWs, message);
+            break;
+            
+        case 'ping':
+            browserWs.send(JSON.stringify({ type: 'pong' }));
+            break;
+            
+        default:
+            if (!browserWs.authenticated) {
+                browserWs.send(JSON.stringify({ type: 'error', error: 'Not authenticated' }));
+                return;
+            }
+            console.warn(`[BrowserWS] Unknown message type: ${message.type}`);
+    }
+}
+
+/**
+ * Handle browser authentication request
+ */
+function handleBrowserAuth(browserWs, message) {
+    // Always forward the exact session_id and application_uuid from the browser
+    const rawSession = message.session_id;
+    const rawApp = message.application_uuid;
+
+    // Trim incoming IDs to avoid stray whitespace/newlines breaking docker commands
+    const session_id = (typeof rawSession === 'string') ? rawSession.trim() : rawSession;
+    const application_uuid = (typeof rawApp === 'string') ? rawApp.trim() : rawApp;
+
+    // Debug log the incoming browser auth request
+    console.log(`[BrowserWS] Incoming auth request:`, JSON.stringify({ session_id, application_uuid }));
+
+    if (!session_id || !application_uuid) {
+        browserWs.send(JSON.stringify({ 
+            type: 'auth:failed', 
+            error: 'Missing session_id or application_uuid' 
+        }));
+        browserWs.close(4001, 'Invalid auth request');
+        return;
+    }
+
+    if (!isConnected || !ws || ws.readyState !== WebSocket.OPEN) {
+        browserWs.send(JSON.stringify({ 
+            type: 'auth:failed', 
+            error: 'Node not connected to server' 
+        }));
+        browserWs.close(4002, 'Node not connected');
+        return;
+    }
+
+    const requestId = `validate_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    pendingValidations.set(requestId, {
+        browserWs,
+        applicationUuid: application_uuid,
+        sessionId: session_id,
+        timestamp: Date.now()
+    });
+
+    // Debug log the outgoing session:validate request
+    console.log(`[BrowserWS] FORWARDING session:validate to PHP server:`, JSON.stringify({ request_id: requestId, session_id, application_uuid }));
+
+    // Send validation request to PHP server with the exact values
+    send('session:validate', {
+        request_id: requestId,
+        session_id: session_id,
+        application_uuid: application_uuid
+    });
+}
+
+/**
+ * Start streaming logs for an authenticated browser connection
+ */
+function startLogStreamForBrowser(browserWs, applicationUuid) {
+    console.log(`[BrowserWS] Starting log stream for app ${applicationUuid}`);
+    
+    // Find a suitable container for this application, prefer label-based (compose) then name matches
+    const safeAppId = safeId(applicationUuid);
+    
+    // Resilient attach: keep trying to attach to container logs until browser disconnects.
+    async function findContainer() {
+        return new Promise((resolve) => {
+            // 1) label-based
+            exec(`docker ps -q --filter "label=chap.application=${safeAppId}"`, (err, stdout) => {
+                if (!err && stdout && stdout.trim()) {
+                    return resolve(stdout.trim().split('\n')[0].trim());
+                }
+
+                // 2) name contains chap-<id>
+                exec(`docker ps -a --filter "name=chap-${safeAppId}" --format "{{.ID}}|{{.Names}}"`, (err2, stdout2) => {
+                    if (!err2 && stdout2 && stdout2.trim()) {
+                        const line = stdout2.trim().split('\n')[0];
+                        const [id, names] = line.split('|');
+                        return resolve(names.trim());
+                    }
+
+                    // 3) exact name
+                    const exactName = `chap-${safeAppId}`;
+                    exec(`docker ps -q --filter "name=^/${exactName}$"`, (err3, stdout3) => {
+                        if (!err3 && stdout3 && stdout3.trim()) {
+                            return resolve(stdout3.trim().split('\n')[0].trim());
+                        }
+
+                        // not found
+                        return resolve(null);
+                    });
+                });
+            });
+        });
+    }
+
+    function attachLogs(containerIdentifier) {
+        if (browserWs.readyState !== WebSocket.OPEN) return;
+
+        const logProcess = spawn('docker', ['logs', '-f', '--tail', '100', '--timestamps', containerIdentifier]);
+        browserWs.logProcess = logProcess;
+
+        const skipRegex = /caught\s+SIGWINCH|shutting down gracefully|AH\d{5}:\s*caught\s+SIGWINCH/i;
+
+        logProcess.stdout.on('data', (data) => {
+            if (browserWs.readyState !== WebSocket.OPEN) return;
+            browserWs.send(JSON.stringify({ type: 'log', stream: 'stdout', data: data.toString() }));
+        });
+
+        logProcess.stderr.on('data', (data) => {
+            if (browserWs.readyState !== WebSocket.OPEN) return;
+            const text = data.toString();
+            if (skipRegex.test(text)) {
+                // Fully suppress known benign messages (do not forward to clients).
+                return;
+            }
+            browserWs.send(JSON.stringify({ type: 'log', stream: 'stderr', data: text }));
+        });
+
+        const onExit = (code, signal) => {
+            if (browserWs.readyState !== WebSocket.OPEN) return;
+            console.log(`[BrowserWS] Log process for ${containerIdentifier} exited (code=${code}, signal=${signal}) — will retry`);
+            // clear current process
+            browserWs.logProcess = null;
+            // schedule reattach
+            browserWs._reattachTimer = setTimeout(() => {
+                if (browserWs.readyState !== WebSocket.OPEN) return;
+                startAttachLoop();
+            }, 2000);
+        };
+
+        logProcess.on('error', (err) => {
+            console.error(`[BrowserWS] Log process error for ${containerIdentifier}:`, err.message);
+        });
+        logProcess.on('close', onExit);
+    }
+
+    async function startAttachLoop() {
+        if (browserWs.readyState !== WebSocket.OPEN) return;
+
+        const containerId = await findContainer();
+        if (!containerId) {
+            // no container yet — notify and poll
+            if (browserWs.readyState === WebSocket.OPEN) {
+                browserWs.send(JSON.stringify({ type: 'log', stream: 'system', data: 'Waiting for container to appear...\n' }));
+            }
+            browserWs._reattachTimer = setTimeout(() => {
+                startAttachLoop();
+            }, 2000);
+            return;
+        }
+
+        // attach to found container
+        attachLogs(containerId);
+    }
+
+    // Begin the attach loop
+    startAttachLoop();
+}
+
+/**
+ * Alternative log streaming by finding container with label
+ */
+function startLogStreamByLabel(browserWs, applicationUuid) {
+    console.log(`[BrowserWS] Trying label-based log stream for ${applicationUuid}`);
+    
+    // Find container by label (trim application UUID before use)
+    const safeAppLabel = String(applicationUuid).trim();
+    exec(`docker ps -q --filter "label=chap.application=${safeAppLabel}"`, (err, stdout) => {
+        if (err || !stdout.trim()) {
+            console.log(`[BrowserWS] No running container found for ${safeAppLabel}`);
+            if (browserWs.readyState === WebSocket.OPEN) {
+                browserWs.send(JSON.stringify({
+                    type: 'log',
+                    stream: 'system',
+                    data: 'No running container found for this application\n'
+                }));
+            }
+            return;
+        }
+
+        const containerId = stdout.trim().split('\n')[0].trim();
+        console.log(`[BrowserWS] Found container ${containerId} for ${safeAppLabel}`);
+        // Use the same resilient attach logic as startLogStreamForBrowser: try to
+        // attach and on close schedule a reattach loop.
+        if (browserWs.readyState === WebSocket.OPEN) {
+            if (browserWs._reattachTimer) {
+                clearTimeout(browserWs._reattachTimer);
+                browserWs._reattachTimer = null;
+            }
+            const containerIdentifier = containerId;
+            const logProcess = spawn('docker', ['logs', '-f', '--tail', '100', '--timestamps', containerIdentifier]);
+            browserWs.logProcess = logProcess;
+
+            const skipRegex = /caught\s+SIGWINCH|shutting down gracefully|AH\d{5}:\s*caught\s+SIGWINCH/i;
+            logProcess.stdout.on('data', (data) => {
+                if (browserWs.readyState !== WebSocket.OPEN) return;
+                browserWs.send(JSON.stringify({ type: 'log', stream: 'stdout', data: data.toString() }));
+            });
+            logProcess.stderr.on('data', (data) => {
+                if (browserWs.readyState !== WebSocket.OPEN) return;
+                const text = data.toString();
+                if (skipRegex.test(text)) {
+                    // Fully suppress known benign messages (do not forward to clients).
+                    return;
+                }
+                browserWs.send(JSON.stringify({ type: 'log', stream: 'stderr', data: text }));
+            });
+            logProcess.on('error', (err) => console.error(`[BrowserWS] Log process error:`, err.message));
+            logProcess.on('close', (code) => {
+                if (browserWs.readyState !== WebSocket.OPEN) return;
+                browserWs.logProcess = null;
+                browserWs._reattachTimer = setTimeout(() => startLogStreamForBrowser(browserWs, applicationUuid), 2000);
+            });
+        }
+    });
+}
+
+/**
+ * Cleanup browser connection
+ */
+function cleanupBrowserConnection(browserWs) {
+    // Kill log process if running
+    if (browserWs.logProcess) {
+        browserWs.logProcess.kill();
+        browserWs.logProcess = null;
+    }
+    // Clear any scheduled reattach timer
+    if (browserWs._reattachTimer) {
+        clearTimeout(browserWs._reattachTimer);
+        browserWs._reattachTimer = null;
+    }
+    
+    // Remove from connections map
+    if (browserWs.applicationUuid && browserConnections.has(browserWs.applicationUuid)) {
+        browserConnections.get(browserWs.applicationUuid).delete(browserWs);
+        if (browserConnections.get(browserWs.applicationUuid).size === 0) {
+            browserConnections.delete(browserWs.applicationUuid);
+        }
+    }
+}
+
+/**
+ * Cleanup stale pending validations (older than 30 seconds)
+ */
+function cleanupPendingValidations() {
+    const now = Date.now();
+    for (const [requestId, pending] of pendingValidations) {
+        if (now - pending.timestamp > 30000) {
+            console.log(`[BrowserWS] Cleaning up stale validation ${requestId}`);
+            pendingValidations.delete(requestId);
+            if (pending.browserWs.readyState === WebSocket.OPEN) {
+                pending.browserWs.close(4003, 'Validation timeout');
+            }
+        }
+    }
+}
+
+// Cleanup pending validations every 10 seconds
+setInterval(cleanupPendingValidations, 10000);
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
     console.log('[Agent] Received SIGTERM, shutting down...');
     stopHeartbeat();
     if (ws) ws.close();
+    if (browserWss) {
+        browserWss.clients.forEach(client => client.close());
+        browserWss.close();
+    }
     process.exit(0);
 });
 
@@ -1145,6 +1586,10 @@ process.on('SIGINT', () => {
     console.log('[Agent] Received SIGINT, shutting down...');
     stopHeartbeat();
     if (ws) ws.close();
+    if (browserWss) {
+        browserWss.clients.forEach(client => client.close());
+        browserWss.close();
+    }
     process.exit(0);
 });
 
@@ -1155,6 +1600,12 @@ console.log('========================================');
 console.log(`  Server: ${config.serverUrl}`);
 console.log(`  Node ID: ${config.nodeId || '(auto)'}`);
 console.log(`  Data Dir: ${config.dataDir}`);
+const browserWsProtocol = (config.browserWsSslCert && config.browserWsSslKey) ? 'wss' : 'ws';
+console.log(`  Browser WS: ${browserWsProtocol}://${config.browserWsHost}:${config.browserWsPort}`);
 console.log('');
 
+// Start browser WebSocket server
+startBrowserWsServer();
+
+// Connect to Chap server
 connect();

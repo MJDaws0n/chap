@@ -574,4 +574,54 @@ class DeploymentService
             return [];
         }
     }
+    
+    /**
+     * Get pending tasks for multiple nodes in a single query (optimized for polling)
+     * @param array $nodeIds
+     * @return array<int, array> Map of nodeId => tasks
+     */
+    public static function getPendingTasksForNodes(array $nodeIds): array
+    {
+        if (empty($nodeIds)) {
+            return [];
+        }
+        
+        try {
+            $db = App::db();
+            
+            $placeholders = implode(',', array_fill(0, count($nodeIds), '?'));
+            
+            // Pick pending tasks, and also retry 'sent' tasks older than 10s
+            $tasks = $db->fetchAll(
+                "SELECT * FROM deployment_tasks WHERE node_id IN ({$placeholders}) AND (status = 'pending' OR (status = 'sent' AND updated_at < (NOW() - INTERVAL 10 SECOND))) ORDER BY created_at ASC LIMIT 50",
+                $nodeIds
+            );
+
+            if (empty($tasks)) {
+                return [];
+            }
+
+            // Mark fetched tasks as 'sent'
+            $ids = array_column($tasks, 'id');
+            $idPlaceholders = implode(',', array_fill(0, count($ids), '?'));
+            $db->query("UPDATE deployment_tasks SET status = 'sent', updated_at = NOW() WHERE id IN ({$idPlaceholders})", $ids);
+
+            // Group by node_id
+            $grouped = [];
+            foreach ($tasks as $t) {
+                $nid = (int)$t['node_id'];
+                if (!isset($grouped[$nid])) {
+                    $grouped[$nid] = [];
+                }
+                $decoded = json_decode($t['task_data'], true);
+                if ($decoded) {
+                    $grouped[$nid][] = $decoded;
+                }
+            }
+            
+            return $grouped;
+        } catch (\Exception $e) {
+            return [];
+        }
+    }
 }

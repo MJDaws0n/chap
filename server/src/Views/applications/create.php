@@ -167,26 +167,32 @@
         </div>
 
         <!-- Environment Variables -->
-        <div class="bg-gray-800 rounded-lg p-6">
-            <h2 class="text-lg font-semibold mb-4">Environment Variables</h2>
-            <div>
-                <label class="block text-sm font-medium text-gray-300 mb-2">Variables</label>
-                <?php $initialEnv = old('environment_variables', ''); ?>
-                <div x-data="envEditor({ initial: <?= json_encode($initialEnv) ?> })" class="space-y-2">
+        <?php $initialEnv = old('environment_variables', ''); ?>
+        <div x-data="envEditor()" x-ref="envEditor" data-initial-b64="<?= base64_encode($initialEnv) ?>" x-init="if($el.dataset.initialB64){ try{ $data.parseEnvString(atob($el.dataset.initialB64)); }catch(e){console.warn(e);} }" class="bg-gray-800 rounded-lg p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold">Environment Variables</h2>
+                <button type="button" @click="toggleManual();" x-text="manualMode ? 'Hide' : 'Show'" class="text-blue-400 hover:text-blue-300 text-sm"></button>
+            </div>
+
+                <div class="space-y-2">
                     <div class="flex items-center space-x-2">
                         <div class="text-xs text-gray-400">Environment Variables</div>
-                        <button type="button" @click="addRow()" class="ml-auto bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">New Variable</button>
+                        <div class="ml-auto flex items-center space-x-2">
+                            <button type="button" @click="openBulkEditor()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">Bulk Edit</button>
+                            <button type="button" @click="addRow()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">New Variable</button>
+                        </div>
                     </div>
 
                     <div class="space-y-2">
                         <template x-for="(row, idx) in rows" :key="idx">
-                            <div class="flex items-center space-x-2 bg-gray-700 px-3 py-2 rounded">
-                                <input x-model="row.key" placeholder="KEY" class="w-1/3 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm" @input="updateSerialized()">
-                                <div class="flex-1 relative" @mouseenter="row.revealed = true" @mouseleave="row.revealed = false">
-                                    <input :type="row.manual ? 'text' : (row.revealed ? 'text' : 'password')" x-model="row.value" placeholder="value" class="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm" @input="updateSerialized()">
-                                    <div class="absolute right-0 top-0 h-full flex items-center pr-2 space-x-1">
-                                        <button type="button" @click="row.manual = !row.manual; updateSerialized()" class="text-xs text-gray-300 px-2"> <span x-text="row.manual ? 'Auto' : 'Manual'"></span></button>
-                                        <button type="button" @click="removeRow(idx)" class="text-red-400 px-2">Remove</button>
+                            <div class="rounded-lg p-3">
+                                <div class="flex items-center space-x-3">
+                                    <input x-model="row.key" placeholder="KEY" class="w-1/3 bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white text-sm" @input="updateSerialized()">
+                                    <div class="flex-1 relative" @mouseenter="onEnter(idx)" @mouseleave="onLeave(idx)">
+                                        <input :type="(row.manual || manualMode) ? 'text' : (row.revealed ? 'text' : 'password')" x-model="row.value" placeholder="value" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white text-sm" @input="updateSerialized()">
+                                        <div class="absolute right-2 top-1/2 transform -translate-y-1/2">
+                                            <button type="button" @click="removeRow(idx)" class="text-red-400 px-2">Remove</button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -195,10 +201,10 @@
                     </div>
 
                     <textarea name="environment_variables" x-model="serialized" class="hidden" id="environment_variables"></textarea>
+
+                    <p class="text-xs text-gray-500 mt-1">Add environment variables as key/value pairs. Values are hidden by default.</p>
                 </div>
-                <p class="text-xs text-gray-500 mt-1">Add environment variables as key/value pairs. Values are hidden by default.</p>
             </div>
-        </div>
 
         <!-- Resources -->
         <div class="bg-gray-800 rounded-lg p-6">
@@ -273,17 +279,66 @@ function envEditor(opts={}){
     return {
         rows: [],
         serialized: '',
+        manualMode: false,
         init() {
             this.parseEnvString(initial);
             this.updateSerialized();
+            // Hide reveals when pointer leaves the window or window loses focus
+            window.addEventListener('mouseout', (e) => {
+                try {
+                    if (!e.relatedTarget) {
+                        for (let r of this.rows) r.revealed = false;
+                    }
+                } catch (err) {}
+            });
+            window.addEventListener('blur', () => { for (let r of this.rows) r.revealed = false; });
         },
         addRow(key = '', value = '', manual = false) {
             this.rows.push({ key: key, value: value, revealed: false, manual: manual });
             this.updateSerialized();
         },
+        toggleManual() {
+            this.manualMode = !this.manualMode;
+            for (let r of this.rows) r.manual = this.manualMode;
+            this.updateSerialized();
+        },
+        onEnter(i) {
+            if (!this.rows[i]) return;
+            if (this.rows[i]._revealTimeout) { clearTimeout(this.rows[i]._revealTimeout); this.rows[i]._revealTimeout = null; }
+            this.rows[i].revealed = true;
+        },
+        onLeave(i) {
+            if (!this.rows[i]) return;
+            // small delay so quick mouseoffs don't stick
+            this.rows[i]._revealTimeout = setTimeout(()=>{ if(this.rows[i]) this.rows[i].revealed = false; this.rows[i]._revealTimeout = null; }, 120);
+        },
         removeRow(i) {
             this.rows.splice(i, 1);
             this.updateSerialized();
+        },
+        openBulkEditor() {
+            const self = this;
+            chapSwal({
+                title: 'Bulk Edit Environment Variables',
+                html: '<textarea id="swal-env" rows="12" class="w-full bg-gray-800 text-white p-2 rounded-lg" placeholder="KEY=VALUE\nANOTHER=VAL"></textarea>',
+                showCancelButton: true,
+                confirmButtonText: 'Apply',
+                cancelButtonText: 'Cancel',
+                didOpen: () => {
+                    const ta = document.getElementById('swal-env');
+                    if (ta) { ta.value = self.serialized || ''; ta.focus(); }
+                },
+                preConfirm: () => {
+                    const ta = document.getElementById('swal-env');
+                    return ta ? ta.value : '';
+                }
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    const txt = result.value || '';
+                    self.parseEnvString(txt);
+                    self.updateSerialized();
+                }
+            });
         },
         updateSerialized() {
             this.serialized = this.rows.map(r => (r.key ? r.key + '=' + r.value : '')).filter(Boolean).join('\n');

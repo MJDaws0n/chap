@@ -23,27 +23,35 @@ Chap consists of two components that run on **separate servers**:
 | **chap-node** | Each deployment server | Docker management, builds, deployments |
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                  YOUR CENTRAL SERVER                         │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │                    Chap Server                          │ │
-│  │  Apache/PHP  ◄──►  MySQL  ◄──►  WebSocket Hub          │ │
-│  └────────────────────────────────────────────────────────┘ │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ WebSocket (port 8081)
-           ┌───────────────┼───────────────┐
-           │               │               │
-           ▼               ▼               ▼
-┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
-│  SERVER A        │ │  SERVER B        │ │  SERVER C        │
-│  ┌────────────┐  │ │  ┌────────────┐  │ │  ┌────────────┐  │
-│  │ Chap Node  │  │ │  │ Chap Node  │  │ │  │ Chap Node  │  │
-│  │  + Docker  │  │ │  │  + Docker  │  │ │  │  + Docker  │  │
-│  └────────────┘  │ │  └────────────┘  │ │  └────────────┘  │
-│  Your apps here  │ │  Your apps here  │ │  Your apps here  │
-└──────────────────┘ └──────────────────┘ └──────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        BROWSER CLIENT                           │
+│                  (Dashboard / Live Logs UI)                     │ ───┐
+└───────────────────────────────┬─────────────────────────────────┘    │
+                                │ HTTP / HTTPS                         │
+                                ▼                                      │
+┌─────────────────────────────────────────────────────────────────┐    │
+│                        CENTRAL SERVER                           │    │
+│  ┌───────────────────────────────────────────────────────────┐  │    │
+│  │                        Chap Server                        │  │    │
+│  │     Apache / PHP  ◄──►  MySQL                             │  │    │
+│  │     (auth, state, UI API, metadata)                       │  │    │
+│  └───────────────────────────────────────────────────────────┘  │    │
+└───────────────────────────────┬─────────────────────────────────┘    │
+                                │ WebSocket (port 8081)                │
+           ┌────────────────────┼────────────────────────┐             │
+           │                    │                        │             │
+           ▼                    ▼                        ▼             │
+┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐         │
+│  SERVER A        │ │  SERVER B        │ │  SERVER C        │         │
+│  ┌────────────┐  │ │  ┌────────────┐  │ │  ┌────────────┐  │         │
+│  │ Chap Node  │  │ │  │ Chap Node  │  │ │  │ Chap Node  │  │         │
+│  │  + Docker  │  │ │  │  + Docker  │  │ │  │  + Docker  │  │         │
+│  └────────────┘  │ │  └────────────┘  │ │  └────────────┘  │         │
+│  Your apps here  │ │  Your apps here  │ │  Your apps here  │         │
+└──────────────────┘ └──────────────────┘ └──────────────────┘         │
+         ▲                    ▲                     ▲                  │
+         └──── Optional Direct WebSocket (logs) ────┴──────────────────┘
 ```
-
 ---
 
 ## Installation
@@ -51,7 +59,7 @@ Chap consists of two components that run on **separate servers**:
 ### Prerequisites
 
 - Docker and Docker Compose installed on all servers
-- Network connectivity between server and nodes (port 8081)
+- Network connectivity between server and nodes (port 8081 on central server)
 
 ---
 
@@ -63,6 +71,13 @@ Run this on your **central server** (where you want the dashboard):
 # Clone the repository
 git clone https://github.com/MJDaws0n/chap.git
 cd chap
+
+# Remove the node (if not running node on this server)
+rm -r node
+rm docker-compose.node.yml
+
+# Remove development file (can create confusion)
+rm docker-compose.yml
 
 # Copy and edit environment file
 cp .env.example .env
@@ -88,42 +103,35 @@ Run this on **each server** where you want to deploy applications.
 
 > **Note:** You only run ONE node per server. Each node connects back to your central Chap server.
 
-### Option A: Quick Install (Recommended)
+### Quick Install
 
 ```bash
-# Download just the node compose file
-curl -O https://raw.githubusercontent.com/MJDaws0n/chap/main/docker-compose.node.yml
+# Clone the repository
+git clone https://github.com/MJDaws0n/chap.git
+cd chap
 
-# Create environment file
-cat > .env << EOF
-NODE_ID=my-server-name
-NODE_TOKEN=your-token-from-dashboard
-CHAP_SERVER_URL=ws://your-chap-server:8081
-EOF
+# Remove the server (web inferface not needed)
+rm -r node
+rm docker-compose.server.yml
+
+# Remove development file (can create confusion)
+rm docker-compose.yml
+
+# Create environment file from the example (in node folder) and edit it
+cp node/.env.example .env
+nano .env  # set NODE_ID, NODE_TOKEN and CHAP_SERVER_URL (see notes below)
 
 # Start the node
 docker compose -f docker-compose.node.yml up -d
 ```
 
-### Option B: Single Docker Command
-
-```bash
-docker run -d \
-  --name chap-node \
-  --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v chap_data:/data \
-  -e NODE_ID=my-server-name \
-  -e NODE_TOKEN=your-token-from-dashboard \
-  -e CHAP_SERVER_URL=ws://your-chap-server:8081 \
-  ghcr.io/mjdaws0n/chap-node:latest
-```
+Note: when setting `CHAP_SERVER_URL` for a node, include the WebSocket scheme. Use `wss://` if your Chap server is served over HTTPS (TLS), or `ws://` for non-HTTPS setups. See the "Live Logging (WebSocket)" section below for certificate and reverse-proxy details.
 
 ### Getting Node Credentials
 
 1. Log in to your Chap dashboard
 2. Go to **Nodes** → **Add Node**
-3. Copy the generated `NODE_ID` and `NODE_TOKEN`
+3. Create a name for your node and copy the `NODE_TOKEN`
 4. Use these in your node's environment variables
 
 ---
@@ -165,14 +173,6 @@ This starts everything locally at `http://localhost:8080`
 6. Select which **Node** to deploy to
 7. Click **Deploy**
 
-### From Docker Image
-
-1. Create a Project and Environment
-2. Add a new Application → Select "Docker Image"
-3. Enter the image name (e.g., `nginx:latest`)
-4. Configure ports and environment variables
-5. Click **Deploy**
-
 ### One-Click Services
 
 1. Go to **Templates**
@@ -182,7 +182,7 @@ This starts everything locally at `http://localhost:8080`
 
 ---
 
-## API
+## API (not implemented yet)
 
 ```bash
 # Login and get token
@@ -218,31 +218,22 @@ curl -X POST https://your-chap-server/api/v1/applications/{id}/deploy \
 | `CHAP_SERVER_URL` | WebSocket URL to server | (required) |
 | `CHAP_DATA_DIR` | Storage path | `/data` |
 
----
+### Live Logging (WebSocket)
 
-## Project Structure
+Chap supports optional live logging using a persistent WebSocket connection between each node and the central server. This enables near-real-time application logs in the dashboard.
 
-```
-chap/
-├── server/                     # PHP server application
-│   ├── public/                # Web root
-│   ├── src/                   # Application code
-│   └── migrations/            # Database migrations
-├── node/                       # Node.js agent
-│   └── src/                   # Agent code
-├── docker-compose.yml          # Development (all-in-one)
-├── docker-compose.server.yml   # Production server only
-└── docker-compose.node.yml     # Production node only
-```
-
+- **Node URL scheme:** When creating a node, set `CHAP_SERVER_URL` to include the scheme: use `wss://your-chap-server:8081` for HTTPS servers, or `ws://your-chap-server:8081` for non-HTTPS servers.
+- **Certificates & TLS:** If your dashboard is served over HTTPS, browsers require a secure WebSocket (`wss://`) with a valid certificate. Provide a valid certificate either by:
+  - Terminating TLS at your reverse proxy (recommended) and proxying WebSocket traffic to the Chap server, or
+  - Setting the certificate values in your server's `.env` (uncomment and fill the certificate variables). If those `.env` certificate variables remain commented out the node will fall back to `ws://` (insecure).
+- **Mixed-content warning:** If the dashboard uses HTTPS but the WebSocket uses `ws://`, modern browsers will block the connection as mixed content. To avoid this, either use `wss://` with a valid cert or terminate TLS at a reverse proxy.
+- **Fallback behavior:** The WebSocket is used only for live application logging. If WebSocket connectivity isn't available, logs still work by polling over HTTP, but expect higher latency and increased resource usage.
 ---
 
 ## License
-
 MIT License - see [LICENSE](LICENSE)
 
 ## Credits
-
 Created by Max
 
 Inspired by [Coolify](https://coolify.io/)

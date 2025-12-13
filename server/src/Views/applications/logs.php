@@ -40,9 +40,11 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
                 <span>/</span>
                 <a href="/projects/<?= $project->uuid ?>" class="hover:text-white"><?= e($project->name) ?></a>
                 <span>/</span>
-                <a href="/environments/<?= $environment->uuid ?>" class="hover:text-white"><?= e($environment->name) ?></a>
+                <a href="/environments/<?= $environment->uuid ?>"
+                    class="hover:text-white"><?= e($environment->name) ?></a>
                 <span>/</span>
-                <a href="/applications/<?= $application->uuid ?>" class="hover:text-white"><?= e($application->name) ?></a>
+                <a href="/applications/<?= $application->uuid ?>"
+                    class="hover:text-white"><?= e($application->name) ?></a>
                 <span>/</span>
                 <span>Live Logs</span>
             </div>
@@ -55,7 +57,8 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
             <p class="text-gray-400 mt-1"><?= e($application->name) ?></p>
         </div>
         <div class="flex space-x-3">
-            <a href="/applications/<?= $application->uuid ?>" class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg">
+            <a href="/applications/<?= $application->uuid ?>"
+                class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg">
                 ← Back to Application
             </a>
         </div>
@@ -70,23 +73,36 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
                     <div class="flex items-center space-x-4">
                         <!-- Container Dropdown -->
                         <div class="relative">
-                            <button @click="dropdownOpen = !dropdownOpen" type="button" class="bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white text-left flex justify-between items-center min-w-[200px] focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                            <button @click="dropdownOpen = !dropdownOpen" type="button"
+                                class="bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white text-left flex justify-between items-center min-w-[200px] focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
                                 <span x-text="selectedContainerName()"></span>
-                                <svg class="w-4 h-4 ml-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                <svg class="w-4 h-4 ml-2 text-gray-400" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M19 9l-7 7-7-7" />
+                                </svg>
                             </button>
-                            <div x-show="dropdownOpen" @click.away="dropdownOpen = false" x-cloak class="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-auto">
+                            <div x-show="dropdownOpen" @click.away="dropdownOpen = false" x-cloak
+                                class="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-auto">
                                 <div class="p-2">
-                                    <input type="text" x-model="containerSearch" placeholder="Search containers..." class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm" autocomplete="off">
+                                    <input type="text" x-model="containerSearch" placeholder="Search containers..."
+                                        class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm"
+                                        autocomplete="off">
                                 </div>
                                 <template x-for="container in filteredContainers()" :key="container.id">
-                                    <div @click="selectContainer(container)" class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white" :class="{'bg-blue-700/30': container.id === selectedContainer}">
+                                    <div @click="selectContainer(container)"
+                                        class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white"
+                                        :class="{'bg-blue-700/30': container.id === selectedContainer}">
                                         <div class="flex items-center justify-between">
                                             <span x-text="container.name" class="truncate"></span>
-                                            <span class="text-xs px-2 py-0.5 rounded-full" :class="container.status === 'running' ? 'bg-green-600/30 text-green-400' : 'bg-gray-600/30 text-gray-400'" x-text="container.status"></span>
+                                            <span class="text-xs px-2 py-0.5 rounded-full"
+                                                :class="container.status === 'running' ? 'bg-green-600/30 text-green-400' : 'bg-gray-600/30 text-gray-400'"
+                                                x-text="container.status"></span>
                                         </div>
                                     </div>
                                 </template>
-                                <div x-show="filteredContainers().length === 0" class="px-4 py-2 text-gray-400">No containers found</div>
+                                <div x-show="filteredContainers().length === 0" class="px-4 py-2 text-gray-400">No
+                                    containers found</div>
                             </div>
                         </div>
 
@@ -94,24 +110,28 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
                         <template x-if="isLive">
                             <div class="flex items-center space-x-2 text-sm text-gray-400">
                                 <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                                <span>Live</span>
+                                <span x-text="wsConnected ? 'Live (WebSocket)' : 'Live'"></span>
                             </div>
                         </template>
 
-                        <!-- Pause/Resume -->
-                        <button @click="togglePause()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-lg text-sm">
-                            <span x-show="!paused">Pause</span>
-                            <span x-show="paused">Resume</span>
-                        </button>
+                        <!-- Connection status -->
+                        <template x-if="!isLive && !loading">
+                            <div class="flex items-center space-x-2 text-sm text-gray-400">
+                                <div class="w-2 h-2 bg-gray-500 rounded-full"></div>
+                                <span>Disconnected</span>
+                            </div>
+                        </template>
 
                         <!-- Refresh -->
-                        <button @click="fetchLogs()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-lg text-sm">
-                            Refresh
+                        <button @click="useWebSocket ? connectWebSocket() : fetchLogs()"
+                            class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-lg text-sm">
+                            <span x-text="useWebSocket ? 'Reconnect' : 'Refresh'">Refresh</span>
                         </button>
                     </div>
                 </div>
-                
-                <div id="logs-container" class="bg-gray-900 rounded-lg p-4 h-[600px] overflow-y-auto font-mono text-sm" x-ref="logsContainer">
+
+                <div id="logs-container" class="bg-gray-900 rounded-lg p-4 h-[600px] overflow-y-auto font-mono text-sm"
+                    x-ref="logsContainer">
                     <template x-if="logs.length === 0 && !loading">
                         <p class="text-gray-500">No logs available. Select a container to view logs.</p>
                     </template>
@@ -136,20 +156,23 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
                 <div class="space-y-3">
                     <form method="POST" action="/applications/<?= $application->uuid ?>/deploy">
                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg">
+                        <button type="submit"
+                            class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg">
                             Redeploy
                         </button>
                     </form>
                     <?php if ($application->status === 'running'): ?>
                         <form method="POST" action="/applications/<?= $application->uuid ?>/restart">
                             <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                            <button type="submit" class="w-full bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg">
+                            <button type="submit"
+                                class="w-full bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg">
                                 Restart
                             </button>
                         </form>
                         <form method="POST" action="/applications/<?= $application->uuid ?>/stop">
                             <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                            <button type="submit" class="w-full bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg">
+                            <button type="submit"
+                                class="w-full bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg">
                                 Stop Application
                             </button>
                         </form>
@@ -165,19 +188,29 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
                         <label class="block text-sm text-gray-400 mb-2">Tail Lines</label>
                         <div x-data="{ openTail: false }" class="relative">
                             <input type="hidden" name="tailSize" x-model="tailSize">
-                            <button type="button" @click="openTail = !openTail" class="bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white w-full text-left flex justify-between items-center">
+                            <button type="button" @click="openTail = !openTail"
+                                class="bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white w-full text-left flex justify-between items-center">
                                 <span x-text="tailSize + ' lines'"></span>
-                                <svg class="w-4 h-4 ml-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                <svg class="w-4 h-4 ml-2 text-gray-400" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M19 9l-7 7-7-7" />
+                                </svg>
                             </button>
-                            <div x-show="openTail" @click.away="openTail = false" x-cloak class="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg">
-                                <div @click="tailSize='100'; openTail=false; fetchLogs()" class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white">100 lines</div>
-                                <div @click="tailSize='500'; openTail=false; fetchLogs()" class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white">500 lines</div>
-                                <div @click="tailSize='1000'; openTail=false; fetchLogs()" class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white">1000 lines</div>
+                            <div x-show="openTail" @click.away="openTail = false" x-cloak
+                                class="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg">
+                                <div @click="tailSize='100'; openTail=false; fetchLogs()"
+                                    class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white">100 lines</div>
+                                <div @click="tailSize='500'; openTail=false; fetchLogs()"
+                                    class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white">500 lines</div>
+                                <div @click="tailSize='1000'; openTail=false; fetchLogs()"
+                                    class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white">1000 lines</div>
                             </div>
                         </div>
                     </div>
                     <div class="flex items-center space-x-2">
-                        <input type="checkbox" x-model="autoScroll" id="autoScroll" class="w-4 h-4 bg-gray-700 border-gray-600 rounded focus:ring-blue-500">
+                        <input type="checkbox" x-model="autoScroll" id="autoScroll"
+                            class="w-4 h-4 bg-gray-700 border-gray-600 rounded focus:ring-blue-500">
                         <label for="autoScroll" class="text-sm text-gray-300">Auto-scroll to bottom</label>
                     </div>
                 </div>
@@ -191,15 +224,19 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
                         <div class="space-y-3">
                             <div class="flex items-center justify-between">
                                 <span class="text-gray-400">Name</span>
-                                <span class="text-white truncate max-w-[150px]" x-text="selectedContainerInfo()?.name"></span>
+                                <span class="text-white truncate max-w-[150px]"
+                                    x-text="selectedContainerInfo()?.name"></span>
                             </div>
                             <div class="flex items-center justify-between">
                                 <span class="text-gray-400">Status</span>
-                                <span class="px-2 py-1 text-xs rounded-full" :class="selectedContainerInfo()?.status === 'running' ? 'bg-green-600' : 'bg-gray-600'" x-text="selectedContainerInfo()?.status"></span>
+                                <span class="px-2 py-1 text-xs rounded-full"
+                                    :class="selectedContainerInfo()?.status === 'running' ? 'bg-green-600' : 'bg-gray-600'"
+                                    x-text="selectedContainerInfo()?.status"></span>
                             </div>
                             <div class="flex items-center justify-between">
                                 <span class="text-gray-400">ID</span>
-                                <code class="text-xs bg-gray-700 px-2 py-1 rounded" x-text="(selectedContainerInfo()?.id || '').substring(0, 12)"></code>
+                                <code class="text-xs bg-gray-700 px-2 py-1 rounded"
+                                    x-text="(selectedContainerInfo()?.id || '').substring(0, 12)"></code>
                             </div>
                         </div>
                     </template>
@@ -213,173 +250,383 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
 </div>
 
 <script>
-function liveLogs() {
-    return {
-        containers: <?= $containersJson ?>,
-        selectedContainer: <?= $firstContainerId ?>,
-        containerSearch: '',
-        dropdownOpen: false,
-        logs: [],
-        loading: false,
-        paused: false,
-        isLive: true,
-        tailSize: '100',
-        autoScroll: true,
-        pollInterval: null,
-        applicationUuid: '<?= $application->uuid ?>',
+    function liveLogs() {
+        return {
+            containers: <?= $containersJson ?>,
+            selectedContainer: <?= $firstContainerId ?>,
+            containerSearch: '',
+            dropdownOpen: false,
+            logs: [],
+            loading: false,
+            paused: false,
+            isLive: true,
+            tailSize: '100',
+            autoScroll: true,
+            pollInterval: null,
+            applicationUuid: '<?= $application->uuid ?>',
 
-        init() {
-            // Fetch fresh container list on load
-            this.fetchContainersAndLogs();
-            this.startPolling();
-        },
-        
-        async fetchContainersAndLogs() {
-            // Used on initial load to fetch containers and recent logs
-            if (this.fetchInProgress) return;
-            this.fetchInProgress = true;
-            this.loading = true;
-            try {
-                const response = await fetch(`/applications/${this.applicationUuid}/logs?container_id=${this.selectedContainer || ''}&tail=${this.tailSize}`, {
-                    headers: { 'Accept': 'application/json' }
-                });
-                const data = await response.json();
+            // WebSocket properties
+            logsWebsocketUrl: <?= json_encode($logsWebsocketUrl ?? null) ?>,
+            sessionId: <?= json_encode($sessionId ?? '') ?>,
+            ws: null,
+            wsConnected: false,
+            wsReconnectTimeout: null,
+            useWebSocket: false,
 
-                // Update containers list if we got fresh data (preserve selection)
-                if (data.containers && data.containers.length > 0) {
-                    const prevSelected = this.selectedContainer;
-                    this.containers = data.containers;
-                    if (prevSelected) {
-                        // make sure previously selected container still exists
-                        const found = this.containers.find(c => (c.id || c.container_id) === prevSelected);
-                        if (!found) this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
-                    } else if (this.containers.length > 0) {
-                        this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
+            init() {
+                // Determine if we should use WebSocket
+                this.useWebSocket = !!this.logsWebsocketUrl;
+
+                if (this.useWebSocket) {
+                    console.log('[Logs] WebSocket mode enabled, connecting to:', this.logsWebsocketUrl);
+                    this.connectWebSocket();
+                } else {
+                    console.log('[Logs] HTTP polling mode (no WebSocket URL configured)');
+                    // Fetch fresh container list on load
+                    this.fetchContainersAndLogs();
+                    this.startPolling();
+                }
+            },
+
+            connectWebSocket() {
+                if (this.ws) {
+                    this.ws.close();
+                }
+
+                try {
+                    this.loading = true;
+                    this.ws = new WebSocket(this.logsWebsocketUrl);
+
+                    this.ws.onopen = () => {
+                        console.log('[Logs] WebSocket connected, authenticating...');
+                        // Send authentication
+                        this.ws.send(JSON.stringify({
+                            type: 'auth',
+                            session_id: this.sessionId,
+                            application_uuid: this.applicationUuid
+                        }));
+                    };
+
+                    this.ws.onmessage = (event) => {
+                        try {
+                            const message = JSON.parse(event.data);
+                            this.handleWsMessage(message);
+                        } catch (e) {
+                            console.error('[Logs] Failed to parse WS message:', e);
+                        }
+                    };
+
+                    this.ws.onclose = (event) => {
+                        console.log('[Logs] WebSocket closed:', event.code, event.reason);
+                        this.wsConnected = false;
+                        this.isLive = false;
+                        this.loading = false;
+
+                        // Attempt reconnect after 3 seconds if not intentionally closed
+                        if (event.code !== 1000) {
+                            this.wsReconnectTimeout = setTimeout(() => {
+                                console.log('[Logs] Attempting to reconnect...');
+                                this.connectWebSocket();
+                            }, 3000);
+                        }
+                    };
+
+                    this.ws.onerror = (error) => {
+                        console.error('[Logs] WebSocket error:', error);
+                        this.loading = false;
+                        // Fall back to HTTP polling on error
+                        if (!this.pollInterval) {
+                            console.log('[Logs] Falling back to HTTP polling');
+                            this.useWebSocket = false;
+                            this.fetchContainersAndLogs();
+                            this.startPolling();
+                        }
+                    };
+                } catch (e) {
+                    console.error('[Logs] Failed to create WebSocket:', e);
+                    this.loading = false;
+                    // Fall back to HTTP polling
+                    this.useWebSocket = false;
+                    this.fetchContainersAndLogs();
+                    this.startPolling();
+                }
+            },
+
+            handleWsMessage(message) {
+                switch (message.type) {
+                    case 'auth:success':
+                        console.log('[Logs] Authenticated successfully');
+                        this.wsConnected = true;
+                        this.isLive = true;
+                        this.loading = false;
+                        // Also fetch containers via HTTP for the dropdown
+                        this.fetchContainersOnly();
+                        break;
+
+                    case 'auth:failed':
+                        console.error('[Logs] Authentication failed:', message.error);
+                        this.wsConnected = false;
+                        this.loading = false;
+                        // Fall back to HTTP polling
+                        this.useWebSocket = false;
+                        this.fetchContainersAndLogs();
+                        this.startPolling();
+                        break;
+
+                    case 'log':
+                        // Append log entry
+                        this.appendLogLine(message.stream, message.data);
+                        break;
+
+                    case 'pong':
+                        // Heartbeat response
+                        break;
+
+                    case 'error':
+                        console.error('[Logs] Server error:', message.error);
+                        break;
+                }
+            },
+
+            appendLogLine(stream, data) {
+                // Parse the log line (may contain multiple lines)
+                const lines = data.split('\n').filter(l => l.trim());
+
+                for (const line of lines) {
+                    // Try to extract timestamp from Docker log format
+                    let timestamp = '';
+                    let message = line;
+
+                    // Docker timestamps look like: 2024-01-15T10:30:45.123456789Z
+                    const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?)\s+(.*)/);
+                    if (timestampMatch) {
+                        const ts = new Date(timestampMatch[1]);
+                        timestamp = ts.toLocaleTimeString();
+                        message = timestampMatch[2];
+                    } else {
+                        timestamp = new Date().toLocaleTimeString();
                     }
-                }
 
-                // For initial load, seed logs and seen keys
-                if (data.logs && data.logs.length > 0) {
-                    this.logs = data.logs;
-                    this.seenLogKeys = new Set(data.logs.map(l => (l.timestamp || '') + '|' + (l.message || '')));
-                    this.scrollToBottom();
-                }
-            } catch (error) {
-                console.error('Failed to fetch:', error);
-            } finally {
-                this.loading = false;
-                this.fetchInProgress = false;
-            }
-        },
+                    const logEntry = {
+                        timestamp: timestamp,
+                        message: message,
+                        stream: stream
+                    };
 
-        filteredContainers() {
-            if (!this.containerSearch) return this.containers;
-            return this.containers.filter(c => 
-                c.name.toLowerCase().includes(this.containerSearch.toLowerCase())
-            );
-        },
-
-        selectedContainerName() {
-            const container = this.containers.find(c => (c.id || c.container_id) === this.selectedContainer);
-            return container ? container.name : 'Select container...';
-        },
-
-        selectedContainerInfo() {
-            return this.containers.find(c => (c.id || c.container_id) === this.selectedContainer);
-        },
-
-        selectContainer(container) {
-            this.selectedContainer = container.id || container.container_id;
-            this.dropdownOpen = false;
-            this.logs = [];
-            this.fetchLogs();
-        },
-
-        async fetchLogs() {
-            if (!this.selectedContainer) return;
-            if (this.fetchInProgress) return; // avoid overlapping requests
-            this.fetchInProgress = true;
-            try {
-                const response = await fetch(`/applications/${this.applicationUuid}/logs?container_id=${this.selectedContainer}&tail=${this.tailSize}`, {
-                    headers: { 'Accept': 'application/json' }
-                });
-                const data = await response.json();
-
-                // Update containers list quietly if returned (preserve selection)
-                if (data.containers && data.containers.length > 0) {
-                    const prevSelected = this.selectedContainer;
-                    this.containers = data.containers;
-                    if (prevSelected) {
-                        const found = this.containers.find(c => (c.id || c.container_id) === prevSelected);
-                        if (!found) this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
-                    }
-                }
-
-                // Append only new logs (dedupe)
-                if (!this.seenLogKeys) this.seenLogKeys = new Set();
-                const incoming = Array.isArray(data.logs) ? data.logs : [];
-                const newLogs = [];
-                for (const l of incoming) {
-                    const key = (l.timestamp || '') + '|' + (l.message || '');
+                    // Dedupe
+                    const key = timestamp + '|' + message;
+                    if (!this.seenLogKeys) this.seenLogKeys = new Set();
                     if (!this.seenLogKeys.has(key)) {
                         this.seenLogKeys.add(key);
-                        newLogs.push(l);
+                        this.logs.push(logEntry);
+
+                        // Trim to prevent unbounded growth
+                        const max = parseInt(this.tailSize, 10) || 100;
+                        if (this.logs.length > max * 3) {
+                            this.logs = this.logs.slice(-max * 3);
+                        }
+
+                        if (this.autoScroll) this.scrollToBottom();
                     }
                 }
+            },
 
-                if (newLogs.length > 0) {
-                    // Append new logs
-                    this.logs = this.logs.concat(newLogs);
-                    // Trim to tail size to avoid unbounded growth
-                    const max = parseInt(this.tailSize, 10) || 100;
-                    if (this.logs.length > (max * 3)) {
-                        // keep a bit more than tail to avoid chopping important context
-                        this.logs = this.logs.slice(-max * 3);
+            async fetchContainersOnly() {
+                // When WebSocket mode is enabled we already have the container list
+                // embedded server-side and streamed logs come over the socket.
+                // Avoid calling the manual logs endpoint to prevent extra HTTP log requests.
+                if (this.useWebSocket) {
+                    // Ensure selection exists
+                    if (!this.selectedContainer && this.containers && this.containers.length > 0) {
+                        this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
                     }
-                    if (this.autoScroll) this.scrollToBottom();
+                    return;
                 }
-            } catch (error) {
-                console.error('Failed to fetch logs:', error);
-            } finally {
-                this.fetchInProgress = false;
-            }
-        },
-        
-        scrollToBottom() {
-            if (this.autoScroll) {
-                this.$nextTick(() => {
-                    const container = this.$refs.logsContainer;
-                    if (container) {
-                        container.scrollTop = container.scrollHeight;
-                    }
-                });
-            }
-        },
 
-        startPolling() {
-            this.pollInterval = setInterval(() => {
-                if (!this.paused && this.selectedContainer) {
+                // Fallback: Fetch just the container list for the dropdown when not using WebSocket
+                try {
+                    const response = await fetch(`/applications/${this.applicationUuid}/logs?container_id=&tail=1`, {
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    const data = await response.json();
+
+                    if (data.containers && data.containers.length > 0) {
+                        this.containers = data.containers;
+                        if (!this.selectedContainer && this.containers.length > 0) {
+                            this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
+                        }
+                    }
+                } catch (error) {
+                    console.error('[Logs] Failed to fetch containers:', error);
+                }
+            },
+
+            async fetchContainersAndLogs() {
+                // Used on initial load to fetch containers and recent logs
+                if (this.fetchInProgress) return;
+                this.fetchInProgress = true;
+                this.loading = true;
+                try {
+                    const response = await fetch(`/applications/${this.applicationUuid}/logs?container_id=${this.selectedContainer || ''}&tail=${this.tailSize}`, {
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    const data = await response.json();
+
+                    // Update containers list if we got fresh data (preserve selection)
+                    if (data.containers && data.containers.length > 0) {
+                        const prevSelected = this.selectedContainer;
+                        this.containers = data.containers;
+                        if (prevSelected) {
+                            // make sure previously selected container still exists
+                            const found = this.containers.find(c => (c.id || c.container_id) === prevSelected);
+                            if (!found) this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
+                        } else if (this.containers.length > 0) {
+                            this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
+                        }
+                    }
+
+                    // For initial load, seed logs and seen keys
+                    if (data.logs && data.logs.length > 0) {
+                        this.logs = data.logs;
+                        this.seenLogKeys = new Set(data.logs.map(l => (l.timestamp || '') + '|' + (l.message || '')));
+                        this.scrollToBottom();
+                    }
+                } catch (error) {
+                    console.error('Failed to fetch:', error);
+                } finally {
+                    this.loading = false;
+                    this.fetchInProgress = false;
+                }
+            },
+
+            filteredContainers() {
+                if (!this.containerSearch) return this.containers;
+                return this.containers.filter(c =>
+                    c.name.toLowerCase().includes(this.containerSearch.toLowerCase())
+                );
+            },
+
+            selectedContainerName() {
+                const container = this.containers.find(c => (c.id || c.container_id) === this.selectedContainer);
+                return container ? container.name : 'Select container...';
+            },
+
+            selectedContainerInfo() {
+                return this.containers.find(c => (c.id || c.container_id) === this.selectedContainer);
+            },
+
+            selectContainer(container) {
+                this.selectedContainer = container.id || container.container_id;
+                this.dropdownOpen = false;
+                this.logs = [];
+                this.seenLogKeys = new Set();
+
+                if (!this.useWebSocket) {
                     this.fetchLogs();
                 }
-            }, 2000);
-        },
+                // Note: WebSocket streams all containers; container selection is for display/filtering
+            },
 
-        togglePause() {
-            this.paused = !this.paused;
-            this.isLive = !this.paused;
-        },
+            async fetchLogs() {
+                console.log('Fetching logs for container:', this.selectedContainer);
+                if (!this.selectedContainer) return;
+                if (this.fetchInProgress) return; // avoid overlapping requests
+                this.fetchInProgress = true;
+                try {
+                    const response = await fetch(`/applications/${this.applicationUuid}/logs?container_id=${this.selectedContainer}&tail=${this.tailSize}`, {
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    const data = await response.json();
 
-        logClass(log) {
-            const message = (log.message || '').toLowerCase();
-            if (message.includes('error') || message.includes('failed') || message.includes('exception')) {
-                return 'text-red-400';
-            } else if (message.includes('warning') || message.includes('warn')) {
-                return 'text-yellow-400';
-            } else if (message.includes('success') || message.includes('completed') || message.includes('✓') || message.includes('✅')) {
-                return 'text-green-400';
+                    // Update containers list quietly if returned (preserve selection)
+                    if (data.containers && data.containers.length > 0) {
+                        const prevSelected = this.selectedContainer;
+                        this.containers = data.containers;
+                        if (prevSelected) {
+                            const found = this.containers.find(c => (c.id || c.container_id) === prevSelected);
+                            if (!found) this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
+                        }
+                    }
+
+                    // Append only new logs (dedupe)
+                    if (!this.seenLogKeys) this.seenLogKeys = new Set();
+                    const incoming = Array.isArray(data.logs) ? data.logs : [];
+                    const newLogs = [];
+                    for (const l of incoming) {
+                        const key = (l.timestamp || '') + '|' + (l.message || '');
+                        if (!this.seenLogKeys.has(key)) {
+                            this.seenLogKeys.add(key);
+                            newLogs.push(l);
+                        }
+                    }
+
+                    if (newLogs.length > 0) {
+                        // Append new logs
+                        this.logs = this.logs.concat(newLogs);
+                        // Trim to tail size to avoid unbounded growth
+                        const max = parseInt(this.tailSize, 10) || 100;
+                        if (this.logs.length > (max * 3)) {
+                            // keep a bit more than tail to avoid chopping important context
+                            this.logs = this.logs.slice(-max * 3);
+                        }
+                        if (this.autoScroll) this.scrollToBottom();
+                    }
+                } catch (error) {
+                    console.error('Failed to fetch logs:', error);
+                } finally {
+                    this.fetchInProgress = false;
+                }
+            },
+
+            scrollToBottom() {
+                if (this.autoScroll) {
+                    this.$nextTick(() => {
+                        const container = this.$refs.logsContainer;
+                        if (container) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    });
+                }
+            },
+
+            startPolling() {
+                if (this.pollInterval) return;
+                this.pollInterval = setInterval(() => {
+                    if (!this.paused && this.selectedContainer && !this.useWebSocket) {
+                        this.fetchLogs();
+                    }
+                }, 2000);
+            },
+
+            togglePause() {
+                this.paused = !this.paused;
+                this.isLive = !this.paused;
+            },
+
+            logClass(log) {
+                const message = (log.message || '').toLowerCase();
+                if (message.includes('error') || message.includes('failed') || message.includes('exception')) {
+                    return 'text-red-400';
+                } else if (message.includes('warning') || message.includes('warn')) {
+                    return 'text-yellow-400';
+                } else if (message.includes('success') || message.includes('completed') || message.includes('✓') || message.includes('✅')) {
+                    return 'text-green-400';
+                }
+                return 'text-gray-300';
+            },
+
+            // Cleanup on component destroy
+            destroy() {
+                if (this.ws) {
+                    this.ws.close(1000, 'Component destroyed');
+                }
+                if (this.pollInterval) {
+                    clearInterval(this.pollInterval);
+                }
+                if (this.wsReconnectTimeout) {
+                    clearTimeout(this.wsReconnectTimeout);
+                }
             }
-            return 'text-gray-300';
-        }
-    };
-}
+        };
+    }
 </script>

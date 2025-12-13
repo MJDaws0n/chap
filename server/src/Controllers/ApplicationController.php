@@ -416,6 +416,15 @@ class ApplicationController extends BaseController
             return;
         }
 
+        // Get node info for WebSocket URL
+        $node = $application->node();
+        if (!$node && $application->node_id) {
+            $node = \Chap\Models\Node::find($application->node_id);
+        }
+        
+        // Get logs websocket URL if configured
+        $logsWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
+
         // Initial page load - just render the view, JS will fetch containers
         $this->view('applications/logs', [
             'title' => 'Live Logs - ' . $application->name,
@@ -423,6 +432,8 @@ class ApplicationController extends BaseController
             'environment' => $application->environment(),
             'project' => $application->environment()->project(),
             'containers' => [], // Will be fetched via AJAX
+            'logsWebsocketUrl' => $logsWebsocketUrl,
+            'sessionId' => session_id(),
         ]);
     }
     
@@ -446,6 +457,25 @@ class ApplicationController extends BaseController
             return ['containers' => [], 'logs' => [], 'error' => 'No node assigned'];
         }
         
+        // Check if node is online first
+        $node = \Chap\Models\Node::find($nodeId);
+        if ($node && method_exists($node, 'isOnline') && !$node->isOnline()) {
+            return ['containers' => [], 'logs' => [], 'error' => 'Node is offline'];
+        }
+        
+        // Check for recent cached response first (within last 2 seconds) to avoid duplicate requests
+        $genericCacheFile = "/tmp/logs_response_{$application->uuid}.json";
+        if (file_exists($genericCacheFile)) {
+            $data = @json_decode(file_get_contents($genericCacheFile), true);
+            if ($data && isset($data['timestamp']) && (time() - $data['timestamp']) < 2) {
+                // Use recent cached data
+                return [
+                    'containers' => $data['containers'] ?? [],
+                    'logs' => $data['logs'] ?? []
+                ];
+            }
+        }
+        
         // Create a task to get containers/logs from node
         $db = \Chap\App::db();
         $taskId = uuid();
@@ -464,29 +494,32 @@ class ApplicationController extends BaseController
             ]),
             'status' => 'pending'
         ]);
+        
         // Wait for response (poll the cache file the WebSocket handler creates)
-        // Use per-request cache filename to avoid races when multiple requests occur for same application
         $cacheFile = "/tmp/logs_response_{$application->uuid}_{$taskId}.json";
-        $startTime = time();
-        $timeout = 8; // 8 second timeout
+        $startMicro = microtime(true);
+        $timeout = 5; // 5 second timeout (reduced from 8)
 
-        // Delete old cache first
-        if (file_exists($cacheFile)) {
-            @unlink($cacheFile);
-        }
+        // Poll faster (every 50ms) for quicker response
+        while ((microtime(true) - $startMicro) < $timeout) {
+            usleep(50000); // 50ms
 
-        // If node appears offline, return early to avoid waiting for timeout
-        $node = \Chap\Models\Node::find($nodeId);
-        if ($node && method_exists($node, 'isOnline') && !$node->isOnline()) {
-            return ['containers' => [], 'logs' => [], 'error' => 'Node is offline'];
-        }
-
-        while ((time() - $startTime) < $timeout) {
-            usleep(100000); // 100ms
-
+            // Check per-request cache first
             if (file_exists($cacheFile)) {
-                $data = json_decode(file_get_contents($cacheFile), true);
-                if ($data && isset($data['timestamp']) && $data['timestamp'] > $startTime) {
+                $data = @json_decode(file_get_contents($cacheFile), true);
+                if ($data && !empty($data['timestamp'])) {
+                    @unlink($cacheFile); // Clean up
+                    return [
+                        'containers' => $data['containers'] ?? [],
+                        'logs' => $data['logs'] ?? []
+                    ];
+                }
+            }
+            
+            // Also check generic cache as fallback (node might have responded to another request)
+            if (file_exists($genericCacheFile)) {
+                $data = @json_decode(file_get_contents($genericCacheFile), true);
+                if ($data && isset($data['timestamp']) && $data['timestamp'] >= (int)$startMicro) {
                     return [
                         'containers' => $data['containers'] ?? [],
                         'logs' => $data['logs'] ?? []
