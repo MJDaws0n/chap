@@ -11,25 +11,9 @@ $statusColors = [
 ];
 $statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
 
-// Build container array - handle both object and array formats
-$containersArray = [];
-foreach ($containers as $c) {
-    if (is_object($c)) {
-        $containersArray[] = [
-            'id' => $c->container_id ?? $c->id ?? '',
-            'name' => $c->name ?? 'unknown',
-            'status' => $c->status ?? 'unknown',
-        ];
-    } else {
-        $containersArray[] = [
-            'id' => $c['container_id'] ?? $c['id'] ?? '',
-            'name' => $c['name'] ?? 'unknown',
-            'status' => $c['status'] ?? 'unknown',
-        ];
-    }
-}
-$containersJson = json_encode($containersArray);
-$firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['id']) : 'null';
+// Containers are provided by the node logs WebSocket (WS/WSS)
+$containersJson = '[]';
+$firstContainerId = 'null';
 ?>
 <div class="space-y-6" x-data="liveLogs()">
     <!-- Breadcrumb & Header -->
@@ -123,14 +107,15 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
                         </template>
 
                         <!-- Refresh -->
-                        <button @click="useWebSocket ? connectWebSocket() : fetchLogs()"
+                        <button x-show="!!logsWebsocketUrl" @click="connectWebSocket()"
                             class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-lg text-sm">
-                            <span x-text="useWebSocket ? 'Reconnect' : 'Refresh'">Refresh</span>
+                            <span>Reconnect</span>
                         </button>
                     </div>
                 </div>
 
-                <div id="logs-container" class="bg-gray-900 rounded-lg p-4 h-[600px] overflow-y-auto font-mono text-sm"
+                <div id="logs-container"
+                    class="bg-gray-900 rounded-lg p-4 h-[600px] overflow-y-auto overflow-x-hidden font-mono text-sm"
                     x-ref="logsContainer">
                     <template x-if="logs.length === 0 && !loading">
                         <p class="text-gray-500">No logs available. Select a container to view logs.</p>
@@ -139,9 +124,9 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
                         <p class="text-gray-500">Loading logs...</p>
                     </template>
                     <template x-for="(log, index) in logs" :key="index">
-                        <div class="flex items-start space-x-2 py-1" :class="logClass(log)">
+                        <div class="flex items-start space-x-2 py-1 min-w-0" :class="logClass(log)">
                             <span class="text-gray-500 flex-shrink-0" x-text="log.timestamp"></span>
-                            <span class="whitespace-pre-wrap" x-text="log.message"></span>
+                            <span class="whitespace-pre-wrap break-all min-w-0 flex-1" x-text="log.message"></span>
                         </div>
                     </template>
                 </div>
@@ -199,11 +184,11 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
                             </button>
                             <div x-show="openTail" @click.away="openTail = false" x-cloak
                                 class="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg">
-                                <div @click="tailSize='100'; openTail=false; fetchLogs()"
+                                <div @click="tailSize='100'; openTail=false; rebuildVisibleLogs()"
                                     class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white">100 lines</div>
-                                <div @click="tailSize='500'; openTail=false; fetchLogs()"
+                                <div @click="tailSize='500'; openTail=false; rebuildVisibleLogs()"
                                     class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white">500 lines</div>
-                                <div @click="tailSize='1000'; openTail=false; fetchLogs()"
+                                <div @click="tailSize='1000'; openTail=false; rebuildVisibleLogs()"
                                     class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white">1000 lines</div>
                             </div>
                         </div>
@@ -252,17 +237,21 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
 <script>
     function liveLogs() {
         return {
-            containers: <?= $containersJson ?>,
-            selectedContainer: <?= $firstContainerId ?>,
+            containers: [],
+            selectedContainer: null,
             containerSearch: '',
             dropdownOpen: false,
             logs: [],
             loading: false,
             paused: false,
-            isLive: true,
+            isLive: false,
             tailSize: '100',
             autoScroll: true,
-            pollInterval: null,
+            maxStoredLogsPerContainer: 5000,
+            logsByContainer: {},
+            seenKeysByContainer: {},
+            rawMessages: [],
+            maxRawMessages: 2000,
             applicationUuid: '<?= $application->uuid ?>',
 
             // WebSocket properties
@@ -271,115 +260,136 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
             ws: null,
             wsConnected: false,
             wsReconnectTimeout: null,
-            useWebSocket: false,
+            isConnecting: false,
+            intentionalClose: false,
+            keepAliveTimer: null,
+            keepAliveIntervalMs: 25000,
+            lastPongAt: null,
 
             init() {
-                // Determine if we should use WebSocket
-                this.useWebSocket = !!this.logsWebsocketUrl;
-
-                if (this.useWebSocket) {
-                    console.log('[Logs] WebSocket mode enabled, connecting to:', this.logsWebsocketUrl);
-                    this.connectWebSocket();
-                } else {
-                    console.log('[Logs] HTTP polling mode (no WebSocket URL configured)');
-                    // Fetch fresh container list on load
-                    this.fetchContainersAndLogs();
-                    this.startPolling();
+                if (!this.logsWebsocketUrl) {
+                    console.warn('[Logs] Live logs require WebSocket; no logsWebsocketUrl configured');
+                    this.loading = false;
+                    this.wsConnected = false;
+                    this.isLive = false;
+                    return;
                 }
+
+                this.connectWebSocket();
             },
 
             connectWebSocket() {
-                if (this.ws) {
-                    this.ws.close();
+                if (!this.logsWebsocketUrl) return;
+                // Cancel any scheduled reconnect attempts; this call is the new attempt.
+                if (this.wsReconnectTimeout) {
+                    clearTimeout(this.wsReconnectTimeout);
+                    this.wsReconnectTimeout = null;
                 }
 
-                try {
-                    this.loading = true;
-                    this.ws = new WebSocket(this.logsWebsocketUrl);
+                // Avoid overlapping connection attempts.
+                if (this.isConnecting) return;
 
-                    this.ws.onopen = () => {
-                        console.log('[Logs] WebSocket connected, authenticating...');
-                        // Send authentication
-                        this.ws.send(JSON.stringify({
+                // If a socket already exists, close it intentionally so onclose doesn't auto-reconnect.
+                if (this.ws) {
+                    this.intentionalClose = true;
+                    try { this.ws.close(1000, 'Reconnect requested'); } catch (e) {}
+                }
+
+                this.stopKeepAlive();
+
+                try {
+                    this.isConnecting = true;
+                    this.loading = true;
+                    const ws = new WebSocket(this.logsWebsocketUrl);
+                    this.ws = ws;
+
+                    ws.onopen = () => {
+                        if (ws !== this.ws) return;
+                        this.intentionalClose = false;
+                        ws.send(JSON.stringify({
                             type: 'auth',
                             session_id: this.sessionId,
-                            application_uuid: this.applicationUuid
+                            application_uuid: this.applicationUuid,
+                            // Ask the node to send some initial history too.
+                            tail: Math.min(Math.max(parseInt(this.tailSize, 10) || 100, 0), 1000)
                         }));
                     };
 
-                    this.ws.onmessage = (event) => {
+                    ws.onmessage = (event) => {
+                        if (ws !== this.ws) return;
                         try {
-                            const message = JSON.parse(event.data);
-                            this.handleWsMessage(message);
+                            this.handleWsMessage(JSON.parse(event.data));
                         } catch (e) {
                             console.error('[Logs] Failed to parse WS message:', e);
                         }
                     };
 
-                    this.ws.onclose = (event) => {
+                    ws.onclose = (event) => {
+                        if (ws !== this.ws) return;
                         console.log('[Logs] WebSocket closed:', event.code, event.reason);
                         this.wsConnected = false;
                         this.isLive = false;
                         this.loading = false;
+                        this.isConnecting = false;
 
-                        // Attempt reconnect after 3 seconds if not intentionally closed
+                        this.stopKeepAlive();
+
+                        // If we closed it intentionally (e.g. user clicked Reconnect), do not auto-reconnect.
+                        if (this.intentionalClose) {
+                            this.intentionalClose = false;
+                            return;
+                        }
+
                         if (event.code !== 1000) {
                             this.wsReconnectTimeout = setTimeout(() => {
-                                console.log('[Logs] Attempting to reconnect...');
                                 this.connectWebSocket();
                             }, 3000);
                         }
                     };
 
-                    this.ws.onerror = (error) => {
+                    ws.onerror = (error) => {
+                        if (ws !== this.ws) return;
                         console.error('[Logs] WebSocket error:', error);
                         this.loading = false;
-                        // Fall back to HTTP polling on error
-                        if (!this.pollInterval) {
-                            console.log('[Logs] Falling back to HTTP polling');
-                            this.useWebSocket = false;
-                            this.fetchContainersAndLogs();
-                            this.startPolling();
-                        }
+                        this.isConnecting = false;
                     };
                 } catch (e) {
                     console.error('[Logs] Failed to create WebSocket:', e);
                     this.loading = false;
-                    // Fall back to HTTP polling
-                    this.useWebSocket = false;
-                    this.fetchContainersAndLogs();
-                    this.startPolling();
+                    this.isConnecting = false;
                 }
             },
 
             handleWsMessage(message) {
+                this.storeRawMessage(message);
+
                 switch (message.type) {
                     case 'auth:success':
-                        console.log('[Logs] Authenticated successfully');
                         this.wsConnected = true;
-                        this.isLive = true;
+                        this.isLive = !this.paused;
                         this.loading = false;
-                        // Also fetch containers via HTTP for the dropdown
-                        this.fetchContainersOnly();
+                        this.isConnecting = false;
+                        this.startKeepAlive();
                         break;
 
                     case 'auth:failed':
                         console.error('[Logs] Authentication failed:', message.error);
                         this.wsConnected = false;
+                        this.isLive = false;
                         this.loading = false;
-                        // Fall back to HTTP polling
-                        this.useWebSocket = false;
-                        this.fetchContainersAndLogs();
-                        this.startPolling();
+                        this.isConnecting = false;
+                        break;
+
+                    case 'containers':
+                        this.handleContainersMessage(message);
                         break;
 
                     case 'log':
-                        // Append log entry
-                        this.appendLogLine(message.stream, message.data);
+                        this.handleLogMessage(message);
                         break;
 
                     case 'pong':
-                        // Heartbeat response
+                        this.lastPongAt = Date.now();
                         break;
 
                     case 'error':
@@ -388,219 +398,180 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
                 }
             },
 
-            appendLogLine(stream, data) {
-                // Parse the log line (may contain multiple lines)
-                const lines = data.split('\n').filter(l => l.trim());
+            startKeepAlive() {
+                this.stopKeepAlive();
+                this.keepAliveTimer = setInterval(() => {
+                    try {
+                        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                            this.ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+                        }
+                    } catch (e) {
+                        // Ignore keepalive send errors; onclose handler will reconnect.
+                    }
+                }, this.keepAliveIntervalMs);
+            },
+
+            stopKeepAlive() {
+                if (this.keepAliveTimer) {
+                    clearInterval(this.keepAliveTimer);
+                    this.keepAliveTimer = null;
+                }
+            },
+
+            storeRawMessage(message) {
+                this.rawMessages.push(message);
+                if (this.rawMessages.length > this.maxRawMessages) {
+                    this.rawMessages = this.rawMessages.slice(-this.maxRawMessages);
+                }
+            },
+
+            normalizeContainerId(value) {
+                if (value === undefined || value === null) return null;
+                return String(value);
+            },
+
+            handleContainersMessage(payload) {
+                const incoming = Array.isArray(payload.containers) ? payload.containers : [];
+                const normalized = incoming
+                    .map(c => ({
+                        id: this.normalizeContainerId(c.id || c.container_id),
+                        name: String(c.name || c.container || c.id || ''),
+                        status: String(c.status || 'running')
+                    }))
+                    .filter(c => c.id && c.name);
+
+                const previous = this.selectedContainer;
+                this.containers = normalized;
+
+                if (!this.selectedContainer) {
+                    this.selectedContainer = normalized[0]?.id || null;
+                } else if (!normalized.find(c => c.id === this.selectedContainer)) {
+                    this.selectedContainer = normalized[0]?.id || null;
+                }
+
+                if (previous !== this.selectedContainer) {
+                    this.rebuildVisibleLogs();
+                }
+            },
+
+            handleLogMessage(payload) {
+                const stream = payload.stream || 'stdout';
+                const content = payload.content ?? payload.data ?? '';
+                if (!content) return;
+
+                const containerId = this.normalizeContainerId(payload.container_id || payload.containerId) || '__system__';
+                const containerName = payload.container || payload.container_name || payload.containerName || null;
+                const timestampOverride = payload.timestamp || null;
+
+                this.appendParsedLogLines(stream, content, containerId, containerName, timestampOverride);
+            },
+
+            appendParsedLogLines(stream, content, containerId, containerName = null, timestampOverride = null) {
+                const raw = typeof content === 'string' ? content : String(content);
+                const lines = raw.split('\n').filter(l => l.trim());
+                const storeKey = containerId || '__system__';
 
                 for (const line of lines) {
-                    // Try to extract timestamp from Docker log format
                     let timestamp = '';
                     let message = line;
 
-                    // Docker timestamps look like: 2024-01-15T10:30:45.123456789Z
                     const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?)\s+(.*)/);
                     if (timestampMatch) {
                         const ts = new Date(timestampMatch[1]);
-                        timestamp = ts.toLocaleTimeString();
+                        timestamp = isNaN(ts.getTime()) ? '' : ts.toLocaleTimeString();
                         message = timestampMatch[2];
-                    } else {
-                        timestamp = new Date().toLocaleTimeString();
                     }
 
-                    const logEntry = {
-                        timestamp: timestamp,
-                        message: message,
-                        stream: stream
+                    if (!timestamp) {
+                        if (timestampOverride) {
+                            const overrideTs = new Date(timestampOverride);
+                            timestamp = isNaN(overrideTs.getTime()) ? new Date().toLocaleTimeString() : overrideTs.toLocaleTimeString();
+                        } else {
+                            timestamp = new Date().toLocaleTimeString();
+                        }
+                    }
+
+                    if (!this.seenKeysByContainer[storeKey]) this.seenKeysByContainer[storeKey] = new Set();
+                    const dedupeKey = `${timestamp}|${message}`;
+                    if (this.seenKeysByContainer[storeKey].has(dedupeKey)) continue;
+                    this.seenKeysByContainer[storeKey].add(dedupeKey);
+
+                    if (!this.logsByContainer[storeKey]) this.logsByContainer[storeKey] = [];
+                    const entry = {
+                        timestamp,
+                        message,
+                        stream,
+                        containerId: storeKey,
+                        containerName: containerName ? String(containerName) : null
                     };
 
-                    // Dedupe
-                    const key = timestamp + '|' + message;
-                    if (!this.seenLogKeys) this.seenLogKeys = new Set();
-                    if (!this.seenLogKeys.has(key)) {
-                        this.seenLogKeys.add(key);
-                        this.logs.push(logEntry);
+                    this.logsByContainer[storeKey].push(entry);
+                    if (this.logsByContainer[storeKey].length > this.maxStoredLogsPerContainer) {
+                        this.logsByContainer[storeKey] = this.logsByContainer[storeKey].slice(-this.maxStoredLogsPerContainer);
+                    }
 
-                        // Trim to prevent unbounded growth
+                    if (this.shouldIncludeLog(entry)) {
+                        this.logs.push(entry);
                         const max = parseInt(this.tailSize, 10) || 100;
                         if (this.logs.length > max * 3) {
                             this.logs = this.logs.slice(-max * 3);
                         }
-
-                        if (this.autoScroll) this.scrollToBottom();
+                        if (this.autoScroll && !this.paused) this.scrollToBottom();
                     }
                 }
             },
 
-            async fetchContainersOnly() {
-                // When WebSocket mode is enabled we already have the container list
-                // embedded server-side and streamed logs come over the socket.
-                // Avoid calling the manual logs endpoint to prevent extra HTTP log requests.
-                if (this.useWebSocket) {
-                    // Ensure selection exists
-                    if (!this.selectedContainer && this.containers && this.containers.length > 0) {
-                        this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
-                    }
-                    return;
-                }
-
-                // Fallback: Fetch just the container list for the dropdown when not using WebSocket
-                try {
-                    const response = await fetch(`/applications/${this.applicationUuid}/logs?container_id=&tail=1`, {
-                        headers: { 'Accept': 'application/json' }
-                    });
-                    const data = await response.json();
-
-                    if (data.containers && data.containers.length > 0) {
-                        this.containers = data.containers;
-                        if (!this.selectedContainer && this.containers.length > 0) {
-                            this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
-                        }
-                    }
-                } catch (error) {
-                    console.error('[Logs] Failed to fetch containers:', error);
-                }
+            shouldIncludeLog(logEntry) {
+                if (!this.selectedContainer) return logEntry.containerId === '__system__';
+                return logEntry.containerId === this.selectedContainer;
             },
 
-            async fetchContainersAndLogs() {
-                // Used on initial load to fetch containers and recent logs
-                if (this.fetchInProgress) return;
-                this.fetchInProgress = true;
-                this.loading = true;
-                try {
-                    const response = await fetch(`/applications/${this.applicationUuid}/logs?container_id=${this.selectedContainer || ''}&tail=${this.tailSize}`, {
-                        headers: { 'Accept': 'application/json' }
-                    });
-                    const data = await response.json();
+            rebuildVisibleLogs() {
+                const key = this.selectedContainer || '__system__';
+                this.logs = (this.logsByContainer[key] || []).slice();
 
-                    // Update containers list if we got fresh data (preserve selection)
-                    if (data.containers && data.containers.length > 0) {
-                        const prevSelected = this.selectedContainer;
-                        this.containers = data.containers;
-                        if (prevSelected) {
-                            // make sure previously selected container still exists
-                            const found = this.containers.find(c => (c.id || c.container_id) === prevSelected);
-                            if (!found) this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
-                        } else if (this.containers.length > 0) {
-                            this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
-                        }
-                    }
-
-                    // For initial load, seed logs and seen keys
-                    if (data.logs && data.logs.length > 0) {
-                        this.logs = data.logs;
-                        this.seenLogKeys = new Set(data.logs.map(l => (l.timestamp || '') + '|' + (l.message || '')));
-                        this.scrollToBottom();
-                    }
-                } catch (error) {
-                    console.error('Failed to fetch:', error);
-                } finally {
-                    this.loading = false;
-                    this.fetchInProgress = false;
+                const max = parseInt(this.tailSize, 10) || 100;
+                if (this.logs.length > max * 3) {
+                    this.logs = this.logs.slice(-max * 3);
                 }
+
+                if (this.autoScroll && !this.paused) this.scrollToBottom();
             },
 
             filteredContainers() {
                 if (!this.containerSearch) return this.containers;
+                const term = this.containerSearch.toLowerCase();
                 return this.containers.filter(c =>
-                    c.name.toLowerCase().includes(this.containerSearch.toLowerCase())
+                    (c.name || '').toLowerCase().includes(term)
                 );
             },
 
             selectedContainerName() {
-                const container = this.containers.find(c => (c.id || c.container_id) === this.selectedContainer);
+                const container = this.containers.find(c => c.id === this.selectedContainer);
                 return container ? container.name : 'Select container...';
             },
 
             selectedContainerInfo() {
-                return this.containers.find(c => (c.id || c.container_id) === this.selectedContainer);
+                return this.containers.find(c => c.id === this.selectedContainer) || null;
             },
 
             selectContainer(container) {
-                this.selectedContainer = container.id || container.container_id;
+                if (!container) return;
+                this.selectedContainer = this.normalizeContainerId(container.id || container.container_id);
                 this.dropdownOpen = false;
-                this.logs = [];
-                this.seenLogKeys = new Set();
-
-                if (!this.useWebSocket) {
-                    this.fetchLogs();
-                }
-                // Note: WebSocket streams all containers; container selection is for display/filtering
-            },
-
-            async fetchLogs() {
-                console.log('Fetching logs for container:', this.selectedContainer);
-                if (!this.selectedContainer) return;
-                if (this.fetchInProgress) return; // avoid overlapping requests
-                this.fetchInProgress = true;
-                try {
-                    const response = await fetch(`/applications/${this.applicationUuid}/logs?container_id=${this.selectedContainer}&tail=${this.tailSize}`, {
-                        headers: { 'Accept': 'application/json' }
-                    });
-                    const data = await response.json();
-
-                    // Update containers list quietly if returned (preserve selection)
-                    if (data.containers && data.containers.length > 0) {
-                        const prevSelected = this.selectedContainer;
-                        this.containers = data.containers;
-                        if (prevSelected) {
-                            const found = this.containers.find(c => (c.id || c.container_id) === prevSelected);
-                            if (!found) this.selectedContainer = this.containers[0].id || this.containers[0].container_id;
-                        }
-                    }
-
-                    // Append only new logs (dedupe)
-                    if (!this.seenLogKeys) this.seenLogKeys = new Set();
-                    const incoming = Array.isArray(data.logs) ? data.logs : [];
-                    const newLogs = [];
-                    for (const l of incoming) {
-                        const key = (l.timestamp || '') + '|' + (l.message || '');
-                        if (!this.seenLogKeys.has(key)) {
-                            this.seenLogKeys.add(key);
-                            newLogs.push(l);
-                        }
-                    }
-
-                    if (newLogs.length > 0) {
-                        // Append new logs
-                        this.logs = this.logs.concat(newLogs);
-                        // Trim to tail size to avoid unbounded growth
-                        const max = parseInt(this.tailSize, 10) || 100;
-                        if (this.logs.length > (max * 3)) {
-                            // keep a bit more than tail to avoid chopping important context
-                            this.logs = this.logs.slice(-max * 3);
-                        }
-                        if (this.autoScroll) this.scrollToBottom();
-                    }
-                } catch (error) {
-                    console.error('Failed to fetch logs:', error);
-                } finally {
-                    this.fetchInProgress = false;
-                }
+                this.rebuildVisibleLogs();
             },
 
             scrollToBottom() {
-                if (this.autoScroll) {
-                    this.$nextTick(() => {
-                        const container = this.$refs.logsContainer;
-                        if (container) {
-                            container.scrollTop = container.scrollHeight;
-                        }
-                    });
-                }
-            },
-
-            startPolling() {
-                if (this.pollInterval) return;
-                this.pollInterval = setInterval(() => {
-                    if (!this.paused && this.selectedContainer && !this.useWebSocket) {
-                        this.fetchLogs();
-                    }
-                }, 2000);
+                this.$nextTick(() => {
+                    const container = this.$refs.logsContainer;
+                    if (container) container.scrollTop = container.scrollHeight;
+                });
             },
 
             togglePause() {
                 this.paused = !this.paused;
-                this.isLive = !this.paused;
+                this.isLive = this.wsConnected && !this.paused;
             },
 
             logClass(log) {
@@ -615,17 +586,10 @@ $firstContainerId = !empty($containersArray) ? json_encode($containersArray[0]['
                 return 'text-gray-300';
             },
 
-            // Cleanup on component destroy
             destroy() {
-                if (this.ws) {
-                    this.ws.close(1000, 'Component destroyed');
-                }
-                if (this.pollInterval) {
-                    clearInterval(this.pollInterval);
-                }
-                if (this.wsReconnectTimeout) {
-                    clearTimeout(this.wsReconnectTimeout);
-                }
+                if (this.ws) this.ws.close(1000, 'Component destroyed');
+                if (this.wsReconnectTimeout) clearTimeout(this.wsReconnectTimeout);
+                this.stopKeepAlive();
             }
         };
     }

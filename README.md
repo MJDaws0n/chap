@@ -220,14 +220,12 @@ curl -X POST https://your-chap-server/api/v1/applications/{id}/deploy \
 
 ### Live Logging (WebSocket)
 
-Chap supports optional live logging using a persistent WebSocket connection between each node and the central server. This enables near-real-time application logs in the dashboard.
+Chap supports optional live logging using a direct WebSocket connection from the browser to the node agent (WS/WSS). If you want the **Live Logs** page to work, this WebSocket must be configured.
 
 - **Node URL scheme:** When creating a node, set `CHAP_SERVER_URL` to include the scheme: use `wss://your-chap-server:8081` for HTTPS servers, or `ws://your-chap-server:8081` for non-HTTPS servers.
-- **Certificates & TLS:** If your dashboard is served over HTTPS, browsers require a secure WebSocket (`wss://`) with a valid certificate. Provide a valid certificate either by:
-  - Terminating TLS at your reverse proxy (recommended) and proxying WebSocket traffic to the Chap server, or
-  - Setting the certificate values in your server's `.env` (uncomment and fill the certificate variables). If those `.env` certificate variables remain commented out the node will fall back to `ws://` (insecure).
-- **Mixed-content warning:** If the dashboard uses HTTPS but the WebSocket uses `ws://`, modern browsers will block the connection as mixed content. To avoid this, either use `wss://` with a valid cert or terminate TLS at a reverse proxy.
-- **Fallback behavior:** The WebSocket is used only for live application logging. If WebSocket connectivity isn't available, logs still work by polling over HTTP, but expect higher latency and increased resource usage.
+- **Browser → node logs socket:** Configure the node agent's browser WebSocket (WS/WSS) and set each node's `logs_websocket_url` to point at it (e.g. `wss://your-node-host:6002`).
+- **Certificates & TLS:** If your dashboard is served over HTTPS, browsers require a secure WebSocket (`wss://`) with a valid certificate for the logs socket. Terminate TLS at a reverse proxy (recommended) or configure the node agent to serve WSS directly.
+- **Mixed-content warning:** If the dashboard uses HTTPS but the logs socket uses `ws://`, modern browsers will block it as mixed content.
 ---
 
 ## License

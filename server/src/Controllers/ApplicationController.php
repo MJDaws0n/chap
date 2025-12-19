@@ -404,15 +404,9 @@ class ApplicationController extends BaseController
             return;
         }
 
-        // If API request (AJAX from frontend)
+        // Live logs are WebSocket-only; the HTTP API is intentionally not supported.
         if ($this->isApiRequest()) {
-            $containerId = $this->input('container_id');
-            $tail = (int) ($this->input('tail') ?: 100);
-            
-            // Get containers and logs directly from Docker on the node
-            $result = $this->getContainersAndLogsFromNode($application, $containerId, $tail);
-            
-            $this->json($result);
+            $this->json(['error' => 'Live logs require WebSocket'], 400);
             return;
         }
 
@@ -425,111 +419,16 @@ class ApplicationController extends BaseController
         // Get logs websocket URL if configured
         $logsWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
 
-        // Initial page load - just render the view, JS will fetch containers
+        // Initial page load - just render the view; containers/logs come from the node logs WebSocket
         $this->view('applications/logs', [
             'title' => 'Live Logs - ' . $application->name,
             'application' => $application,
             'environment' => $application->environment(),
             'project' => $application->environment()->project(),
-            'containers' => [], // Will be fetched via AJAX
+            'containers' => [],
             'logsWebsocketUrl' => $logsWebsocketUrl,
             'sessionId' => session_id(),
         ]);
-    }
-    
-    /**
-     * Get containers and logs from the node agent
-     */
-    private function getContainersAndLogsFromNode(Application $application, ?string $containerId = null, int $tail = 100): array
-    {
-        $nodeId = $application->node_id;
-        if (!$nodeId) {
-            // Try to get node from latest deployment
-            $db = \Chap\App::db();
-            $deployment = $db->fetch(
-                "SELECT node_id FROM deployments WHERE application_id = ? AND node_id IS NOT NULL ORDER BY id DESC LIMIT 1",
-                [$application->id]
-            );
-            $nodeId = $deployment['node_id'] ?? null;
-        }
-        
-        if (!$nodeId) {
-            return ['containers' => [], 'logs' => [], 'error' => 'No node assigned'];
-        }
-        
-        // Check if node is online first
-        $node = \Chap\Models\Node::find($nodeId);
-        if ($node && method_exists($node, 'isOnline') && !$node->isOnline()) {
-            return ['containers' => [], 'logs' => [], 'error' => 'Node is offline'];
-        }
-        
-        // Check for recent cached response first (within last 2 seconds) to avoid duplicate requests
-        $genericCacheFile = "/tmp/logs_response_{$application->uuid}.json";
-        if (file_exists($genericCacheFile)) {
-            $data = @json_decode(file_get_contents($genericCacheFile), true);
-            if ($data && isset($data['timestamp']) && (time() - $data['timestamp']) < 2) {
-                // Use recent cached data
-                return [
-                    'containers' => $data['containers'] ?? [],
-                    'logs' => $data['logs'] ?? []
-                ];
-            }
-        }
-        
-        // Create a task to get containers/logs from node
-        $db = \Chap\App::db();
-        $taskId = uuid();
-        
-        $db->insert('deployment_tasks', [
-            'node_id' => $nodeId,
-            'task_type' => 'container:logs',
-            'task_data' => json_encode([
-                'type' => 'container:logs',
-                'payload' => [
-                    'task_id' => $taskId,
-                    'application_uuid' => $application->uuid,
-                    'container_id' => $containerId,
-                    'tail' => $tail
-                ]
-            ]),
-            'status' => 'pending'
-        ]);
-        
-        // Wait for response (poll the cache file the WebSocket handler creates)
-        $cacheFile = "/tmp/logs_response_{$application->uuid}_{$taskId}.json";
-        $startMicro = microtime(true);
-        $timeout = 5; // 5 second timeout (reduced from 8)
-
-        // Poll faster (every 50ms) for quicker response
-        while ((microtime(true) - $startMicro) < $timeout) {
-            usleep(50000); // 50ms
-
-            // Check per-request cache first
-            if (file_exists($cacheFile)) {
-                $data = @json_decode(file_get_contents($cacheFile), true);
-                if ($data && !empty($data['timestamp'])) {
-                    @unlink($cacheFile); // Clean up
-                    return [
-                        'containers' => $data['containers'] ?? [],
-                        'logs' => $data['logs'] ?? []
-                    ];
-                }
-            }
-            
-            // Also check generic cache as fallback (node might have responded to another request)
-            if (file_exists($genericCacheFile)) {
-                $data = @json_decode(file_get_contents($genericCacheFile), true);
-                if ($data && isset($data['timestamp']) && $data['timestamp'] >= (int)$startMicro) {
-                    return [
-                        'containers' => $data['containers'] ?? [],
-                        'logs' => $data['logs'] ?? []
-                    ];
-                }
-            }
-        }
-
-        // Timeout - return empty with error
-        return ['containers' => [], 'logs' => [], 'error' => 'Timeout waiting for node response'];
     }
 
     /**

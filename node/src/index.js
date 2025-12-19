@@ -1,16 +1,17 @@
 /**
  * Chap Node Agent
  * Connects to the Chap server via WebSocket and manages Docker containers
+ * version pre-rc-1.1
  */
 
 const WebSocket = require('ws');
-const { WebSocketServer } = require('ws');
-const { spawn, exec } = require('child_process');
+const { spawn, exec, execSync } = require('child_process');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const StorageManager = require('./storage');
 const security = require('./security');
+const { createLiveLogsWs } = require('./liveLogsWs');
 
 // Configuration
 const config = {
@@ -18,11 +19,13 @@ const config = {
     nodeId: process.env.NODE_ID || '',
     nodeToken: process.env.NODE_TOKEN || '',
     reconnectInterval: 5000,
-    heartbeatInterval: 5000, // Check for tasks every 5 seconds
+    heartbeatInterval: 5000,
     dataDir: process.env.CHAP_DATA_DIR || '/data',
+
     // Browser WebSocket server config
     browserWsPort: parseInt(process.env.BROWSER_WS_PORT || '6002', 10),
     browserWsHost: process.env.BROWSER_WS_HOST || '0.0.0.0',
+
     // SSL config for browser WebSocket (WSS)
     browserWsSslCert: process.env.BROWSER_WS_SSL_CERT || null,
     browserWsSslKey: process.env.BROWSER_WS_SSL_KEY || null
@@ -43,12 +46,8 @@ let heartbeatTimer = null;
 let reconnectTimer = null;
 let isConnected = false;
 
-// Browser WebSocket server state
-let browserWss = null;
-// Map of applicationUuid -> Set of authenticated browser connections
-const browserConnections = new Map();
-// Map of pending session validation requests
-const pendingValidations = new Map();
+// Live logs WebSocket server (browser -> node)
+let liveLogsWs = null;
 
 /**
  * Connect to the Chap server
@@ -133,6 +132,7 @@ function handleMessage(message) {
         case 'server:error':
             console.error('[Agent] Server error:', message.payload?.error);
             break;
+
         case 'heartbeat:ack':
             console.log('[Agent] Server heartbeat acknowledged');
             break;
@@ -159,7 +159,7 @@ function handleMessage(message) {
             break;
             
         case 'container:logs':
-            handleLogs(message);
+            //handleLogs(message);
             break;
             
         case 'container:exec':
@@ -170,67 +170,21 @@ function handleMessage(message) {
             handlePull(message);
             break;
             
-        case 'ping':
-        case 'pong':
-            send('pong');
-            break;
+            case 'ping':
+                send('pong');
+                break;
+            case 'pong':
+                // no-op (avoid pong loops)
+                break;
         
         case 'session:validate:response':
-            handleSessionValidateResponse(message);
+            if (liveLogsWs) {
+                liveLogsWs.handleServerMessage(message);
+            }
             break;
             
         default:
             console.warn(`[Agent] Unknown message type: ${message.type}`);
-    }
-}
-
-/**
- * Handle session validation response from PHP server
- */
-function handleSessionValidateResponse(message) {
-    const requestId = message.request_id;
-    // Debug log the incoming session:validate:response
-    console.log(`[BrowserWS] Received session:validate:response for ${message.application_uuid}:`, JSON.stringify(message));
-
-    const pending = pendingValidations.get(requestId);
-    if (!pending) {
-        console.warn(`[BrowserWS] No pending validation for request ${requestId}`);
-        return;
-    }
-
-    pendingValidations.delete(requestId);
-    const { browserWs, applicationUuid, sessionId } = pending;
-
-    if (message.authorized) {
-        console.log(`[BrowserWS] Session validated for app ${applicationUuid}, user ${message.user_id}`);
-
-        // Store connection info
-        browserWs.authenticated = true;
-        browserWs.applicationUuid = applicationUuid;
-        browserWs.userId = message.user_id;
-        browserWs.teamId = message.team_id;
-
-        // Add to connections map
-        if (!browserConnections.has(applicationUuid)) {
-            browserConnections.set(applicationUuid, new Set());
-        }
-        browserConnections.get(applicationUuid).add(browserWs);
-
-        // Send success message to browser
-        browserWs.send(JSON.stringify({
-            type: 'auth:success',
-            message: 'Authenticated successfully'
-        }));
-
-        // Start streaming logs for this application
-        startLogStreamForBrowser(browserWs, applicationUuid);
-    } else {
-        console.log(`[BrowserWS] Session validation failed: ${message.error}`);
-        browserWs.send(JSON.stringify({
-            type: 'auth:failed',
-            error: message.error || 'Authentication failed'
-        }));
-        browserWs.close(4001, 'Authentication failed');
     }
 }
 
@@ -905,7 +859,7 @@ async function handleRestart(message) {
             }
         });
     } catch (err) {
-        console.error(`[Agent] ❌ Failed to restart container ${containerName}:`, err.message);
+        // console.error(`[Agent] ❌ Failed to restart container ${containerName}:`, err.message);
         send('restarted', { 
             payload: {
                 application_uuid: applicationUuid,
@@ -1216,368 +1170,14 @@ function scheduleReconnect() {
 // Browser WebSocket Server for Direct Log Streaming
 // ============================================
 
-/**
- * Start the browser WebSocket server
- * Uses WSS (secure) if SSL certificates are configured, otherwise WS
- */
-function startBrowserWsServer() {
-    const useSSL = config.browserWsSslCert && config.browserWsSslKey && 
-                   fs.existsSync(config.browserWsSslCert) && fs.existsSync(config.browserWsSslKey);
-    
-    if (useSSL) {
-        // Create HTTPS server for WSS
-        const https = require('https');
-        const httpsServer = https.createServer({
-            cert: fs.readFileSync(config.browserWsSslCert),
-            key: fs.readFileSync(config.browserWsSslKey)
-        });
-        
-        browserWss = new WebSocketServer({ server: httpsServer });
-        
-        httpsServer.listen(config.browserWsPort, config.browserWsHost, () => {
-            console.log(`[BrowserWS] Secure WSS server started on ${config.browserWsHost}:${config.browserWsPort}`);
-        });
-    } else {
-        // Plain WS (no SSL)
-        browserWss = new WebSocketServer({ 
-            port: config.browserWsPort,
-            host: config.browserWsHost
-        });
-        
-        console.log(`[BrowserWS] Server started on ${config.browserWsHost}:${config.browserWsPort} (no SSL)`);
-    }
-    
-    browserWss.on('connection', (browserWs, req) => {
-        const clientIp = req.socket.remoteAddress;
-        console.log(`[BrowserWS] New connection from ${clientIp}`);
-        
-        browserWs.authenticated = false;
-        browserWs.applicationUuid = null;
-        browserWs.logProcess = null;
-        
-        // Set a timeout for authentication
-        browserWs.authTimeout = setTimeout(() => {
-            if (!browserWs.authenticated) {
-                console.log(`[BrowserWS] Auth timeout for ${clientIp}`);
-                browserWs.close(4000, 'Authentication timeout');
-            }
-        }, 10000); // 10 second timeout
-        
-        browserWs.on('message', (data) => {
-            try {
-                const message = JSON.parse(data.toString());
-                handleBrowserMessage(browserWs, message);
-            } catch (err) {
-                console.error('[BrowserWS] Failed to parse message:', err);
-                browserWs.send(JSON.stringify({ type: 'error', error: 'Invalid message format' }));
-            }
-        });
-        
-        browserWs.on('close', () => {
-            console.log(`[BrowserWS] Connection closed for ${clientIp}`);
-            clearTimeout(browserWs.authTimeout);
-            cleanupBrowserConnection(browserWs);
-        });
-        
-        browserWs.on('error', (err) => {
-            console.error(`[BrowserWS] Error for ${clientIp}:`, err.message);
-        });
-    });
-    
-    browserWss.on('error', (err) => {
-        console.error('[BrowserWS] Server error:', err);
-    });
-}
-
-/**
- * Handle messages from browser connections
- */
-function handleBrowserMessage(browserWs, message) {
-    switch (message.type) {
-        case 'auth':
-            handleBrowserAuth(browserWs, message);
-            break;
-            
-        case 'ping':
-            browserWs.send(JSON.stringify({ type: 'pong' }));
-            break;
-            
-        default:
-            if (!browserWs.authenticated) {
-                browserWs.send(JSON.stringify({ type: 'error', error: 'Not authenticated' }));
-                return;
-            }
-            console.warn(`[BrowserWS] Unknown message type: ${message.type}`);
-    }
-}
-
-/**
- * Handle browser authentication request
- */
-function handleBrowserAuth(browserWs, message) {
-    // Always forward the exact session_id and application_uuid from the browser
-    const rawSession = message.session_id;
-    const rawApp = message.application_uuid;
-
-    // Trim incoming IDs to avoid stray whitespace/newlines breaking docker commands
-    const session_id = (typeof rawSession === 'string') ? rawSession.trim() : rawSession;
-    const application_uuid = (typeof rawApp === 'string') ? rawApp.trim() : rawApp;
-
-    // Debug log the incoming browser auth request
-    console.log(`[BrowserWS] Incoming auth request:`, JSON.stringify({ session_id, application_uuid }));
-
-    if (!session_id || !application_uuid) {
-        browserWs.send(JSON.stringify({ 
-            type: 'auth:failed', 
-            error: 'Missing session_id or application_uuid' 
-        }));
-        browserWs.close(4001, 'Invalid auth request');
-        return;
-    }
-
-    if (!isConnected || !ws || ws.readyState !== WebSocket.OPEN) {
-        browserWs.send(JSON.stringify({ 
-            type: 'auth:failed', 
-            error: 'Node not connected to server' 
-        }));
-        browserWs.close(4002, 'Node not connected');
-        return;
-    }
-
-    const requestId = `validate_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-    pendingValidations.set(requestId, {
-        browserWs,
-        applicationUuid: application_uuid,
-        sessionId: session_id,
-        timestamp: Date.now()
-    });
-
-    // Debug log the outgoing session:validate request
-    console.log(`[BrowserWS] FORWARDING session:validate to PHP server:`, JSON.stringify({ request_id: requestId, session_id, application_uuid }));
-
-    // Send validation request to PHP server with the exact values
-    send('session:validate', {
-        request_id: requestId,
-        session_id: session_id,
-        application_uuid: application_uuid
-    });
-}
-
-/**
- * Start streaming logs for an authenticated browser connection
- */
-function startLogStreamForBrowser(browserWs, applicationUuid) {
-    console.log(`[BrowserWS] Starting log stream for app ${applicationUuid}`);
-    
-    // Find a suitable container for this application, prefer label-based (compose) then name matches
-    const safeAppId = safeId(applicationUuid);
-    
-    // Resilient attach: keep trying to attach to container logs until browser disconnects.
-    async function findContainer() {
-        return new Promise((resolve) => {
-            // 1) label-based
-            exec(`docker ps -q --filter "label=chap.application=${safeAppId}"`, (err, stdout) => {
-                if (!err && stdout && stdout.trim()) {
-                    return resolve(stdout.trim().split('\n')[0].trim());
-                }
-
-                // 2) name contains chap-<id>
-                exec(`docker ps -a --filter "name=chap-${safeAppId}" --format "{{.ID}}|{{.Names}}"`, (err2, stdout2) => {
-                    if (!err2 && stdout2 && stdout2.trim()) {
-                        const line = stdout2.trim().split('\n')[0];
-                        const [id, names] = line.split('|');
-                        return resolve(names.trim());
-                    }
-
-                    // 3) exact name
-                    const exactName = `chap-${safeAppId}`;
-                    exec(`docker ps -q --filter "name=^/${exactName}$"`, (err3, stdout3) => {
-                        if (!err3 && stdout3 && stdout3.trim()) {
-                            return resolve(stdout3.trim().split('\n')[0].trim());
-                        }
-
-                        // not found
-                        return resolve(null);
-                    });
-                });
-            });
-        });
-    }
-
-    function attachLogs(containerIdentifier) {
-        if (browserWs.readyState !== WebSocket.OPEN) return;
-
-        const logProcess = spawn('docker', ['logs', '-f', '--tail', '100', '--timestamps', containerIdentifier]);
-        browserWs.logProcess = logProcess;
-
-        const skipRegex = /caught\s+SIGWINCH|shutting down gracefully|AH\d{5}:\s*caught\s+SIGWINCH/i;
-
-        logProcess.stdout.on('data', (data) => {
-            if (browserWs.readyState !== WebSocket.OPEN) return;
-            browserWs.send(JSON.stringify({ type: 'log', stream: 'stdout', data: data.toString() }));
-        });
-
-        logProcess.stderr.on('data', (data) => {
-            if (browserWs.readyState !== WebSocket.OPEN) return;
-            const text = data.toString();
-            if (skipRegex.test(text)) {
-                // Fully suppress known benign messages (do not forward to clients).
-                return;
-            }
-            browserWs.send(JSON.stringify({ type: 'log', stream: 'stderr', data: text }));
-        });
-
-        const onExit = (code, signal) => {
-            if (browserWs.readyState !== WebSocket.OPEN) return;
-            console.log(`[BrowserWS] Log process for ${containerIdentifier} exited (code=${code}, signal=${signal}) — will retry`);
-            // clear current process
-            browserWs.logProcess = null;
-            // schedule reattach
-            browserWs._reattachTimer = setTimeout(() => {
-                if (browserWs.readyState !== WebSocket.OPEN) return;
-                startAttachLoop();
-            }, 2000);
-        };
-
-        logProcess.on('error', (err) => {
-            console.error(`[BrowserWS] Log process error for ${containerIdentifier}:`, err.message);
-        });
-        logProcess.on('close', onExit);
-    }
-
-    async function startAttachLoop() {
-        if (browserWs.readyState !== WebSocket.OPEN) return;
-
-        const containerId = await findContainer();
-        if (!containerId) {
-            // no container yet — notify and poll
-            if (browserWs.readyState === WebSocket.OPEN) {
-                browserWs.send(JSON.stringify({ type: 'log', stream: 'system', data: 'Waiting for container to appear...\n' }));
-            }
-            browserWs._reattachTimer = setTimeout(() => {
-                startAttachLoop();
-            }, 2000);
-            return;
-        }
-
-        // attach to found container
-        attachLogs(containerId);
-    }
-
-    // Begin the attach loop
-    startAttachLoop();
-}
-
-/**
- * Alternative log streaming by finding container with label
- */
-function startLogStreamByLabel(browserWs, applicationUuid) {
-    console.log(`[BrowserWS] Trying label-based log stream for ${applicationUuid}`);
-    
-    // Find container by label (trim application UUID before use)
-    const safeAppLabel = String(applicationUuid).trim();
-    exec(`docker ps -q --filter "label=chap.application=${safeAppLabel}"`, (err, stdout) => {
-        if (err || !stdout.trim()) {
-            console.log(`[BrowserWS] No running container found for ${safeAppLabel}`);
-            if (browserWs.readyState === WebSocket.OPEN) {
-                browserWs.send(JSON.stringify({
-                    type: 'log',
-                    stream: 'system',
-                    data: 'No running container found for this application\n'
-                }));
-            }
-            return;
-        }
-
-        const containerId = stdout.trim().split('\n')[0].trim();
-        console.log(`[BrowserWS] Found container ${containerId} for ${safeAppLabel}`);
-        // Use the same resilient attach logic as startLogStreamForBrowser: try to
-        // attach and on close schedule a reattach loop.
-        if (browserWs.readyState === WebSocket.OPEN) {
-            if (browserWs._reattachTimer) {
-                clearTimeout(browserWs._reattachTimer);
-                browserWs._reattachTimer = null;
-            }
-            const containerIdentifier = containerId;
-            const logProcess = spawn('docker', ['logs', '-f', '--tail', '100', '--timestamps', containerIdentifier]);
-            browserWs.logProcess = logProcess;
-
-            const skipRegex = /caught\s+SIGWINCH|shutting down gracefully|AH\d{5}:\s*caught\s+SIGWINCH/i;
-            logProcess.stdout.on('data', (data) => {
-                if (browserWs.readyState !== WebSocket.OPEN) return;
-                browserWs.send(JSON.stringify({ type: 'log', stream: 'stdout', data: data.toString() }));
-            });
-            logProcess.stderr.on('data', (data) => {
-                if (browserWs.readyState !== WebSocket.OPEN) return;
-                const text = data.toString();
-                if (skipRegex.test(text)) {
-                    // Fully suppress known benign messages (do not forward to clients).
-                    return;
-                }
-                browserWs.send(JSON.stringify({ type: 'log', stream: 'stderr', data: text }));
-            });
-            logProcess.on('error', (err) => console.error(`[BrowserWS] Log process error:`, err.message));
-            logProcess.on('close', (code) => {
-                if (browserWs.readyState !== WebSocket.OPEN) return;
-                browserWs.logProcess = null;
-                browserWs._reattachTimer = setTimeout(() => startLogStreamForBrowser(browserWs, applicationUuid), 2000);
-            });
-        }
-    });
-}
-
-/**
- * Cleanup browser connection
- */
-function cleanupBrowserConnection(browserWs) {
-    // Kill log process if running
-    if (browserWs.logProcess) {
-        browserWs.logProcess.kill();
-        browserWs.logProcess = null;
-    }
-    // Clear any scheduled reattach timer
-    if (browserWs._reattachTimer) {
-        clearTimeout(browserWs._reattachTimer);
-        browserWs._reattachTimer = null;
-    }
-    
-    // Remove from connections map
-    if (browserWs.applicationUuid && browserConnections.has(browserWs.applicationUuid)) {
-        browserConnections.get(browserWs.applicationUuid).delete(browserWs);
-        if (browserConnections.get(browserWs.applicationUuid).size === 0) {
-            browserConnections.delete(browserWs.applicationUuid);
-        }
-    }
-}
-
-/**
- * Cleanup stale pending validations (older than 30 seconds)
- */
-function cleanupPendingValidations() {
-    const now = Date.now();
-    for (const [requestId, pending] of pendingValidations) {
-        if (now - pending.timestamp > 30000) {
-            console.log(`[BrowserWS] Cleaning up stale validation ${requestId}`);
-            pendingValidations.delete(requestId);
-            if (pending.browserWs.readyState === WebSocket.OPEN) {
-                pending.browserWs.close(4003, 'Validation timeout');
-            }
-        }
-    }
-}
-
-// Cleanup pending validations every 10 seconds
-setInterval(cleanupPendingValidations, 10000);
-
 // Graceful shutdown
 process.on('SIGTERM', () => {
     console.log('[Agent] Received SIGTERM, shutting down...');
     stopHeartbeat();
     if (ws) ws.close();
-    if (browserWss) {
-        browserWss.clients.forEach(client => client.close());
-        browserWss.close();
+    if (liveLogsWs) {
+        liveLogsWs.close();
+        liveLogsWs = null;
     }
     process.exit(0);
 });
@@ -1586,9 +1186,9 @@ process.on('SIGINT', () => {
     console.log('[Agent] Received SIGINT, shutting down...');
     stopHeartbeat();
     if (ws) ws.close();
-    if (browserWss) {
-        browserWss.clients.forEach(client => client.close());
-        browserWss.close();
+    if (liveLogsWs) {
+        liveLogsWs.close();
+        liveLogsWs = null;
     }
     process.exit(0);
 });
@@ -1604,8 +1204,17 @@ const browserWsProtocol = (config.browserWsSslCert && config.browserWsSslKey) ? 
 console.log(`  Browser WS: ${browserWsProtocol}://${config.browserWsHost}:${config.browserWsPort}`);
 console.log('');
 
-// Start browser WebSocket server
-startBrowserWsServer();
+// Start browser WebSocket server (live logs)
+if (!liveLogsWs) {
+    liveLogsWs = createLiveLogsWs({
+        config,
+        sendToServer: (type, data) => send(type, data),
+        isServerConnected: () => isConnected && ws && ws.readyState === WebSocket.OPEN,
+        execCommand,
+        safeId,
+    });
+}
+liveLogsWs.start();
 
 // Connect to Chap server
 connect();
