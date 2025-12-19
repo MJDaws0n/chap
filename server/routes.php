@@ -77,6 +77,7 @@ Route::middleware(['auth'], function() {
     
     // Applications
     Route::get('/environments/{envId}/applications/create', 'ApplicationController@create');
+    Route::get('/environments/{envId}/applications/repo-env', 'ApplicationController@repoEnv');
     Route::post('/environments/{envId}/applications', 'ApplicationController@store');
     Route::get('/applications/{id}', 'ApplicationController@show');
     Route::get('/applications/{id}/edit', 'ApplicationController@edit');

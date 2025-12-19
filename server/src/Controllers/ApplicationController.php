@@ -15,6 +15,65 @@ use Chap\Services\DeploymentService;
 class ApplicationController extends BaseController
 {
     /**
+     * Pull environment variables from a repository
+     * (Used by the create application form; session-authenticated JSON endpoint)
+     */
+    public function repoEnv(string $envUuid): void
+    {
+        $team = $this->currentTeam();
+        $environment = Environment::findByUuid($envUuid);
+
+        if (!$environment) {
+            $this->json(['error' => 'Environment not found'], 404);
+        }
+
+        $project = $environment->project();
+        if (!$project || $project->team_id !== $team->id) {
+            $this->json(['error' => 'Environment not found'], 404);
+        }
+
+        $repoUrl = trim((string) $this->input('repo', ''));
+        $branch = trim((string) $this->input('branch', 'main'));
+
+        if ($repoUrl === '') {
+            $this->json(['error' => 'Repository URL is required'], 422);
+        }
+
+        $parsed = $this->parseGitHubRepoUrl($repoUrl);
+        if (!$parsed) {
+            $this->json(['error' => 'Invalid repository URL. Only GitHub HTTPS/SSH URLs are supported.'], 422);
+        }
+
+        [$owner, $repo] = $parsed;
+
+        // Try repo root first via GitHub contents API
+        $envFile = $this->findEnvFileViaGitHubContents($owner, $repo, $branch);
+        if (!$envFile) {
+            // Fallback: scan tree for any .env* file
+            $envFile = $this->findEnvFileViaGitHubTree($owner, $repo, $branch);
+        }
+
+        if (!$envFile) {
+            $this->json(['error' => 'No .env file found in repository (looked for .env*, e.g. .env.example).'], 404);
+        }
+
+        $content = $this->httpGetText($envFile['download_url']);
+        if ($content === null) {
+            $this->json(['error' => 'Failed to download env file from repository'], 502);
+        }
+
+        $vars = $this->parseEnvFile($content);
+        if (empty($vars)) {
+            $this->json(['error' => 'Found an env file but it does not look like a valid .env format'], 422);
+        }
+
+        $this->json([
+            'file' => $envFile['path'],
+            'vars' => $vars,
+        ]);
+    }
+
+    /**
      * Create application form
      */
     public function create(string $envUuid): void
@@ -41,6 +100,218 @@ class ApplicationController extends BaseController
             'project' => $project,
             'nodes' => $nodes,
         ]);
+    }
+
+    private function parseGitHubRepoUrl(string $url): ?array
+    {
+        // Supports:
+        // - https://github.com/owner/repo
+        // - https://github.com/owner/repo.git
+        // - git@github.com:owner/repo.git
+        $url = trim($url);
+
+        if (preg_match('~^git@github\.com:([^/\s]+)/([^\s]+?)(?:\.git)?$~', $url, $m)) {
+            return [$m[1], $m[2]];
+        }
+
+        $parts = parse_url($url);
+        if (!$parts || empty($parts['host']) || !str_contains($parts['host'], 'github.com')) {
+            return null;
+        }
+
+        $path = trim($parts['path'] ?? '', '/');
+        if ($path === '') {
+            return null;
+        }
+
+        [$owner, $repo] = array_pad(explode('/', $path, 3), 2, null);
+        if (!$owner || !$repo) {
+            return null;
+        }
+
+        $repo = preg_replace('~\.git$~', '', $repo);
+        if ($repo === '') {
+            return null;
+        }
+
+        return [$owner, $repo];
+    }
+
+    private function findEnvFileViaGitHubContents(string $owner, string $repo, string $branch): ?array
+    {
+        $url = 'https://api.github.com/repos/' . rawurlencode($owner) . '/' . rawurlencode($repo) . '/contents?ref=' . rawurlencode($branch);
+        $json = $this->httpGetJson($url);
+        if (!$json || !is_array($json)) {
+            return null;
+        }
+
+        // If API returns an object with message, treat as failure
+        if (isset($json['message']) && !isset($json[0])) {
+            return null;
+        }
+
+        $files = array_filter($json, fn($x) => is_array($x) && ($x['type'] ?? '') === 'file' && isset($x['name']));
+        if (empty($files)) {
+            return null;
+        }
+
+        $candidates = [];
+        foreach ($files as $f) {
+            $name = (string) ($f['name'] ?? '');
+            if ($name !== '' && str_starts_with($name, '.env')) {
+                $candidates[] = $f;
+            }
+        }
+
+        if (empty($candidates)) {
+            return null;
+        }
+
+        $prefer = ['.env.example', '.env_example', '.env'];
+        foreach ($prefer as $p) {
+            foreach ($candidates as $c) {
+                if (($c['name'] ?? '') === $p && !empty($c['download_url'])) {
+                    return ['path' => $c['path'] ?? $p, 'download_url' => $c['download_url']];
+                }
+            }
+        }
+
+        // Otherwise pick the first .env* file with a download_url
+        foreach ($candidates as $c) {
+            if (!empty($c['download_url'])) {
+                return ['path' => $c['path'] ?? ($c['name'] ?? '.env'), 'download_url' => $c['download_url']];
+            }
+        }
+
+        return null;
+    }
+
+    private function findEnvFileViaGitHubTree(string $owner, string $repo, string $branch): ?array
+    {
+        $url = 'https://api.github.com/repos/' . rawurlencode($owner) . '/' . rawurlencode($repo) . '/git/trees/' . rawurlencode($branch) . '?recursive=1';
+        $json = $this->httpGetJson($url);
+        if (!$json || !is_array($json) || empty($json['tree']) || !is_array($json['tree'])) {
+            return null;
+        }
+
+        $paths = [];
+        foreach ($json['tree'] as $item) {
+            if (!is_array($item)) continue;
+            if (($item['type'] ?? '') !== 'blob') continue;
+            $path = (string) ($item['path'] ?? '');
+            if ($path === '') continue;
+            $base = basename($path);
+            if (str_starts_with($base, '.env')) {
+                $paths[] = $path;
+            }
+        }
+
+        if (empty($paths)) {
+            return null;
+        }
+
+        // Prefer root-level files and common names
+        usort($paths, function ($a, $b) {
+            $da = substr_count($a, '/');
+            $db = substr_count($b, '/');
+            if ($da !== $db) return $da <=> $db;
+            return strlen($a) <=> strlen($b);
+        });
+
+        $prefer = ['.env.example', '.env_example', '.env'];
+        foreach ($prefer as $p) {
+            foreach ($paths as $path) {
+                if (basename($path) === $p) {
+                    $raw = 'https://raw.githubusercontent.com/' . rawurlencode($owner) . '/' . rawurlencode($repo) . '/' . rawurlencode($branch) . '/' . str_replace('%2F', '/', rawurlencode($path));
+                    return ['path' => $path, 'download_url' => $raw];
+                }
+            }
+        }
+
+        $path = $paths[0];
+        $raw = 'https://raw.githubusercontent.com/' . rawurlencode($owner) . '/' . rawurlencode($repo) . '/' . rawurlencode($branch) . '/' . str_replace('%2F', '/', rawurlencode($path));
+        return ['path' => $path, 'download_url' => $raw];
+    }
+
+    private function httpGetJson(string $url): mixed
+    {
+        $body = $this->httpGetText($url, true);
+        if ($body === null) {
+            return null;
+        }
+        return json_decode($body, true);
+    }
+
+    private function httpGetText(string $url, bool $githubApi = false): ?string
+    {
+        $headers = [
+            'User-Agent: Chap',
+            'Accept: ' . ($githubApi ? 'application/vnd.github+json' : 'text/plain, */*'),
+        ];
+
+        if (function_exists('curl_init')) {
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+            $resp = curl_exec($ch);
+            $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            if ($resp === false || $code < 200 || $code >= 300) {
+                return null;
+            }
+            return (string) $resp;
+        }
+
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'header' => implode("\r\n", $headers),
+                'timeout' => 10,
+            ],
+        ]);
+        $resp = @file_get_contents($url, false, $context);
+        return $resp === false ? null : (string) $resp;
+    }
+
+    private function parseEnvFile(string $content): array
+    {
+        $vars = [];
+        $lines = preg_split('/\r?\n/', $content) ?: [];
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || str_starts_with($line, '#')) {
+                continue;
+            }
+            if (str_starts_with($line, 'export ')) {
+                $line = trim(substr($line, 7));
+            }
+            if (!str_contains($line, '=')) {
+                continue;
+            }
+            [$key, $value] = explode('=', $line, 2);
+            $key = trim($key);
+            if ($key === '' || !preg_match('/^[A-Z0-9_]+$/i', $key)) {
+                continue;
+            }
+            $value = ltrim($value);
+            // strip inline comments (best-effort) for unquoted values
+            if ($value !== '' && ($value[0] !== '"') && ($value[0] !== "'")) {
+                $hashPos = strpos($value, ' #');
+                if ($hashPos !== false) {
+                    $value = substr($value, 0, $hashPos);
+                }
+                $value = trim($value);
+            }
+            // unquote
+            if (strlen($value) >= 2 && (($value[0] === '"' && $value[strlen($value)-1] === '"') || ($value[0] === "'" && $value[strlen($value)-1] === "'"))) {
+                $value = substr($value, 1, -1);
+            }
+            $vars[$key] = $value;
+        }
+        return $vars;
     }
 
     /**
@@ -124,7 +395,8 @@ class ApplicationController extends BaseController
             'environment_variables' => !empty($envVars) ? json_encode($envVars) : null,
             'memory_limit' => $data['memory_limit'] ?? '512m',
             'cpu_limit' => $data['cpu_limit'] ?? '1',
-            'health_check_enabled' => !empty($data['health_check_enabled']) ? 1 : 0,
+            // When the UI doesn't post health-check fields, keep defaults enabled.
+            'health_check_enabled' => array_key_exists('health_check_enabled', $data) ? (!empty($data['health_check_enabled']) ? 1 : 0) : 1,
             'health_check_path' => $data['health_check_path'] ?? '/',
         ]);
 
@@ -235,7 +507,10 @@ class ApplicationController extends BaseController
             'environment_variables' => !empty($envVars) ? json_encode($envVars) : null,
             'memory_limit' => $data['memory_limit'] ?? $application->memory_limit,
             'cpu_limit' => $data['cpu_limit'] ?? $application->cpu_limit,
-            'health_check_enabled' => !empty($data['health_check_enabled']) ? 1 : 0,
+            // Preserve existing health-check config if the UI doesn't post these fields.
+            'health_check_enabled' => array_key_exists('health_check_enabled', $data)
+                ? (!empty($data['health_check_enabled']) ? 1 : 0)
+                : ($application->health_check_enabled ? 1 : 0),
             'health_check_path' => $data['health_check_path'] ?? $application->health_check_path,
         ]);
 

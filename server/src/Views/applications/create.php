@@ -102,6 +102,7 @@
                         value="<?= e(old('git_repository')) ?>"
                         class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                         placeholder="https://github.com/user/repo.git">
+                    <p id="repo-env-error" class="text-red-400 text-sm mt-1 hidden"></p>
                 </div>
 
                 <div>
@@ -142,33 +143,12 @@
                         value="<?= e(old('build_context', '.')) ?>"
                         class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
                 </div>
-
-                <div>
-                    <label for="port" class="block text-sm font-medium text-gray-300 mb-2">Application Port</label>
-                    <input type="number" name="port" id="port"
-                        value="<?= e(old('port', '3000')) ?>"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        placeholder="3000">
-                </div>
-            </div>
-        </div>
-
-        <!-- Domains -->
-        <div class="bg-gray-800 rounded-lg p-6">
-            <h2 class="text-lg font-semibold mb-4">Domains</h2>
-            <div>
-                <label for="domains" class="block text-sm font-medium text-gray-300 mb-2">Custom Domains</label>
-                <input type="text" name="domains" id="domains"
-                    value="<?= e(old('domains')) ?>"
-                    class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                    placeholder="app.example.com, www.example.com">
-                <p class="text-xs text-gray-500 mt-1">Separate multiple domains with commas. Make sure DNS is configured.</p>
             </div>
         </div>
 
         <!-- Environment Variables -->
         <?php $initialEnv = old('environment_variables', ''); ?>
-        <div x-data="envEditor()" x-ref="envEditor" data-initial-b64="<?= base64_encode($initialEnv) ?>" x-init="if($el.dataset.initialB64){ try{ $data.parseEnvString(atob($el.dataset.initialB64)); }catch(e){console.warn(e);} }" class="bg-gray-800 rounded-lg p-6">
+        <div x-data="envEditor({ repoEnvUrl: '/environments/<?= $environment->uuid ?>/applications/repo-env' })" x-ref="envEditor" data-initial-b64="<?= base64_encode($initialEnv) ?>" x-init="if($el.dataset.initialB64){ try{ $data.parseEnvString(atob($el.dataset.initialB64)); }catch(e){console.warn(e);} }" class="bg-gray-800 rounded-lg p-6">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-semibold">Environment Variables</h2>
                 <button type="button" @click="toggleManual();" x-text="manualMode ? 'Hide' : 'Show'" class="text-blue-400 hover:text-blue-300 text-sm"></button>
@@ -178,6 +158,7 @@
                     <div class="flex items-center space-x-2">
                         <div class="text-xs text-gray-400">Environment Variables</div>
                         <div class="ml-auto flex items-center space-x-2">
+                            <button type="button" @click="pullFromRepo()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">Pull from repo</button>
                             <button type="button" @click="openBulkEditor()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">Bulk Edit</button>
                             <button type="button" @click="addRow()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">New Variable</button>
                         </div>
@@ -212,47 +193,20 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                     <label for="memory_limit" class="block text-sm font-medium text-gray-300 mb-2">Memory Limit</label>
-                    <select name="memory_limit" id="memory_limit"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                        <option value="256m">256 MB</option>
-                        <option value="512m" selected>512 MB</option>
-                        <option value="1g">1 GB</option>
-                        <option value="2g">2 GB</option>
-                        <option value="4g">4 GB</option>
-                        <option value="8g">8 GB</option>
-                    </select>
+                    <input type="text" name="memory_limit" id="memory_limit"
+                        value="<?= e(old('memory_limit', '512m')) ?>"
+                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        placeholder="512m">
+                    <p class="text-xs text-gray-500 mt-1">Examples: 512m, 1g, 2048m</p>
                 </div>
 
                 <div>
                     <label for="cpu_limit" class="block text-sm font-medium text-gray-300 mb-2">CPU Limit</label>
-                    <select name="cpu_limit" id="cpu_limit"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                        <option value="0.5">0.5 CPU</option>
-                        <option value="1" selected>1 CPU</option>
-                        <option value="2">2 CPUs</option>
-                        <option value="4">4 CPUs</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-
-        <!-- Health Check -->
-        <div class="bg-gray-800 rounded-lg p-6">
-            <h2 class="text-lg font-semibold mb-4">Health Check</h2>
-            <div class="space-y-4">
-                <div class="flex items-center">
-                    <input type="checkbox" name="health_check_enabled" id="health_check_enabled"
-                        class="w-4 h-4 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
-                        <?= old('health_check_enabled') ? 'checked' : '' ?>>
-                    <label for="health_check_enabled" class="ml-2 text-sm text-gray-300">Enable health checks</label>
-                </div>
-
-                <div>
-                    <label for="health_check_path" class="block text-sm font-medium text-gray-300 mb-2">Health Check Path</label>
-                    <input type="text" name="health_check_path" id="health_check_path"
-                        value="<?= e(old('health_check_path', '/health')) ?>"
+                    <input type="text" name="cpu_limit" id="cpu_limit"
+                        value="<?= e(old('cpu_limit', '1')) ?>"
                         class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        placeholder="/health">
+                        placeholder="1">
+                    <p class="text-xs text-gray-500 mt-1">Examples: 0.5, 1, 2</p>
                 </div>
             </div>
         </div>
@@ -277,6 +231,7 @@
 function envEditor(opts={}){
     const initial = opts.initial || '';
     return {
+        repoEnvUrl: opts.repoEnvUrl || null,
         rows: [],
         serialized: '',
         manualMode: false,
@@ -342,6 +297,62 @@ function envEditor(opts={}){
         },
         updateSerialized() {
             this.serialized = this.rows.map(r => (r.key ? r.key + '=' + r.value : '')).filter(Boolean).join('\n');
+        },
+        showRepoError(msg) {
+            const el = document.getElementById('repo-env-error');
+            if (!el) return;
+            if (!msg) {
+                el.textContent = '';
+                el.classList.add('hidden');
+                return;
+            }
+            el.textContent = msg;
+            el.classList.remove('hidden');
+        },
+        async pullFromRepo() {
+            try {
+                this.showRepoError('');
+                if (!this.repoEnvUrl) {
+                    this.showRepoError('Env pull endpoint is not configured.');
+                    return;
+                }
+
+                const repo = (document.getElementById('git_repository')?.value || '').trim();
+                const branch = (document.getElementById('git_branch')?.value || 'main').trim();
+
+                if (!repo) {
+                    this.showRepoError('Please enter a Git repository URL first.');
+                    return;
+                }
+
+                const url = this.repoEnvUrl + '?repo=' + encodeURIComponent(repo) + '&branch=' + encodeURIComponent(branch);
+                const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+                const data = await res.json().catch(() => ({}));
+
+                if (!res.ok) {
+                    this.showRepoError(data.error || 'Failed to pull environment variables from repository.');
+                    return;
+                }
+
+                const vars = data.vars || {};
+                const existingKeys = new Set(this.rows.map(r => (r.key || '').trim()).filter(Boolean));
+                let added = 0;
+                for (const [k, v] of Object.entries(vars)) {
+                    const key = String(k || '').trim();
+                    if (!key) continue;
+                    if (existingKeys.has(key)) continue; // do not replace existing values
+                    this.addRow(key, String(v ?? ''), false);
+                    existingKeys.add(key);
+                    added++;
+                }
+
+                if (added === 0) {
+                    // No changes, but still a successful pull; keep UI quiet.
+                }
+                this.updateSerialized();
+            } catch (e) {
+                this.showRepoError('Failed to pull environment variables. Please check the repo URL and try again.');
+            }
         },
         parseEnvString(str) {
             this.rows = [];

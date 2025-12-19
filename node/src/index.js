@@ -635,16 +635,19 @@ async function runContainer(deploymentId, applicationId, imageName, appConfig) {
     await security.ensureAppNetwork(execCommand);
     
     // Security: Build secure docker run arguments
+    const cpuLimit = appConfig.cpuLimit ?? appConfig.cpu_limit;
+    const memoryLimit = appConfig.memoryLimit ?? appConfig.memory_limit;
     const secureArgs = security.buildSecureDockerArgs(applicationId, deploymentId, {
-        cpuLimit: appConfig.cpuLimit,
-        memoryLimit: appConfig.memoryLimit,
+        cpuLimit,
+        memoryLimit,
     });
     
     // Build docker run command with security args
     let cmd = `docker run ${secureArgs.join(' ')}`;
     
     // Security: Sanitize and add ports
-    const safePorts = security.sanitizePorts(appConfig.ports);
+    const ports = appConfig.ports || (appConfig.port ? [{ containerPort: appConfig.port }] : []);
+    const safePorts = security.sanitizePorts(ports);
     for (const port of safePorts) {
         if (port.hostPort) {
             cmd += ` -p ${port.hostPort}:${port.containerPort}`;
@@ -654,7 +657,8 @@ async function runContainer(deploymentId, applicationId, imageName, appConfig) {
     }
     
     // Security: Sanitize and add environment variables
-    const safeEnvVars = security.sanitizeEnvVars(appConfig.environmentVariables);
+    const envVars = appConfig.environmentVariables ?? appConfig.environment_variables;
+    const safeEnvVars = security.sanitizeEnvVars(envVars);
     for (const [key, value] of Object.entries(safeEnvVars)) {
         // Escape double quotes in value
         const escapedValue = value.replace(/"/g, '\\"');
