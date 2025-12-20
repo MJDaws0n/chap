@@ -1,0 +1,121 @@
+/* Chap UI tokens (2025 design overhaul)
+   Keep this file as the single source of truth for spacing, radii, and theme variables. */
+
+:root {
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
+
+  --blur-sm: 10px;
+  --blur-md: 18px;
+
+  --shadow-sm: 0 1px 1px rgba(0, 0, 0, 0.08), 0 10px 30px rgba(0, 0, 0, 0.10);
+  --shadow-md: 0 12px 40px rgba(0, 0, 0, 0.18);
+
+  --focus-ring: 0 0 0 3px rgba(64, 156, 255, 0.35);
+
+  --container-max: 1120px;
+  --container-pad: 20px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+/* Theme mapping: html[data-theme] is set by JS.
+   "auto" is resolved to light/dark based on prefers-color-scheme. */
+html[data-theme="light"] {
+  --bg: #f6f7f9;
+  --bg-elev: rgba(255, 255, 255, 0.72);
+  --surface: rgba(255, 255, 255, 0.62);
+  --surface-strong: rgba(255, 255, 255, 0.86);
+
+  --text: rgba(18, 22, 28, 0.92);
+  --text-muted: rgba(18, 22, 28, 0.62);
+  --text-subtle: rgba(18, 22, 28, 0.48);
+
+  --border: rgba(18, 22, 28, 0.12);
+  --border-strong: rgba(18, 22, 28, 0.18);
+
+  --accent: #2f7dff;
+  --accent-weak: rgba(47, 125, 255, 0.18);
+  --danger: #e5484d;
+  --warning: #f0b429;
+  --success: #12a150;
+
+  --code-bg: rgba(18, 22, 28, 0.06);
+}
+
+html[data-theme="dark"] {
+  --bg: #0b0e12;
+  --bg-elev: rgba(17, 21, 27, 0.56);
+  --surface: rgba(17, 21, 27, 0.48);
+  --surface-strong: rgba(17, 21, 27, 0.70);
+
+  --text: rgba(245, 247, 250, 0.92);
+  --text-muted: rgba(245, 247, 250, 0.62);
+  --text-subtle: rgba(245, 247, 250, 0.48);
+
+  --border: rgba(245, 247, 250, 0.12);
+  --border-strong: rgba(245, 247, 250, 0.18);
+
+  --accent: #4aa3ff;
+  --accent-weak: rgba(74, 163, 255, 0.18);
+  --danger: #ff5a5f;
+  --warning: #ffd166;
+  --success: #1bd96a;
+
+  --code-bg: rgba(245, 247, 250, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-theme="auto"] {
+    --bg: #0b0e12;
+    --bg-elev: rgba(17, 21, 27, 0.56);
+    --surface: rgba(17, 21, 27, 0.48);
+    --surface-strong: rgba(17, 21, 27, 0.70);
+
+    --text: rgba(245, 247, 250, 0.92);
+    --text-muted: rgba(245, 247, 250, 0.62);
+    --text-subtle: rgba(245, 247, 250, 0.48);
+
+    --border: rgba(245, 247, 250, 0.12);
+    --border-strong: rgba(245, 247, 250, 0.18);
+
+    --accent: #4aa3ff;
+    --accent-weak: rgba(74, 163, 255, 0.18);
+    --danger: #ff5a5f;
+    --warning: #ffd166;
+    --success: #1bd96a;
+
+    --code-bg: rgba(245, 247, 250, 0.08);
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  html[data-theme="auto"] {
+    --bg: #f6f7f9;
+    --bg-elev: rgba(255, 255, 255, 0.72);
+    --surface: rgba(255, 255, 255, 0.62);
+    --surface-strong: rgba(255, 255, 255, 0.86);
+
+    --text: rgba(18, 22, 28, 0.92);
+    --text-muted: rgba(18, 22, 28, 0.62);
+    --text-subtle: rgba(18, 22, 28, 0.48);
+
+    --border: rgba(18, 22, 28, 0.12);
+    --border-strong: rgba(18, 22, 28, 0.18);
+
+    --accent: #2f7dff;
+    --accent-weak: rgba(47, 125, 255, 0.18);
+    --danger: #e5484d;
+    --warning: #f0b429;
+    --success: #12a150;
+
+    --code-bg: rgba(18, 22, 28, 0.06);
+  }
+}

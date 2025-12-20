@@ -1,12 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= $title ?? 'Chap' ?></title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <?php \Chap\View\View::partial('head', ['title' => $title ?? 'Chap']); ?>
 </head>
-<body class="bg-gray-900 text-gray-100 min-h-screen">
-    <?= $content ?? '' ?>
+<body>
+    <header class="topbar">
+        <div class="container row row--between">
+            <a href="/" class="row" style="gap:10px">
+                <span style="font-weight:740; letter-spacing:-0.02em">Chap</span>
+            </a>
+            <div class="theme-switch" role="group" aria-label="Theme">
+                <button type="button" data-theme-mode="auto" aria-pressed="false">Auto</button>
+                <button type="button" data-theme-mode="light" aria-pressed="false">Light</button>
+                <button type="button" data-theme-mode="dark" aria-pressed="false">Dark</button>
+            </div>
+        </div>
+    </header>
+    <main class="content">
+        <div class="container container--fluid">
+            <?= $content ?? '' ?>
+        </div>
+    </main>
 </body>
 </html>

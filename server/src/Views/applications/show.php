@@ -325,7 +325,7 @@ function envEditor(opts={}){
             const self = this;
             chapSwal({
                 title: 'Bulk Edit Environment Variables',
-                html: '<textarea id="swal-env" rows="12" class="w-full bg-gray-800 text-white p-2 rounded-lg" placeholder="KEY=VALUE\nANOTHER=VAL"></textarea>',
+                html: '<textarea id="swal-env" rows="12" class="textarea" placeholder="KEY=VALUE\nANOTHER=VAL" style="min-height: 240px"></textarea>',
                 showCancelButton: true,
                 confirmButtonText: 'Apply',
                 cancelButtonText: 'Cancel',

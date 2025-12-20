@@ -15,7 +15,7 @@ $statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
 $containersJson = '[]';
 $firstContainerId = 'null';
 ?>
-<div class="space-y-6" x-data="liveLogs()">
+<div class="stack" x-data="liveLogs()">
     <!-- Breadcrumb & Header -->
     <div class="flex items-center justify-between">
         <div>
@@ -114,9 +114,7 @@ $firstContainerId = 'null';
                     </div>
                 </div>
 
-                <div id="logs-container"
-                    class="bg-gray-900 rounded-lg p-4 h-[600px] overflow-y-auto overflow-x-hidden font-mono text-sm"
-                    x-ref="logsContainer">
+                <div id="logs-container" class="logs" x-ref="logsContainer">
                     <template x-if="logs.length === 0 && !loading">
                         <p class="text-gray-500">No logs available. Select a container to view logs.</p>
                     </template>
@@ -124,9 +122,9 @@ $firstContainerId = 'null';
                         <p class="text-gray-500">Loading logs...</p>
                     </template>
                     <template x-for="(log, index) in logs" :key="index">
-                        <div class="flex items-start space-x-2 py-1 min-w-0" :class="logClass(log)">
-                            <span class="text-gray-500 flex-shrink-0" x-text="log.timestamp"></span>
-                            <span class="whitespace-pre-wrap break-all min-w-0 flex-1" x-text="log.message"></span>
+                        <div class="log-line" :class="logClass(log)">
+                            <span class="log-line__ts" x-text="log.timestamp"></span>
+                            <span class="log-line__msg" x-text="log.message"></span>
                         </div>
                     </template>
                 </div>
