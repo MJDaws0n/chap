@@ -1,97 +1,101 @@
 <?php
 /**
  * Deployment Show View
+ * Updated to use new design system
  */
-$statusColors = [
-    'queued' => 'bg-gray-600',
-    'building' => 'bg-yellow-600',
-    'deploying' => 'bg-blue-600',
-    'running' => 'bg-green-600',
-    'success' => 'bg-green-600',
-    'failed' => 'bg-red-600',
-    'cancelled' => 'bg-gray-600',
-];
-$statusColor = $statusColors[$deployment->status] ?? 'bg-gray-600';
+$statusBadge = [
+    'queued' => 'badge-secondary',
+    'building' => 'badge-warning',
+    'deploying' => 'badge-primary',
+    'running' => 'badge-success',
+    'success' => 'badge-success',
+    'failed' => 'badge-danger',
+    'cancelled' => 'badge-secondary',
+][$deployment->status] ?? 'badge-secondary';
+
 $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying']);
 ?>
-<div class="space-y-6">
+
+<div class="deployment-show">
     <!-- Breadcrumb & Header -->
-    <div class="flex items-center justify-between">
+    <div class="page-header">
         <div>
-            <div class="flex items-center space-x-2 text-sm text-gray-400 mb-2">
-                <a href="/projects" class="hover:text-white">Projects</a>
-                <span>/</span>
-                <a href="/projects/<?= $project->uuid ?>" class="hover:text-white"><?= e($project->name) ?></a>
-                <span>/</span>
-                <a href="/environments/<?= $environment->uuid ?>" class="hover:text-white"><?= e($environment->name) ?></a>
-                <span>/</span>
-                <a href="/applications/<?= $application->uuid ?>" class="hover:text-white"><?= e($application->name) ?></a>
-                <span>/</span>
-                <span>Deployment</span>
-            </div>
-            <div class="flex items-center space-x-3">
-                <h1 class="text-2xl font-bold">Deployment</h1>
-                <span class="px-2 py-1 text-xs rounded-full <?= $statusColor ?>">
+            <nav class="breadcrumb">
+                <a href="/projects">Projects</a>
+                <span class="breadcrumb-separator">/</span>
+                <a href="/projects/<?= $project->uuid ?>"><?= e($project->name) ?></a>
+                <span class="breadcrumb-separator">/</span>
+                <a href="/environments/<?= $environment->uuid ?>"><?= e($environment->name) ?></a>
+                <span class="breadcrumb-separator">/</span>
+                <a href="/applications/<?= $application->uuid ?>"><?= e($application->name) ?></a>
+                <span class="breadcrumb-separator">/</span>
+                <span class="breadcrumb-current">Deployment</span>
+            </nav>
+            <div class="flex items-center gap-md mt-sm">
+                <h1 class="page-title">Deployment</h1>
+                <span class="badge <?= $statusBadge ?>">
                     <?= ucfirst($deployment->status) ?>
                 </span>
             </div>
-            <p class="text-gray-400 mt-1">
+            <p class="text-muted mt-xs">
                 <?= e($deployment->commit_message ?? 'Manual deployment') ?>
                 <?php if ($deployment->commit_sha): ?>
-                    • <code class="text-sm"><?= substr($deployment->commit_sha, 0, 7) ?></code>
+                    • <code class="code-inline"><?= substr($deployment->commit_sha, 0, 7) ?></code>
                 <?php endif; ?>
             </p>
         </div>
-        <div class="flex space-x-3">
-            <a href="/applications/<?= $application->uuid ?>" class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg">
-                ← Back to Application
+        <div class="page-actions">
+            <a href="/applications/<?= $application->uuid ?>" class="btn btn-secondary">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                </svg>
+                Back to Application
             </a>
             <?php if ($isInProgress): ?>
                 <form method="POST" action="/deployments/<?= $deployment->uuid ?>/cancel" class="inline">
                     <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                    <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg">
-                        Cancel
-                    </button>
+                    <button type="submit" class="btn btn-danger">Cancel</button>
                 </form>
             <?php endif; ?>
         </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+    <div class="deployment-layout">
         <!-- Logs -->
-        <div class="lg:col-span-3">
-            <div class="bg-gray-800 rounded-lg p-6">
-                <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-lg font-semibold">Build Logs</h2>
+        <div class="logs-panel">
+            <div class="card card-glass">
+                <div class="card-header">
+                    <h2 class="card-title">Build Logs</h2>
                     <?php if ($isInProgress): ?>
-                        <div class="flex items-center space-x-2 text-sm text-gray-400">
-                            <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                        <div class="live-indicator">
+                            <span class="live-dot"></span>
                             <span>Live</span>
                         </div>
                     <?php endif; ?>
                 </div>
                 
-                <div id="logs-container" class="bg-gray-900 rounded-lg p-4 h-[600px] overflow-y-auto font-mono text-sm">
+                <div class="logs-container" id="logs-container">
                     <?php 
                     $logs = $deployment->logsArray();
                     if (empty($logs)):
                     ?>
-                        <p class="text-gray-500">Waiting for logs...</p>
+                        <p class="text-muted">Waiting for logs...</p>
                     <?php else: ?>
                         <?php foreach ($logs as $log): ?>
                             <?php
-                            $logClass = 'text-gray-300';
-                            if (str_contains(strtolower($log['message'] ?? ''), 'error')) {
-                                $logClass = 'text-red-400';
-                            } elseif (str_contains(strtolower($log['message'] ?? ''), 'warning')) {
-                                $logClass = 'text-yellow-400';
-                            } elseif (str_contains(strtolower($log['message'] ?? ''), 'success')) {
-                                $logClass = 'text-green-400';
+                            $logClass = 'log-info';
+                            $msg = strtolower($log['message'] ?? '');
+                            if (str_contains($msg, 'error') || str_contains($msg, 'failed')) {
+                                $logClass = 'log-error';
+                            } elseif (str_contains($msg, 'warning') || str_contains($msg, 'warn')) {
+                                $logClass = 'log-warning';
+                            } elseif (str_contains($msg, 'success') || str_contains($msg, 'completed')) {
+                                $logClass = 'log-success';
                             }
                             ?>
-                            <div class="flex items-start space-x-2 py-1 <?= $logClass ?>">
-                                <span class="text-gray-500 flex-shrink-0"><?= e($log['timestamp'] ?? '') ?></span>
-                                <span class="whitespace-pre-wrap"><?= e($log['message'] ?? '') ?></span>
+                            <div class="log-entry <?= $logClass ?>">
+                                <span class="log-timestamp"><?= e($log['timestamp'] ?? '') ?></span>
+                                <span class="log-message"><?= e($log['message'] ?? '') ?></span>
                             </div>
                         <?php endforeach; ?>
                     <?php endif; ?>
@@ -100,159 +104,303 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
         </div>
 
         <!-- Sidebar -->
-        <div class="space-y-6">
+        <div class="deployment-sidebar">
             <!-- Details Card -->
-            <div class="bg-gray-800 rounded-lg p-6">
-                <h2 class="text-lg font-semibold mb-4">Details</h2>
-                <div class="space-y-4 text-sm">
-                    <div class="flex items-center justify-between">
-                        <span class="text-gray-400">Status</span>
-                        <span class="px-2 py-1 text-xs rounded-full <?= $statusColor ?>">
-                            <?= ucfirst($deployment->status) ?>
-                        </span>
-                    </div>
-                    <div class="flex items-center justify-between">
-                        <span class="text-gray-400">Started</span>
-                        <span><?= time_ago($deployment->created_at) ?></span>
-                    </div>
-                    <?php if ($deployment->finished_at): ?>
-                        <div class="flex items-center justify-between">
-                            <span class="text-gray-400">Finished</span>
-                            <span><?= time_ago($deployment->finished_at) ?></span>
+            <div class="card card-glass">
+                <div class="card-header">
+                    <h3 class="card-title">Details</h3>
+                </div>
+                <div class="card-body">
+                    <dl class="info-list">
+                        <div class="info-item">
+                            <dt>Status</dt>
+                            <dd><span class="badge <?= $statusBadge ?>"><?= ucfirst($deployment->status) ?></span></dd>
                         </div>
-                        <div class="flex items-center justify-between">
-                            <span class="text-gray-400">Duration</span>
-                            <span>
-                                <?php
-                                $start = strtotime($deployment->created_at);
-                                $end = strtotime($deployment->finished_at);
-                                $duration = $end - $start;
-                                if ($duration < 60) {
-                                    echo $duration . 's';
-                                } else {
-                                    echo floor($duration / 60) . 'm ' . ($duration % 60) . 's';
-                                }
-                                ?>
-                            </span>
+                        <div class="info-item">
+                            <dt>Started</dt>
+                            <dd><?= time_ago($deployment->created_at) ?></dd>
                         </div>
-                    <?php endif; ?>
-                    <div class="flex items-center justify-between">
-                        <span class="text-gray-400">Application</span>
-                        <a href="/applications/<?= $application->uuid ?>" class="text-blue-400 hover:text-blue-300">
-                            <?= e($application->name) ?>
-                        </a>
-                    </div>
-                    <?php if ($deployment->commit_sha): ?>
-                        <div class="flex items-center justify-between">
-                            <span class="text-gray-400">Commit</span>
-                            <code class="text-xs bg-gray-700 px-2 py-1 rounded"><?= substr($deployment->commit_sha, 0, 7) ?></code>
+                        <?php if ($deployment->finished_at): ?>
+                            <div class="info-item">
+                                <dt>Finished</dt>
+                                <dd><?= time_ago($deployment->finished_at) ?></dd>
+                            </div>
+                            <div class="info-item">
+                                <dt>Duration</dt>
+                                <dd>
+                                    <?php
+                                    $start = strtotime($deployment->created_at);
+                                    $end = strtotime($deployment->finished_at);
+                                    $duration = $end - $start;
+                                    if ($duration < 60) {
+                                        echo $duration . 's';
+                                    } else {
+                                        echo floor($duration / 60) . 'm ' . ($duration % 60) . 's';
+                                    }
+                                    ?>
+                                </dd>
+                            </div>
+                        <?php endif; ?>
+                        <div class="info-item">
+                            <dt>Application</dt>
+                            <dd><a href="/applications/<?= $application->uuid ?>" class="link"><?= e($application->name) ?></a></dd>
                         </div>
-                    <?php endif; ?>
-                    <!-- <?php if ($deployment->triggered_by): ?> -->
-                        <div class="flex items-center justify-between">
-                            <span class="text-gray-400">Triggered by</span>
-                            <span> Not implemented </span>
-                            <!-- <span><?= e($deployment->triggered_by) ?></span> -->
+                        <?php if ($deployment->commit_sha): ?>
+                            <div class="info-item">
+                                <dt>Commit</dt>
+                                <dd><code class="code-inline"><?= substr($deployment->commit_sha, 0, 7) ?></code></dd>
+                            </div>
+                        <?php endif; ?>
+                        <div class="info-item">
+                            <dt>Triggered by</dt>
+                            <dd><?= e($deployment->triggered_by ?? 'Manual') ?></dd>
                         </div>
-                    <!-- <?php endif; ?> -->
+                    </dl>
                 </div>
             </div>
 
             <!-- Actions Card -->
-            <div class="bg-gray-800 rounded-lg p-6">
-                <h2 class="text-lg font-semibold mb-4">Actions</h2>
-                <div class="space-y-3">
-                    <form method="POST" action="/applications/<?= $application->uuid ?>/deploy">
-                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg">
-                            Redeploy
-                        </button>
-                    </form>
-                    <?php if ($deployment->status === 'success' || $deployment->status === 'running'): ?>
-                        <form method="POST" action="/applications/<?= $application->uuid ?>/stop">
+            <div class="card card-glass">
+                <div class="card-header">
+                    <h3 class="card-title">Actions</h3>
+                </div>
+                <div class="card-body">
+                    <div class="btn-stack">
+                        <form method="POST" action="/applications/<?= $application->uuid ?>/deploy">
                             <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                            <button type="submit" class="w-full bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg">
-                                Stop Application
+                            <button type="submit" class="btn btn-primary w-full">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                </svg>
+                                Redeploy
                             </button>
                         </form>
-                    <?php endif; ?>
+                        <?php if ($deployment->status === 'success' || $deployment->status === 'running'): ?>
+                            <form method="POST" action="/applications/<?= $application->uuid ?>/stop">
+                                <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                                <button type="submit" class="btn btn-secondary w-full">
+                                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="6" y="6" width="12" height="12" rx="2"/>
+                                    </svg>
+                                    Stop Application
+                                </button>
+                            </form>
+                        <?php endif; ?>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 </div>
 
-<?php if ($isInProgress): ?>
-<script>
-// Auto-refresh logs while deployment is in progress
-const logsContainer = document.getElementById('logs-container');
-let lastLogCount = <?= count($logs) ?>;
+<style>
+.deployment-show {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
 
-async function fetchLogs() {
-    try {
-        const response = await fetch('/deployments/<?= $deployment->uuid ?>/logs');
-        const data = await response.json();
-        
-        console.log('Fetched logs:', data); // Debug log
-        
-        if (data.logs && data.logs.length !== lastLogCount) {
-            // Clear existing logs
-            logsContainer.innerHTML = '';
-            
-            if (data.logs.length === 0) {
-                logsContainer.innerHTML = '<p class="text-gray-500">Waiting for logs...</p>';
-            } else {
-                // Add all logs
-                data.logs.forEach(log => {
-                    const div = document.createElement('div');
-                    div.className = 'flex items-start space-x-2 py-1';
-                    
-                    let logClass = 'text-gray-300';
-                    const message = (log.message || '').toLowerCase();
-                    if (message.includes('error') || message.includes('failed')) {
-                        logClass = 'text-red-400';
-                    } else if (message.includes('warning')) {
-                        logClass = 'text-yellow-400';
-                    } else if (message.includes('success') || message.includes('completed') || message.includes('✓') || message.includes('✅')) {
-                        logClass = 'text-green-400';
-                    }
-                    div.classList.add(logClass);
-                    
-                    div.innerHTML = `
-                        <span class="text-gray-500 flex-shrink-0">${escapeHtml(log.timestamp || '')}</span>
-                        <span class="whitespace-pre-wrap">${escapeHtml(log.message || '')}</span>
-                    `;
-                    logsContainer.appendChild(div);
-                });
-            }
-            
-            lastLogCount = data.logs.length;
-            logsContainer.scrollTop = logsContainer.scrollHeight;
-        }
-        
-        // Check if deployment is complete
-        if (data.status && !['queued', 'building', 'deploying'].includes(data.status)) {
-            // Reload page to update status
-            setTimeout(() => window.location.reload(), 1000);
-        }
-    } catch (error) {
-        console.error('Failed to fetch logs:', error);
+.deployment-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-lg);
+}
+
+@media (min-width: 1024px) {
+    .deployment-layout {
+        grid-template-columns: 3fr 1fr;
     }
 }
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+.logs-panel {
+    min-width: 0;
 }
 
-// Initial fetch
-fetchLogs();
+.deployment-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
 
-// Poll every 2 seconds
-setInterval(fetchLogs, 2000);
+.live-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--text-sm);
+    color: var(--text-tertiary);
+}
 
-// Auto-scroll to bottom
-logsContainer.scrollTop = logsContainer.scrollHeight;
+.live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green-500);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Logs Container */
+.logs-container {
+    background: var(--gray-900);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md);
+    height: 600px;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+}
+
+[data-theme="light"] .logs-container {
+    background: var(--gray-100);
+}
+
+.log-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    padding: var(--space-xs) 0;
+}
+
+.log-timestamp {
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+    font-size: var(--text-xs);
+}
+
+.log-message {
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    color: var(--text-secondary);
+}
+
+.log-entry.log-error .log-message {
+    color: var(--red-400);
+}
+
+.log-entry.log-warning .log-message {
+    color: var(--yellow-400);
+}
+
+.log-entry.log-success .log-message {
+    color: var(--green-400);
+}
+
+/* Info List */
+.info-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.info-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: var(--text-sm);
+}
+
+.info-item dt {
+    color: var(--text-tertiary);
+}
+
+.info-item dd {
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.link {
+    color: var(--blue-400);
+    text-decoration: none;
+}
+
+.link:hover {
+    color: var(--blue-300);
+}
+
+.code-inline {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    background: var(--surface-secondary);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+}
+
+/* Button Stack */
+.btn-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.btn-stack form {
+    width: 100%;
+}
+</style>
+
+<?php if ($isInProgress): ?>
+<script>
+(function() {
+    const logsContainer = document.getElementById('logs-container');
+    let lastLogCount = <?= count($logs) ?>;
+    let pollInterval = null;
+
+    async function fetchLogs() {
+        try {
+            const response = await fetch('/deployments/<?= $deployment->uuid ?>/logs');
+            const data = await response.json();
+            
+            if (data.logs && data.logs.length !== lastLogCount) {
+                logsContainer.innerHTML = '';
+                
+                data.logs.forEach(log => {
+                    const entry = document.createElement('div');
+                    entry.className = 'log-entry ' + getLogClass(log.message);
+                    
+                    const timestamp = document.createElement('span');
+                    timestamp.className = 'log-timestamp';
+                    timestamp.textContent = log.timestamp || '';
+                    
+                    const message = document.createElement('span');
+                    message.className = 'log-message';
+                    message.textContent = log.message || '';
+                    
+                    entry.appendChild(timestamp);
+                    entry.appendChild(message);
+                    logsContainer.appendChild(entry);
+                });
+                
+                lastLogCount = data.logs.length;
+                logsContainer.scrollTop = logsContainer.scrollHeight;
+            }
+            
+            // Check if deployment finished
+            if (data.status && !['queued', 'building', 'deploying'].includes(data.status)) {
+                clearInterval(pollInterval);
+                setTimeout(() => location.reload(), 1000);
+            }
+        } catch (e) {
+            console.error('Failed to fetch logs:', e);
+        }
+    }
+
+    function getLogClass(message) {
+        const lower = (message || '').toLowerCase();
+        if (lower.includes('error') || lower.includes('failed')) return 'log-error';
+        if (lower.includes('warning') || lower.includes('warn')) return 'log-warning';
+        if (lower.includes('success') || lower.includes('completed')) return 'log-success';
+        return 'log-info';
+    }
+
+    // Start polling
+    pollInterval = setInterval(fetchLogs, 2000);
+    
+    // Initial scroll to bottom
+    logsContainer.scrollTop = logsContainer.scrollHeight;
+})();
 </script>
 <?php endif; ?>

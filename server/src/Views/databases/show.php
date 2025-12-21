@@ -1,6 +1,7 @@
 <?php
 /**
  * Database Show View
+ * Updated to use new design system
  */
 $typeLabels = [
     'mysql' => 'MySQL',
@@ -11,98 +12,107 @@ $typeLabels = [
 ];
 $typeLabel = $typeLabels[$database->type] ?? ucfirst($database->type);
 ?>
-<div class="space-y-6">
-    <div class="flex items-center justify-between">
-        <div>
-            <h1 class="text-2xl font-bold"><?= e($database->name) ?></h1>
-            <p class="text-gray-400 mt-1"><?= $typeLabel ?> Database</p>
-        </div>
-        <div class="flex space-x-3">
-            <a href="/databases/<?= $database->uuid ?>/edit" class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg">
-                Edit
-            </a>
-            <?php if ($database->status === 'running'): ?>
-                <form method="POST" action="/databases/<?= $database->uuid ?>/stop" class="inline">
-                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                    <button type="submit" class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg">
-                        Stop
-                    </button>
-                </form>
-            <?php else: ?>
-                <form method="POST" action="/databases/<?= $database->uuid ?>/start" class="inline">
-                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                    <button type="submit" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg">
-                        Start
-                    </button>
-                </form>
-            <?php endif; ?>
-        </div>
-    </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Status Card -->
-        <div class="bg-gray-800 rounded-lg p-6">
-            <h2 class="text-lg font-semibold mb-4">Status</h2>
-            <div class="space-y-4">
-                <div class="flex items-center justify-between">
-                    <span class="text-gray-400">Status</span>
-                    <span class="px-2 py-1 text-xs rounded-full <?= $database->status === 'running' ? 'bg-green-600' : 'bg-gray-600' ?>">
+<div class="page-header">
+    <div>
+        <nav class="breadcrumb">
+            <a href="/databases" class="breadcrumb-link">Databases</a>
+            <span class="breadcrumb-separator">/</span>
+            <span><?= e($database->name) ?></span>
+        </nav>
+        <h1 class="page-title"><?= e($database->name) ?></h1>
+        <p class="text-muted"><?= $typeLabel ?> Database</p>
+    </div>
+    <div class="page-actions">
+        <a href="/databases/<?= $database->uuid ?>/edit" class="btn btn-secondary">Edit</a>
+        <?php if ($database->status === 'running'): ?>
+            <form method="POST" action="/databases/<?= $database->uuid ?>/stop" class="inline-form">
+                <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                <button type="submit" class="btn btn-warning">Stop</button>
+            </form>
+        <?php else: ?>
+            <form method="POST" action="/databases/<?= $database->uuid ?>/start" class="inline-form">
+                <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                <button type="submit" class="btn btn-success">Start</button>
+            </form>
+        <?php endif; ?>
+    </div>
+</div>
+
+<div class="database-layout">
+    <!-- Status Card -->
+    <div class="card card-glass">
+        <div class="card-header">
+            <h2 class="card-title">Status</h2>
+        </div>
+        <div class="card-body">
+            <div class="info-list">
+                <div class="info-row">
+                    <span class="info-label">Status</span>
+                    <span class="badge <?= $database->status === 'running' ? 'badge-success' : 'badge-secondary' ?>">
                         <?= ucfirst($database->status) ?>
                     </span>
                 </div>
-                <div class="flex items-center justify-between">
-                    <span class="text-gray-400">Type</span>
-                    <span><?= $typeLabel ?></span>
+                <div class="info-row">
+                    <span class="info-label">Type</span>
+                    <span class="info-value"><?= $typeLabel ?></span>
                 </div>
-                <div class="flex items-center justify-between">
-                    <span class="text-gray-400">Version</span>
-                    <span><?= e($database->version ?? 'latest') ?></span>
+                <div class="info-row">
+                    <span class="info-label">Version</span>
+                    <span class="info-value"><?= e($database->version ?? 'latest') ?></span>
                 </div>
-                <div class="flex items-center justify-between">
-                    <span class="text-gray-400">Node</span>
-                    <span><?= e($database->node()->name ?? 'Unknown') ?></span>
+                <div class="info-row">
+                    <span class="info-label">Node</span>
+                    <span class="info-value"><?= e($database->node()->name ?? 'Unknown') ?></span>
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- Connection Info Card -->
-        <div class="bg-gray-800 rounded-lg p-6 lg:col-span-2">
-            <h2 class="text-lg font-semibold mb-4">Connection Details</h2>
-            <div class="space-y-4">
-                <div>
-                    <label class="block text-sm text-gray-400 mb-1">Host</label>
-                    <div class="flex items-center space-x-2">
-                        <code class="flex-1 bg-gray-700 px-3 py-2 rounded"><?= e($database->node()->name ?? 'localhost') ?></code>
-                        <button onclick="copyToClipboard('<?= e($database->node()->name ?? 'localhost') ?>')" class="text-gray-400 hover:text-white">
-                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+    <!-- Connection Info Card -->
+    <div class="card card-glass connection-card">
+        <div class="card-header">
+            <h2 class="card-title">Connection Details</h2>
+        </div>
+        <div class="card-body">
+            <div class="connection-info">
+                <div class="connection-row">
+                    <label class="connection-label">Host</label>
+                    <div class="connection-value-row">
+                        <code class="code-block"><?= e($database->node()->name ?? 'localhost') ?></code>
+                        <button type="button" class="btn-icon" onclick="copyToClipboard('<?= e($database->node()->name ?? 'localhost') ?>')">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
                             </svg>
                         </button>
                     </div>
                 </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-1">Port</label>
-                        <code class="block bg-gray-700 px-3 py-2 rounded"><?= e($database->external_port ?? $database->internal_port ?? '3306') ?></code>
+
+                <div class="connection-grid">
+                    <div class="connection-row">
+                        <label class="connection-label">Port</label>
+                        <code class="code-block"><?= e($database->external_port ?? $database->internal_port ?? '3306') ?></code>
                     </div>
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-1">Database</label>
-                        <code class="block bg-gray-700 px-3 py-2 rounded"><?= e($database->db_name ?? 'app') ?></code>
+                    <div class="connection-row">
+                        <label class="connection-label">Database</label>
+                        <code class="code-block"><?= e($database->db_name ?? 'app') ?></code>
                     </div>
                 </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-1">Username</label>
-                        <code class="block bg-gray-700 px-3 py-2 rounded"><?= e($database->db_user ?? 'admin') ?></code>
+
+                <div class="connection-grid">
+                    <div class="connection-row">
+                        <label class="connection-label">Username</label>
+                        <code class="code-block"><?= e($database->db_user ?? 'admin') ?></code>
                     </div>
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-1">Password</label>
-                        <div class="flex items-center space-x-2">
-                            <code class="flex-1 bg-gray-700 px-3 py-2 rounded" id="db-password">••••••••</code>
-                            <button onclick="togglePassword()" class="text-gray-400 hover:text-white">
-                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                    <div class="connection-row">
+                        <label class="connection-label">Password</label>
+                        <div class="connection-value-row">
+                            <code class="code-block" id="db-password">••••••••</code>
+                            <button type="button" class="btn-icon" onclick="togglePassword()">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                    <circle cx="12" cy="12" r="3"></circle>
                                 </svg>
                             </button>
                         </div>
@@ -111,25 +121,178 @@ $typeLabel = $typeLabels[$database->type] ?? ucfirst($database->type);
             </div>
         </div>
     </div>
+</div>
 
-    <!-- Danger Zone -->
-    <div class="bg-gray-800 rounded-lg p-6 border border-red-600/30">
-        <h2 class="text-lg font-semibold text-red-400 mb-4">Danger Zone</h2>
-        <div class="flex items-center justify-between">
+<!-- Danger Zone -->
+<div class="card card-glass card-danger">
+    <div class="card-header">
+        <h2 class="card-title text-danger">Danger Zone</h2>
+    </div>
+    <div class="card-body">
+        <div class="danger-row">
             <div>
-                <p class="font-medium">Delete Database</p>
-                <p class="text-sm text-gray-400">This will permanently delete the database and all its data.</p>
+                <p class="danger-title">Delete Database</p>
+                <p class="text-muted text-sm">This will permanently delete the database and all its data.</p>
             </div>
-            <form method="POST" action="/databases/<?= $database->uuid ?>" onsubmit="event.preventDefault(); chapSwal({title: 'Are you sure?', text: 'This cannot be undone.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel'}).then((result) => { if(result.isConfirmed) this.submit(); }); return false;">
+            <form method="POST" action="/databases/<?= $database->uuid ?>" id="delete-form">
                 <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                 <input type="hidden" name="_method" value="DELETE">
-                <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg">
-                    Delete Database
-                </button>
+                <button type="button" class="btn btn-danger" id="delete-btn">Delete Database</button>
             </form>
         </div>
     </div>
 </div>
+
+<style>
+.database-layout {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: var(--space-lg);
+    margin-bottom: var(--space-lg);
+}
+
+.info-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.info-label {
+    color: var(--text-muted);
+}
+
+.info-value {
+    font-weight: 500;
+}
+
+.connection-card {
+    grid-column: span 1;
+}
+
+.connection-info {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.connection-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.connection-label {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+
+.connection-value-row {
+    display: flex;
+    gap: var(--space-sm);
+    align-items: center;
+}
+
+.connection-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-md);
+}
+
+.code-block {
+    flex: 1;
+    background: var(--surface-alt);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-md);
+    font-family: var(--font-mono);
+    font-size: var(--font-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.btn-icon {
+    background: transparent;
+    border: none;
+    padding: var(--space-xs);
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: color var(--transition-fast);
+}
+
+.btn-icon:hover {
+    color: var(--text-primary);
+}
+
+.icon {
+    width: 18px;
+    height: 18px;
+}
+
+.inline-form {
+    display: inline;
+}
+
+.card-danger {
+    border: 1px solid var(--red-500-alpha);
+}
+
+.text-danger {
+    color: var(--red-400);
+}
+
+.danger-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.danger-title {
+    font-weight: 500;
+    margin-bottom: var(--space-xs);
+}
+
+.btn-warning {
+    background: var(--yellow-500);
+    color: #000;
+}
+
+.btn-warning:hover {
+    background: var(--yellow-400);
+}
+
+.btn-success {
+    background: var(--green-500);
+    color: #fff;
+}
+
+.btn-success:hover {
+    background: var(--green-400);
+}
+
+@media (max-width: 1024px) {
+    .database-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .connection-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .danger-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-md);
+    }
+}
+</style>
 
 <script>
 let passwordVisible = false;
@@ -143,5 +306,15 @@ function togglePassword() {
 
 function copyToClipboard(text) {
     navigator.clipboard.writeText(text);
+    Toast.show('Copied to clipboard', 'success');
 }
+
+document.getElementById('delete-btn').addEventListener('click', function() {
+    Modal.confirmDelete('This will permanently delete the database and all its data. This action cannot be undone.')
+        .then(confirmed => {
+            if (confirmed) {
+                document.getElementById('delete-form').submit();
+            }
+        });
+});
 </script>

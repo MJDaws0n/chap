@@ -1,39 +1,30 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <?php \Chap\View\View::partial('head', ['title' => $title ?? 'Chap']); ?>
+    <?php include __DIR__ . '/../partials/head.php'; ?>
 </head>
 <body>
-    <header class="topbar">
-        <div class="container row row--between">
-            <a href="/" class="row" style="gap:10px">
-                <span style="font-weight:740; letter-spacing:-0.02em">Chap</span>
-            </a>
-            <div class="theme-switch" role="group" aria-label="Theme">
-                <button type="button" data-theme-mode="auto" aria-pressed="false">Auto</button>
-                <button type="button" data-theme-mode="light" aria-pressed="false">Light</button>
-                <button type="button" data-theme-mode="dark" aria-pressed="false">Dark</button>
+    <div class="auth-layout">
+        <div class="auth-container">
+            <!-- Logo -->
+            <div class="auth-logo">
+                <svg class="auth-logo-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>
+                </svg>
+                <span class="auth-logo-text">Chap</span>
+                <span class="auth-logo-tagline">Self-hosted deployment platform</span>
+            </div>
+
+            <!-- Flash Messages -->
+            <?php include __DIR__ . '/../partials/flash.php'; ?>
+
+            <!-- Auth Card -->
+            <div class="auth-card">
+                <?= $content ?? '' ?>
             </div>
         </div>
-    </header>
+    </div>
 
-    <main class="content" style="display:grid; place-items:center; padding-top: 28px;">
-        <div class="container" style="max-width: 460px;">
-            <div class="card">
-                <div class="card__body stack" style="gap:14px">
-                    <div class="stack" style="gap:6px">
-                        <div class="row" style="justify-content:center">
-                            <span style="font-size:24px; font-weight:760; letter-spacing:-0.02em">Chap</span>
-                        </div>
-                        <div class="text-muted" style="text-align:center; font-size:13px">Self-hosted deployment platform</div>
-                    </div>
-
-                    <?php \Chap\View\View::partial('flash', ['flash' => $flash ?? []]); ?>
-
-                    <?= $content ?? '' ?>
-                </div>
-            </div>
-        </div>
-    </main>
+    <?php include __DIR__ . '/../partials/scripts.php'; ?>
 </body>
 </html>

@@ -1,86 +1,148 @@
 <?php
 /**
  * Edit Database View
+ * Updated to use new design system
  */
 ?>
-<div class="space-y-6">
-    <div class="flex items-center justify-between">
-        <div>
-            <h1 class="text-2xl font-bold">Edit Database</h1>
-            <p class="text-gray-400 mt-1"><?= e($database->name) ?></p>
-        </div>
-        <a href="/databases/<?= $database->uuid ?>" class="text-gray-400 hover:text-white">← Back</a>
-    </div>
 
-    <form method="POST" action="/databases/<?= $database->uuid ?>" class="bg-gray-800 rounded-lg p-6 space-y-6">
+<div class="page-header">
+    <div>
+        <nav class="breadcrumb">
+            <a href="/databases" class="breadcrumb-link">Databases</a>
+            <span class="breadcrumb-separator">/</span>
+            <a href="/databases/<?= $database->uuid ?>" class="breadcrumb-link"><?= e($database->name) ?></a>
+            <span class="breadcrumb-separator">/</span>
+            <span>Edit</span>
+        </nav>
+        <h1 class="page-title">Edit Database</h1>
+        <p class="text-muted"><?= e($database->name) ?></p>
+    </div>
+</div>
+
+<div class="form-container">
+    <form method="POST" action="/databases/<?= $database->uuid ?>" class="card card-glass">
         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
         <input type="hidden" name="_method" value="PUT">
+        
+        <div class="card-body">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="name" class="form-label">Database Name</label>
+                    <input type="text" name="name" id="name" required
+                           value="<?= e($database->name) ?>"
+                           class="input">
+                </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-                <label for="name" class="block text-sm font-medium text-gray-300 mb-2">Database Name</label>
-                <input type="text" name="name" id="name" required
-                    value="<?= e($database->name) ?>"
-                    class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                <div class="form-group">
+                    <label for="type" class="form-label">Database Type</label>
+                    <input type="text" disabled
+                           value="<?= ucfirst($database->type) ?>"
+                           class="input input-disabled">
+                    <p class="form-hint">Database type cannot be changed after creation</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="version" class="form-label">Version</label>
+                    <input type="text" name="version" id="version"
+                           value="<?= e($database->version ?? '') ?>"
+                           class="input" placeholder="latest">
+                </div>
+
+                <div class="form-group">
+                    <label for="port" class="form-label">External Port</label>
+                    <input type="number" name="port" id="port"
+                           value="<?= e($database->external_port ?? '') ?>"
+                           class="input" placeholder="Auto-assigned">
+                </div>
             </div>
 
-            <div>
-                <label for="type" class="block text-sm font-medium text-gray-300 mb-2">Database Type</label>
-                <input type="text" disabled
-                    value="<?= ucfirst($database->type) ?>"
-                    class="w-full bg-gray-600 border border-gray-600 rounded-lg px-4 py-2 text-gray-400 cursor-not-allowed">
-                <p class="text-xs text-gray-500 mt-1">Database type cannot be changed after creation</p>
-            </div>
+            <div class="form-section">
+                <h3 class="form-section-title">Update Credentials</h3>
+                <p class="text-muted text-sm mb-md">Leave blank to keep existing values</p>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="db_name" class="form-label">Database Name</label>
+                        <input type="text" name="db_name" id="db_name"
+                               value="<?= e($database->db_name ?? '') ?>"
+                               class="input">
+                    </div>
 
-            <div>
-                <label for="version" class="block text-sm font-medium text-gray-300 mb-2">Version</label>
-                <input type="text" name="version" id="version"
-                    value="<?= e($database->version ?? '') ?>"
-                    class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                    placeholder="latest">
-            </div>
+                    <div class="form-group">
+                        <label for="db_user" class="form-label">Username</label>
+                        <input type="text" name="db_user" id="db_user"
+                               value="<?= e($database->db_user ?? '') ?>"
+                               class="input">
+                    </div>
 
-            <div>
-                <label for="port" class="block text-sm font-medium text-gray-300 mb-2">External Port</label>
-                <input type="number" name="port" id="port"
-                    value="<?= e($database->external_port ?? '') ?>"
-                    class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                    placeholder="Auto-assigned">
+                    <div class="form-group form-group-full">
+                        <label for="db_password" class="form-label">New Password</label>
+                        <input type="password" name="db_password" id="db_password"
+                               class="input" placeholder="Leave empty to keep current password">
+                    </div>
+                </div>
             </div>
         </div>
 
-        <div class="border-t border-gray-700 pt-6">
-            <h3 class="text-lg font-medium mb-4">Update Credentials</h3>
-            <p class="text-sm text-gray-400 mb-4">Leave blank to keep existing values</p>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <label for="db_name" class="block text-sm font-medium text-gray-300 mb-2">Database Name</label>
-                    <input type="text" name="db_name" id="db_name"
-                        value="<?= e($database->db_name ?? '') ?>"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                </div>
-
-                <div>
-                    <label for="db_user" class="block text-sm font-medium text-gray-300 mb-2">Username</label>
-                    <input type="text" name="db_user" id="db_user"
-                        value="<?= e($database->db_user ?? '') ?>"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                </div>
-
-                <div class="md:col-span-2">
-                    <label for="db_password" class="block text-sm font-medium text-gray-300 mb-2">New Password</label>
-                    <input type="password" name="db_password" id="db_password"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        placeholder="Leave empty to keep current password">
-                </div>
-            </div>
-        </div>
-
-        <div class="flex justify-end space-x-4">
-            <a href="/databases/<?= $database->uuid ?>" class="px-4 py-2 text-gray-400 hover:text-white">Cancel</a>
-            <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg">
-                Update Database
-            </button>
+        <div class="card-footer">
+            <a href="/databases/<?= $database->uuid ?>" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary">Update Database</button>
         </div>
     </form>
 </div>
+
+<style>
+.form-container {
+    max-width: 800px;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-md);
+}
+
+.form-group-full {
+    grid-column: 1 / -1;
+}
+
+.form-section {
+    border-top: 1px solid var(--border-color);
+    padding-top: var(--space-lg);
+    margin-top: var(--space-lg);
+}
+
+.form-section-title {
+    font-size: var(--font-lg);
+    font-weight: 500;
+    margin-bottom: var(--space-md);
+}
+
+.form-hint {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-xs);
+}
+
+.input-disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.mb-md {
+    margin-bottom: var(--space-md);
+}
+
+.card-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+    padding: var(--space-md);
+    border-top: 1px solid var(--border-color);
+}
+
+@media (max-width: 768px) {
+    .form-grid {
+        grid-template-columns: 1fr;
+    }
+}
+</style>

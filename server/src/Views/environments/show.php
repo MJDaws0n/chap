@@ -1,126 +1,146 @@
-<div class="mb-8">
-    <a href="/projects/<?= e($project->uuid) ?>" class="text-gray-400 hover:text-white inline-flex items-center mb-4">
-        <svg class="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-        </svg>
-        Back to <?= e($project->name) ?>
-    </a>
-    <div class="flex items-center justify-between">
-        <div class="flex items-center space-x-4">
-            <div class="w-14 h-14 bg-green-600/20 rounded-xl flex items-center justify-center">
-                <svg class="w-7 h-7 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
-                </svg>
-            </div>
+<?php
+/**
+ * Environment Show View
+ * Updated to use new design system
+ */
+?>
+
+<div class="flex flex-col gap-6">
+    <div class="page-header">
+        <div class="page-header-top">
             <div>
-                <h1 class="text-3xl font-bold"><?= e($environment->name) ?></h1>
-                <?php if (!empty($environment->description)): ?>
-                    <p class="text-gray-400"><?= e($environment->description) ?></p>
-                <?php endif; ?>
+                <nav class="breadcrumb">
+                    <span class="breadcrumb-item">
+                        <a href="/projects/<?= e($project->uuid) ?>"><?= e($project->name) ?></a>
+                    </span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-current"><?= e($environment->name) ?></span>
+                </nav>
+
+                <div class="flex items-center gap-4 mt-4">
+                    <div class="icon-box icon-box-lg icon-box-green">
+                        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                        </svg>
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="page-header-title"><?= e($environment->name) ?></h1>
+                        <?php if (!empty($environment->description)): ?>
+                            <p class="page-header-description line-clamp-2"><?= e($environment->description) ?></p>
+                        <?php else: ?>
+                            <p class="page-header-description">No description</p>
+                        <?php endif; ?>
+                    </div>
+                </div>
             </div>
-        </div>
-        <div class="flex items-center space-x-3">
-            <a href="/environments/<?= e($environment->uuid) ?>/edit" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
-                Edit
-            </a>
-            <form action="/environments/<?= e($environment->uuid) ?>" method="POST" class="inline" onsubmit="event.preventDefault(); chapSwal({title: 'Delete Environment?', text: 'Are you sure? All applications will be deleted.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel'}).then((result) => { if(result.isConfirmed) this.submit(); }); return false;">
-                <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                <input type="hidden" name="_method" value="DELETE">
-                <button type="submit" class="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg transition-colors">
-                    Delete
-                </button>
-            </form>
+
+            <div class="page-header-actions">
+                <a href="/environments/<?= e($environment->uuid) ?>/edit" class="btn btn-secondary">Edit</a>
+                <form action="/environments/<?= e($environment->uuid) ?>" method="POST" id="delete-environment-form">
+                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                    <input type="hidden" name="_method" value="DELETE">
+                    <button type="button" class="btn btn-danger-ghost" id="delete-environment-btn">Delete</button>
+                </form>
+            </div>
         </div>
     </div>
-</div>
 
-<!-- Add New Section -->
-<div class="mb-6 flex items-center space-x-4">
-    <a href="/environments/<?= e($environment->uuid) ?>/applications/create" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center space-x-2">
-        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-        </svg>
-        <span>New Application</span>
-    </a>
-    <a href="/environments/<?= e($environment->uuid) ?>/databases/create" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors flex items-center space-x-2">
-        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
-        </svg>
-        <span>New Database</span>
-    </a>
-    <a href="/environments/<?= e($environment->uuid) ?>/services/create" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors flex items-center space-x-2">
-        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
-        </svg>
-        <span>New Service</span>
-    </a>
-</div>
-
-<!-- Applications -->
-<div class="mb-8">
-    <h2 class="text-xl font-semibold mb-4">Applications</h2>
-    
-    <?php if (empty($applications)): ?>
-        <div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center">
-            <p class="text-gray-400">No applications yet. Create your first application to get started.</p>
+    <!-- Applications Section -->
+    <section class="flex flex-col gap-4">
+        <div class="flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <h2 class="text-xl font-semibold text-primary">Applications</h2>
+                <span class="badge badge-neutral"><?= count($applications) ?></span>
+            </div>
+            <a href="/environments/<?= e($environment->uuid) ?>/applications/create" class="btn btn-primary btn-sm">New Application</a>
         </div>
-    <?php else: ?>
-        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-            <table class="w-full">
-                <thead>
-                    <tr class="text-left text-sm text-gray-400 border-b border-gray-700 bg-gray-800/50">
-                        <th class="px-6 py-4 font-medium">Application</th>
-                        <th class="px-6 py-4 font-medium">Status</th>
-                        <th class="px-6 py-4 font-medium">Branch</th>
-                        <th class="px-6 py-4 font-medium">Last Deployed</th>
-                        <th class="px-6 py-4 font-medium">Actions</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-700">
-                    <?php foreach ($applications as $app): ?>
-                        <tr class="hover:bg-gray-700/50">
-                            <td class="px-6 py-4">
-                                <a href="/applications/<?= e($app->uuid) ?>" class="font-medium hover:text-blue-400">
-                                    <?= e($app->name) ?>
-                                </a>
-                            </td>
-                            <td class="px-6 py-4">
+
+        <?php if (empty($applications)): ?>
+            <div class="card">
+                <div class="card-body">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">
+                            <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                            </svg>
+                        </div>
+                        <p class="empty-state-title">No applications yet</p>
+                        <p class="empty-state-description">Create your first application to get started</p>
+                        <a href="/environments/<?= e($environment->uuid) ?>/applications/create" class="btn btn-primary">Create Application</a>
+                    </div>
+                </div>
+            </div>
+        <?php else: ?>
+            <div class="card">
+                <div class="table-container">
+                    <table class="table table-clickable">
+                        <thead>
+                            <tr>
+                                <th>Application</th>
+                                <th>Status</th>
+                                <th>Branch</th>
+                                <th>Last Deployed</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($applications as $app): ?>
                                 <?php
-                                $statusColors = [
-                                    'running' => 'text-green-400 bg-green-400/10',
-                                    'stopped' => 'text-gray-400 bg-gray-400/10',
-                                    'deploying' => 'text-yellow-400 bg-yellow-400/10',
-                                    'error' => 'text-red-400 bg-red-400/10',
-                                ];
-                                $colorClass = $statusColors[$app->status] ?? 'text-gray-400 bg-gray-400/10';
+                                $statusBadge = [
+                                    'running' => 'badge-success',
+                                    'stopped' => 'badge-neutral',
+                                    'deploying' => 'badge-warning',
+                                    'error' => 'badge-danger',
+                                ][$app->status] ?? 'badge-neutral';
                                 ?>
-                                <span class="inline-flex px-2 py-1 text-xs rounded-full <?= $colorClass ?>">
-                                    <?= ucfirst($app->status) ?>
-                                </span>
-                            </td>
-                            <td class="px-6 py-4 text-gray-400 font-mono text-sm">
-                                <?= e($app->git_branch) ?>
-                            </td>
-                            <td class="px-6 py-4 text-gray-400 text-sm">
-                                <?php $latest = $app->latestDeployment(); ?>
-                                <?= $latest ? time_ago($latest->created_at) : 'Never' ?>
-                            </td>
-                            <td class="px-6 py-4">
-                                <div class="flex items-center space-x-3">
-                                    <a href="/applications/<?= e($app->uuid) ?>/logs" class="text-gray-400 hover:text-green-400 text-sm" title="Live Logs">
-                                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                                        </svg>
-                                    </a>
-                                    <a href="/applications/<?= e($app->uuid) ?>" class="text-blue-400 hover:text-blue-300 text-sm">
-                                        View →
-                                    </a>
-                                </div>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-    <?php endif; ?>
+                                <tr onclick="window.location='/applications/<?= e($app->uuid) ?>'">
+                                    <td>
+                                        <span class="font-medium truncate"><?= e($app->name) ?></span>
+                                    </td>
+                                    <td>
+                                        <span class="badge <?= $statusBadge ?>"><?= ucfirst($app->status) ?></span>
+                                    </td>
+                                    <td>
+                                        <code class="code-inline"><?= e($app->git_branch) ?></code>
+                                    </td>
+                                    <td class="text-secondary">
+                                        <?php $latest = $app->latestDeployment(); ?>
+                                        <?= $latest ? time_ago($latest->created_at) : 'Never' ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        <?php endif; ?>
+    </section>
 </div>
+
+<style>
+.code-inline {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    background-color: var(--bg-tertiary);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    word-break: break-all;
+}
+
+.line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+</style>
+
+<script>
+document.getElementById('delete-environment-btn').addEventListener('click', function() {
+    Modal.confirmDelete('Are you sure you want to delete this environment? All applications, databases, and services will be deleted.')
+        .then(confirmed => {
+            if (confirmed) {
+                document.getElementById('delete-environment-form').submit();
+            }
+        });
+});
+</script>

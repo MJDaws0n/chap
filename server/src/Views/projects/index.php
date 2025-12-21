@@ -1,50 +1,81 @@
-<div class="mb-8 flex items-center justify-between">
-    <div>
-        <h1 class="text-3xl font-bold">Projects</h1>
-        <p class="text-gray-400">Organize your applications into projects</p>
-    </div>
-    <a href="/projects/create" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center space-x-2">
-        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-        </svg>
-        <span>New Project</span>
-    </a>
-</div>
+<?php
+/**
+ * Projects Index View
+ * Updated to use new design system
+ */
+?>
 
-<?php if (empty($projects)): ?>
-    <div class="bg-gray-800 rounded-lg border border-gray-700 p-12 text-center">
-        <svg class="w-16 h-16 text-gray-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-        </svg>
-        <h3 class="text-xl font-semibold mb-2">No projects yet</h3>
-        <p class="text-gray-400 mb-6">Create your first project to start deploying applications</p>
-        <a href="/projects/create" class="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
-            <svg class="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-            </svg>
-            Create Project
-        </a>
+<div class="flex flex-col gap-6">
+    <div class="page-header">
+        <div class="page-header-top">
+            <div>
+                <h1 class="page-header-title">Projects</h1>
+                <p class="page-header-description">Organize your applications into projects</p>
+            </div>
+            <div class="page-header-actions">
+                <a href="/projects/create" class="btn btn-primary">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+                    </svg>
+                    New Project
+                </a>
+            </div>
+        </div>
     </div>
-<?php else: ?>
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <?php foreach ($projects as $project): ?>
-            <a href="/projects/<?= e($project->uuid) ?>" class="bg-gray-800 rounded-lg border border-gray-700 p-6 hover:border-gray-600 transition-colors">
-                <div class="flex items-start justify-between mb-4">
-                    <div class="w-12 h-12 bg-blue-600/20 rounded-lg flex items-center justify-center">
-                        <svg class="w-6 h-6 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+
+    <?php if (empty($projects)): ?>
+        <div class="card">
+            <div class="card-body">
+                <div class="empty-state">
+                    <div class="empty-state-icon">
+                        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                         </svg>
                     </div>
-                    <span class="text-sm text-gray-500"><?= count($project->environments()) ?> environments</span>
+                    <p class="empty-state-title">No projects yet</p>
+                    <p class="empty-state-description">Create your first project to start deploying applications</p>
+                    <a href="/projects/create" class="btn btn-primary">Create Project</a>
                 </div>
-                <h3 class="text-lg font-semibold mb-1"><?= e($project->name) ?></h3>
-                <?php if (!empty($project->description)): ?>
-                    <p class="text-gray-400 text-sm line-clamp-2"><?= e($project->description) ?></p>
-                <?php endif; ?>
-                <div class="mt-4 pt-4 border-t border-gray-700 flex items-center text-sm text-gray-500">
-                    <span>Created <?= time_ago($project->created_at) ?></span>
-                </div>
-            </a>
-        <?php endforeach; ?>
-    </div>
-<?php endif; ?>
+            </div>
+        </div>
+    <?php else: ?>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+            <?php foreach ($projects as $project): ?>
+                <a href="/projects/<?= e($project->uuid) ?>" class="card card-clickable">
+                    <div class="card-body">
+                        <div class="flex items-start justify-between gap-4 mb-4">
+                            <div class="icon-box icon-box-blue">
+                                <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                                </svg>
+                            </div>
+                            <span class="badge badge-info"><?= count($project->environments()) ?> environments</span>
+                        </div>
+
+                        <div class="min-w-0">
+                            <h3 class="text-lg font-semibold truncate"><?= e($project->name) ?></h3>
+                            <?php if (!empty($project->description)): ?>
+                                <p class="text-sm text-secondary line-clamp-2 mt-2"><?= e($project->description) ?></p>
+                            <?php else: ?>
+                                <p class="text-sm text-tertiary mt-2">No description</p>
+                            <?php endif; ?>
+                        </div>
+
+                        <div class="mt-6 pt-4 border-t">
+                            <p class="text-sm text-tertiary">Created <?= time_ago($project->created_at) ?></p>
+                        </div>
+                    </div>
+                </a>
+            <?php endforeach; ?>
+        </div>
+    <?php endif; ?>
+</div>
+
+<style>
+.line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+</style>

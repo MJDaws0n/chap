@@ -1,137 +1,185 @@
-<div class="mb-8">
-    <a href="/projects" class="text-gray-400 hover:text-white inline-flex items-center mb-4">
-        <svg class="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-        </svg>
-        Back to Projects
-    </a>
-    <div class="flex items-center justify-between">
-        <div class="flex items-center space-x-4">
-            <div class="w-14 h-14 bg-blue-600/20 rounded-xl flex items-center justify-center">
-                <svg class="w-7 h-7 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-                </svg>
-            </div>
+<?php
+/**
+ * Project Show View
+ * Updated to use new design system
+ */
+?>
+
+<div class="flex flex-col gap-6">
+    <div class="page-header">
+        <div class="page-header-top">
             <div>
-                <h1 class="text-3xl font-bold"><?= e($project->name) ?></h1>
-                <?php if (!empty($project->description)): ?>
-                    <p class="text-gray-400"><?= e($project->description) ?></p>
-                <?php endif; ?>
+                <nav class="breadcrumb">
+                    <span class="breadcrumb-item">
+                        <a href="/projects">Projects</a>
+                    </span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-current"><?= e($project->name) ?></span>
+                </nav>
+
+                <div class="flex items-center gap-4 mt-4">
+                    <div class="icon-box icon-box-lg icon-box-blue">
+                        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                        </svg>
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="page-header-title"><?= e($project->name) ?></h1>
+                        <?php if (!empty($project->description)): ?>
+                            <p class="page-header-description line-clamp-2"><?= e($project->description) ?></p>
+                        <?php else: ?>
+                            <p class="page-header-description">No description</p>
+                        <?php endif; ?>
+                    </div>
+                </div>
             </div>
-        </div>
-        <div class="flex items-center space-x-3">
-            <a href="/projects/<?= e($project->uuid) ?>/edit" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
-                Edit
-            </a>
-            <form action="/projects/<?= e($project->uuid) ?>" method="POST" class="inline" onsubmit="event.preventDefault(); chapSwal({title: 'Delete Project?', text: 'Are you sure you want to delete this project? All environments and applications will be deleted.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel'}).then((result) => { if(result.isConfirmed) this.submit(); }); return false;">
-                <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                <input type="hidden" name="_method" value="DELETE">
-                <button type="submit" class="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg transition-colors">
-                    Delete
-                </button>
-            </form>
+
+            <div class="page-header-actions">
+                <a href="/projects/<?= e($project->uuid) ?>/edit" class="btn btn-secondary">Edit</a>
+                <form action="/projects/<?= e($project->uuid) ?>" method="POST" id="delete-project-form">
+                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                    <input type="hidden" name="_method" value="DELETE">
+                    <button type="button" class="btn btn-danger-ghost" id="delete-project-btn">Delete</button>
+                </form>
+            </div>
         </div>
     </div>
-</div>
 
-<!-- Environments Section -->
-<div class="mb-6 flex items-center justify-between">
-    <h2 class="text-xl font-semibold">Environments</h2>
-    <a href="/projects/<?= e($project->uuid) ?>/environments/create" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center space-x-2">
-        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-        </svg>
-        <span>New Environment</span>
-    </a>
-</div>
-
-<?php if (empty($environments)): ?>
-    <div class="bg-gray-800 rounded-lg border border-gray-700 p-12 text-center">
-        <svg class="w-16 h-16 text-gray-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
-        </svg>
-        <h3 class="text-xl font-semibold mb-2">No environments yet</h3>
-        <p class="text-gray-400 mb-6">Create your first environment (e.g., Production, Staging, Development)</p>
-        <a href="/projects/<?= e($project->uuid) ?>/environments/create" class="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
-            <svg class="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+    <div class="flex items-center justify-between flex-wrap gap-4">
+        <h2 class="text-xl font-semibold text-primary">Environments</h2>
+        <a href="/projects/<?= e($project->uuid) ?>/environments/create" class="btn btn-primary">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
             </svg>
-            Create Environment
+            New Environment
         </a>
     </div>
-<?php else: ?>
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <?php foreach ($environments as $environment): ?>
-            <?php $apps = $environment->applications(); ?>
-            <a href="/environments/<?= e($environment->uuid) ?>" class="bg-gray-800 rounded-lg border border-gray-700 p-6 hover:border-gray-600 transition-colors">
-                <div class="flex items-start justify-between mb-4">
-                    <div class="w-12 h-12 bg-green-600/20 rounded-lg flex items-center justify-center">
-                        <svg class="w-6 h-6 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+
+    <?php if (empty($environments)): ?>
+        <div class="card">
+            <div class="card-body">
+                <div class="empty-state">
+                    <div class="empty-state-icon">
+                        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
                         </svg>
                     </div>
-                    <span class="text-sm text-gray-500"><?= count($apps) ?> application<?= count($apps) !== 1 ? 's' : '' ?></span>
+                    <p class="empty-state-title">No environments yet</p>
+                    <p class="empty-state-description">Create your first environment (e.g., Production, Staging, Development)</p>
+                    <a href="/projects/<?= e($project->uuid) ?>/environments/create" class="btn btn-primary">Create Environment</a>
                 </div>
-                <h3 class="text-lg font-semibold mb-1"><?= e($environment->name) ?></h3>
-                <?php if (!empty($environment->description)): ?>
-                    <p class="text-gray-400 text-sm line-clamp-2"><?= e($environment->description) ?></p>
-                <?php endif; ?>
-                
-                <?php if (!empty($apps)): ?>
-                    <div class="mt-4 pt-4 border-t border-gray-700">
-                        <div class="flex flex-wrap gap-2">
-                            <?php foreach (array_slice($apps, 0, 3) as $app): ?>
-                                <?php
-                                $statusColors = [
-                                    'running' => 'text-green-400 bg-green-400/10',
-                                    'stopped' => 'text-gray-400 bg-gray-400/10',
-                                    'deploying' => 'text-yellow-400 bg-yellow-400/10',
-                                    'error' => 'text-red-400 bg-red-400/10',
-                                ];
-                                $colorClass = $statusColors[$app->status] ?? 'text-gray-400 bg-gray-400/10';
-                                ?>
-                                <span class="inline-flex items-center px-2 py-1 text-xs rounded <?= $colorClass ?>">
-                                    <?= e($app->name) ?>
-                                </span>
-                            <?php endforeach; ?>
-                            <?php if (count($apps) > 3): ?>
-                                <span class="text-xs text-gray-500">+<?= count($apps) - 3 ?> more</span>
+            </div>
+        </div>
+    <?php else: ?>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+            <?php foreach ($environments as $environment): ?>
+                <?php $apps = $environment->applications(); ?>
+                <a href="/environments/<?= e($environment->uuid) ?>" class="card card-clickable">
+                    <div class="card-body">
+                        <div class="flex items-start justify-between gap-4 mb-4">
+                            <div class="icon-box icon-box-md icon-box-green">
+                                <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                                </svg>
+                            </div>
+                            <span class="badge badge-neutral"><?= count($apps) ?> app<?= count($apps) !== 1 ? 's' : '' ?></span>
+                        </div>
+
+                        <div class="min-w-0">
+                            <h3 class="text-lg font-semibold truncate"><?= e($environment->name) ?></h3>
+                            <?php if (!empty($environment->description)): ?>
+                                <p class="text-sm text-secondary line-clamp-2 mt-2"><?= e($environment->description) ?></p>
+                            <?php else: ?>
+                                <p class="text-sm text-tertiary mt-2">No description</p>
                             <?php endif; ?>
                         </div>
-                    </div>
-                <?php endif; ?>
-            </a>
-        <?php endforeach; ?>
-    </div>
-<?php endif; ?>
 
-<!-- Project Info Card -->
-<div class="mt-8 bg-gray-800 rounded-lg border border-gray-700 p-6">
-    <h2 class="text-lg font-semibold mb-4">Project Information</h2>
-    <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-            <dt class="text-gray-400 text-sm">UUID</dt>
-            <dd class="font-mono text-sm mt-1"><?= e($project->uuid) ?></dd>
+                        <?php if (!empty($apps)): ?>
+                            <div class="mt-6 pt-4 border-t">
+                                <div class="flex flex-wrap gap-2 items-center">
+                                    <?php foreach (array_slice($apps, 0, 3) as $app): ?>
+                                        <?php
+                                        $statusBadge = [
+                                            'running' => 'badge-success',
+                                            'stopped' => 'badge-neutral',
+                                            'deploying' => 'badge-warning',
+                                            'error' => 'badge-danger',
+                                        ][$app->status] ?? 'badge-neutral';
+                                        ?>
+                                        <span class="badge <?= $statusBadge ?> badge-sm"><?= e($app->name) ?></span>
+                                    <?php endforeach; ?>
+                                    <?php if (count($apps) > 3): ?>
+                                        <span class="text-xs text-tertiary">+<?= count($apps) - 3 ?> more</span>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </a>
+            <?php endforeach; ?>
         </div>
-        <div>
-            <dt class="text-gray-400 text-sm">Created</dt>
-            <dd class="mt-1"><?= $project->created_at ? time_ago($project->created_at) : '-' ?></dd>
+    <?php endif; ?>
+
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Project Information</h2>
         </div>
-        <div>
-            <dt class="text-gray-400 text-sm">Environments</dt>
-            <dd class="mt-1"><?= count($environments) ?></dd>
+        <div class="card-body">
+            <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <dt class="text-sm text-tertiary">UUID</dt>
+                    <dd class="mt-1"><code class="code-inline"><?= e($project->uuid) ?></code></dd>
+                </div>
+                <div>
+                    <dt class="text-sm text-tertiary">Created</dt>
+                    <dd class="mt-1 text-primary"><?= $project->created_at ? time_ago($project->created_at) : '-' ?></dd>
+                </div>
+                <div>
+                    <dt class="text-sm text-tertiary">Environments</dt>
+                    <dd class="mt-1 text-primary"><?= count($environments) ?></dd>
+                </div>
+                <div>
+                    <dt class="text-sm text-tertiary">Total Applications</dt>
+                    <dd class="mt-1 text-primary">
+                        <?php
+                        $totalApps = 0;
+                        foreach ($environments as $env) {
+                            $totalApps += count($env->applications());
+                        }
+                        echo $totalApps;
+                        ?>
+                    </dd>
+                </div>
+            </dl>
         </div>
-        <div>
-            <dt class="text-gray-400 text-sm">Total Applications</dt>
-            <dd class="mt-1">
-                <?php
-                $totalApps = 0;
-                foreach ($environments as $env) {
-                    $totalApps += count($env->applications());
-                }
-                echo $totalApps;
-                ?>
-            </dd>
-        </div>
-    </dl>
+    </div>
 </div>
+
+<style>
+.code-inline {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    background-color: var(--bg-tertiary);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    word-break: break-all;
+}
+
+.line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+</style>
+
+<script>
+document.getElementById('delete-project-btn').addEventListener('click', function() {
+    Modal.confirmDelete('Are you sure you want to delete this project? All environments and applications will be deleted.')
+        .then(confirmed => {
+            if (confirmed) {
+                document.getElementById('delete-project-form').submit();
+            }
+        });
+});
+</script>

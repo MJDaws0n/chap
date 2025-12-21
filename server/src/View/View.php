@@ -24,6 +24,10 @@ class View
             throw new \RuntimeException("View not found: {$template}");
         }
 
+        if (!array_key_exists('currentPage', $data)) {
+            $data['currentPage'] = self::inferCurrentPage($_SERVER['REQUEST_URI'] ?? '');
+        }
+
         // Set layout if provided
         if ($layout !== null) {
             self::$layout = $layout;
@@ -61,6 +65,33 @@ class View
         self::$sections = [];
 
         return $content;
+    }
+
+    private static function inferCurrentPage(string $uri): string
+    {
+        $path = parse_url($uri, PHP_URL_PATH);
+        $path = is_string($path) ? $path : '';
+        $path = trim($path, '/');
+
+        if ($path === '') {
+            return 'dashboard';
+        }
+
+        $segments = explode('/', $path);
+        $first = $segments[0] ?? '';
+
+        // Normalize known nested routes back to their sidebar section
+        return match ($first) {
+            'projects' => 'projects',
+            'nodes' => 'nodes',
+            'templates' => 'templates',
+            'teams' => 'teams',
+            'git-sources' => 'git-sources',
+            'activity' => 'activity',
+            'settings' => 'settings',
+            'dashboard' => 'dashboard',
+            default => $first,
+        };
     }
 
     /**

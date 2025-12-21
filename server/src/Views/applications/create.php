@@ -1,373 +1,571 @@
 <?php
 /**
  * Create Application View
+ * Updated to use new design system with vanilla JavaScript
  */
+$nodesJson = json_encode(array_map(function($n) { 
+    return ['uuid' => $n->uuid, 'name' => $n->name]; 
+}, $nodes));
+$defaultNode = isset($nodes[0]) ? $nodes[0]->uuid : '';
+$initialEnv = old('environment_variables', '');
 ?>
-<div class="space-y-6">
-    <div class="flex items-center justify-between">
+
+<div class="flex flex-col gap-6">
+    <div class="page-header">
         <div>
-            <div class="flex items-center space-x-2 text-sm text-gray-400 mb-2">
-                <a href="/projects" class="hover:text-white">Projects</a>
-                <span>/</span>
-                <a href="/projects/<?= $project->uuid ?>" class="hover:text-white"><?= e($project->name) ?></a>
-                <span>/</span>
-                <a href="/environments/<?= $environment->uuid ?>" class="hover:text-white"><?= e($environment->name) ?></a>
-                <span>/</span>
-                <span>New Application</span>
-            </div>
-            <h1 class="text-2xl font-bold">New Application</h1>
-            <p class="text-gray-400 mt-1">Deploy a new application to <?= e($environment->name) ?></p>
+            <nav class="breadcrumb">
+                <span class="breadcrumb-item">
+                    <a href="/projects">Projects</a>
+                </span>
+                <span class="breadcrumb-separator">/</span>
+                <span class="breadcrumb-item">
+                    <a href="/projects/<?= $project->uuid ?>"><?= e($project->name) ?></a>
+                </span>
+                <span class="breadcrumb-separator">/</span>
+                <span class="breadcrumb-item">
+                    <a href="/environments/<?= $environment->uuid ?>"><?= e($environment->name) ?></a>
+                </span>
+                <span class="breadcrumb-separator">/</span>
+                <span class="breadcrumb-current">New Application</span>
+            </nav>
+            <h1 class="page-title">New Application</h1>
+            <p class="page-header-description">Deploy a new application to <?= e($environment->name) ?></p>
         </div>
     </div>
 
-    <form method="POST" action="/environments/<?= $environment->uuid ?>/applications" class="space-y-6">
+    <form method="POST" action="/environments/<?= $environment->uuid ?>/applications" id="create-app-form" class="flex flex-col gap-6">
         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
 
         <!-- Basic Info -->
-        <div class="bg-gray-800 rounded-lg p-6">
-            <h2 class="text-lg font-semibold mb-4">Basic Information</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <label for="name" class="block text-sm font-medium text-gray-300 mb-2">Application Name *</label>
-                    <input type="text" name="name" id="name" required
-                        value="<?= e(old('name')) ?>"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        placeholder="my-awesome-app">
-                    <?php if (!empty($_SESSION['_errors']['name'])): ?>
-                        <p class="text-red-400 text-sm mt-1"><?= e($_SESSION['_errors']['name']) ?></p>
-                    <?php endif; ?>
-                </div>
+        <div class="card card-glass">
+            <div class="card-header">
+                <h2 class="card-title">Basic Information</h2>
+            </div>
+            <div class="card-body">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="name" class="form-label">Application Name <span class="text-danger">*</span></label>
+                        <input type="text" name="name" id="name" required
+                            value="<?= e(old('name')) ?>"
+                            class="input"
+                            placeholder="my-awesome-app">
+                        <?php if (!empty($_SESSION['_errors']['name'])): ?>
+                            <p class="form-error"><?= e($_SESSION['_errors']['name']) ?></p>
+                        <?php endif; ?>
+                    </div>
 
-                <div>
-                    <label for="node_uuid" class="block text-sm font-medium text-gray-300 mb-2">Deploy to Node <span class="text-red-400">*</span></label>
-                    <!-- Custom searchable dropdown -->
-                    <?php
-                        $alpineNodes = json_encode(array_map(function($n) { return ['uuid' => $n->uuid, 'name' => $n->name]; }, $nodes));
-                        $alpineDefault = isset($nodes[0]) ? $nodes[0]->uuid : '';
-                    ?>
-                    <div x-data='{
-                        open: false,
-                        search: "",
-                        selected: "<?= $alpineDefault ?>",
-                        nodes: <?= $alpineNodes ?>,
-                        get filtered() {
-                            if (!this.search) return this.nodes;
-                            return this.nodes.filter(n => n.name.toLowerCase().includes(this.search.toLowerCase()));
-                        },
-                        select(uuid) {
-                            this.selected = uuid;
-                            this.open = false;
-                        },
-                        selectedName() {
-                            const n = this.nodes.find(n => n.uuid === this.selected);
-                            return n ? n.name : "";
-                        }
-                    }' class="relative">
-                        <input type="hidden" name="node_uuid" x-bind:value="selected" required>
-                        <button type="button" @click="open = !open" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white text-left flex justify-between items-center focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                            <span x-text="selectedName()"></span>
-                            <svg class="w-4 h-4 ml-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                        </button>
-                        <div x-show="open" @click.away="open = false" class="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-auto">
-                            <div class="p-2">
-                                <input type="text" x-model="search" placeholder="Search nodes..." class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm" autocomplete="off">
-                            </div>
-                            <template x-for="node in filtered" :key="node.uuid">
-                                <div @click="select(node.uuid)" class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white" :class="{'bg-blue-700/30': node.uuid === selected}">
-                                    <span x-text="node.name"></span>
+                    <div class="form-group">
+                        <label class="form-label">Deploy to Node <span class="text-danger">*</span></label>
+                        <input type="hidden" name="node_uuid" id="node_uuid" value="<?= $defaultNode ?>" required>
+                        <div class="dropdown" id="node-dropdown">
+                            <button type="button" class="btn btn-secondary w-full dropdown-trigger" id="node-select-btn" data-dropdown-trigger="node-dropdown-menu" data-dropdown-placement="bottom-start" aria-expanded="false">
+                                <span id="selected-node-name"><?= isset($nodes[0]) ? e($nodes[0]->name) : 'Select node...' ?></span>
+                                <svg class="icon dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </button>
+                            <div class="dropdown-menu w-full" id="node-dropdown-menu">
+                                <div class="dropdown-search">
+                                    <input type="text" class="input input-sm" placeholder="Search nodes..." id="node-search" autocomplete="off">
                                 </div>
-                            </template>
-                            <div x-show="filtered.length === 0" class="px-4 py-2 text-gray-400">No nodes found</div>
+                                <div class="dropdown-items" id="node-list"></div>
+                            </div>
                         </div>
                     </div>
-                    <p class="text-xs text-gray-500 mt-1">Node assignment is required</p>
-                </div>
 
-                <div class="md:col-span-2">
-                    <label for="description" class="block text-sm font-medium text-gray-300 mb-2">Description</label>
-                    <textarea name="description" id="description" rows="2"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        placeholder="Optional description"><?= e(old('description')) ?></textarea>
+                    <div class="form-group form-group-full">
+                        <label for="description" class="form-label">Description</label>
+                        <textarea name="description" id="description" rows="2" class="textarea" placeholder="Optional description"><?= e(old('description')) ?></textarea>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Source -->
-        <div class="bg-gray-800 rounded-lg p-6">
-            <h2 class="text-lg font-semibold mb-4">Source Code</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <label for="git_repository" class="block text-sm font-medium text-gray-300 mb-2">Git Repository</label>
-                    <input type="text" name="git_repository" id="git_repository"
-                        value="<?= e(old('git_repository')) ?>"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        placeholder="https://github.com/user/repo.git">
-                    <p id="repo-env-error" class="text-red-400 text-sm mt-1 hidden"></p>
-                </div>
+        <div class="card card-glass">
+            <div class="card-header">
+                <h2 class="card-title">Source Code</h2>
+            </div>
+            <div class="card-body">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="git_repository" class="form-label">Git Repository</label>
+                        <input type="text" name="git_repository" id="git_repository"
+                            value="<?= e(old('git_repository')) ?>"
+                            class="input truncate"
+                            placeholder="https://github.com/user/repo.git">
+                        <p id="repo-env-error" class="form-error hidden"></p>
+                    </div>
 
-                <div>
-                    <label for="git_branch" class="block text-sm font-medium text-gray-300 mb-2">Branch</label>
-                    <input type="text" name="git_branch" id="git_branch"
-                        value="<?= e(old('git_branch', 'main')) ?>"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        placeholder="main">
+                    <div class="form-group">
+                        <label for="git_branch" class="form-label">Branch</label>
+                        <input type="text" name="git_branch" id="git_branch"
+                            value="<?= e(old('git_branch', 'main')) ?>"
+                            class="input"
+                            placeholder="main">
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Build Configuration -->
-        <div class="bg-gray-800 rounded-lg p-6">
-            <h2 class="text-lg font-semibold mb-4">Build Configuration</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <label for="build_pack" class="block text-sm font-medium text-gray-300 mb-2">Build Pack</label>
-                    <select name="build_pack" id="build_pack"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                        <option value="dockerfile" <?= old('build_pack') === 'dockerfile' ? 'selected' : '' ?>>Dockerfile</option>
-                        <option value="nixpacks" <?= old('build_pack') === 'nixpacks' ? 'selected' : '' ?>>Nixpacks (Auto-detect)</option>
-                        <option value="static" <?= old('build_pack') === 'static' ? 'selected' : '' ?>>Static Site</option>
-                        <option value="docker-compose" <?= old('build_pack') === 'docker-compose' ? 'selected' : '' ?>>Docker Compose</option>
-                    </select>
-                </div>
+        <div class="card card-glass">
+            <div class="card-header">
+                <h2 class="card-title">Build Configuration</h2>
+            </div>
+            <div class="card-body">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="build_pack" class="form-label">Build Pack</label>
+                        <select name="build_pack" id="build_pack" class="select">
+                            <option value="dockerfile" <?= old('build_pack') === 'dockerfile' ? 'selected' : '' ?>>Dockerfile</option>
+                            <option value="nixpacks" <?= old('build_pack') === 'nixpacks' ? 'selected' : '' ?>>Nixpacks (Auto-detect)</option>
+                            <option value="static" <?= old('build_pack') === 'static' ? 'selected' : '' ?>>Static Site</option>
+                            <option value="docker-compose" <?= old('build_pack') === 'docker-compose' ? 'selected' : '' ?>>Docker Compose</option>
+                        </select>
+                    </div>
 
-                <div>
-                    <label for="dockerfile_path" class="block text-sm font-medium text-gray-300 mb-2">Dockerfile Path</label>
-                    <input type="text" name="dockerfile_path" id="dockerfile_path"
-                        value="<?= e(old('dockerfile_path', 'Dockerfile')) ?>"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                </div>
+                    <div class="form-group">
+                        <label for="dockerfile_path" class="form-label">Dockerfile Path</label>
+                        <input type="text" name="dockerfile_path" id="dockerfile_path"
+                            value="<?= e(old('dockerfile_path', 'Dockerfile')) ?>"
+                            class="input">
+                    </div>
 
-                <div>
-                    <label for="build_context" class="block text-sm font-medium text-gray-300 mb-2">Build Context</label>
-                    <input type="text" name="build_context" id="build_context"
-                        value="<?= e(old('build_context', '.')) ?>"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                    <div class="form-group">
+                        <label for="build_context" class="form-label">Build Context</label>
+                        <input type="text" name="build_context" id="build_context"
+                            value="<?= e(old('build_context', '.')) ?>"
+                            class="input">
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Environment Variables -->
-        <?php $initialEnv = old('environment_variables', ''); ?>
-        <div x-data="envEditor({ repoEnvUrl: '/environments/<?= $environment->uuid ?>/applications/repo-env' })" x-ref="envEditor" data-initial-b64="<?= base64_encode($initialEnv) ?>" x-init="if($el.dataset.initialB64){ try{ $data.parseEnvString(atob($el.dataset.initialB64)); }catch(e){console.warn(e);} }" class="bg-gray-800 rounded-lg p-6">
-            <div class="flex items-center justify-between mb-4">
-                <h2 class="text-lg font-semibold">Environment Variables</h2>
-                <button type="button" @click="toggleManual();" x-text="manualMode ? 'Hide' : 'Show'" class="text-blue-400 hover:text-blue-300 text-sm"></button>
-            </div>
-
-                <div class="space-y-2">
-                    <div class="flex items-center space-x-2">
-                        <div class="text-xs text-gray-400">Environment Variables</div>
-                        <div class="ml-auto flex items-center space-x-2">
-                            <button type="button" @click="pullFromRepo()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">Pull from repo</button>
-                            <button type="button" @click="openBulkEditor()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">Bulk Edit</button>
-                            <button type="button" @click="addRow()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">New Variable</button>
-                        </div>
-                    </div>
-
-                    <div class="space-y-2">
-                        <template x-for="(row, idx) in rows" :key="idx">
-                            <div class="rounded-lg p-3">
-                                <div class="flex items-center space-x-3">
-                                    <input x-model="row.key" placeholder="KEY" class="w-1/3 bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white text-sm" @input="updateSerialized()">
-                                    <div class="flex-1 relative" @mouseenter="onEnter(idx)" @mouseleave="onLeave(idx)">
-                                        <input :type="(row.manual || manualMode) ? 'text' : (row.revealed ? 'text' : 'password')" x-model="row.value" placeholder="value" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white text-sm" @input="updateSerialized()">
-                                        <div class="absolute right-2 top-1/2 transform -translate-y-1/2">
-                                            <button type="button" @click="removeRow(idx)" class="text-red-400 px-2">Remove</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </template>
-                        <div x-show="rows.length === 0" class="text-gray-400 text-sm">No environment variables configured.</div>
-                    </div>
-
-                    <textarea name="environment_variables" x-model="serialized" class="hidden" id="environment_variables"></textarea>
-
-                    <p class="text-xs text-gray-500 mt-1">Add environment variables as key/value pairs. Values are hidden by default.</p>
+        <div class="card card-glass">
+            <div class="card-header">
+                <h2 class="card-title">Environment Variables</h2>
+                <div class="card-actions">
+                    <button type="button" class="btn btn-ghost btn-sm" id="pull-env-btn">Pull from repo</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="bulk-edit-btn">Bulk Edit</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="add-env-btn">Add Variable</button>
                 </div>
             </div>
+            <div class="card-body">
+                <input type="hidden" name="environment_variables" id="env-serialized" value="">
+
+                <div id="env-rows" class="flex flex-col gap-3">
+                    <!-- Rows rendered by JS -->
+                </div>
+
+                <div id="env-empty" class="text-muted text-sm">
+                    No environment variables configured.
+                </div>
+
+                <p class="form-hint mt-md">Add environment variables as key/value pairs. Values are hidden by default.</p>
+            </div>
+        </div>
 
         <!-- Resources -->
-        <div class="bg-gray-800 rounded-lg p-6">
-            <h2 class="text-lg font-semibold mb-4">Resource Limits</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <label for="memory_limit" class="block text-sm font-medium text-gray-300 mb-2">Memory Limit</label>
-                    <input type="text" name="memory_limit" id="memory_limit"
-                        value="<?= e(old('memory_limit', '512m')) ?>"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        placeholder="512m">
-                    <p class="text-xs text-gray-500 mt-1">Examples: 512m, 1g, 2048m</p>
-                </div>
+        <div class="card card-glass">
+            <div class="card-header">
+                <h2 class="card-title">Resource Limits</h2>
+            </div>
+            <div class="card-body">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="memory_limit" class="form-label">Memory Limit</label>
+                        <input type="text" name="memory_limit" id="memory_limit"
+                            value="<?= e(old('memory_limit', '512m')) ?>"
+                            class="input"
+                            placeholder="512m">
+                        <p class="form-hint">Examples: 512m, 1g, 2048m</p>
+                    </div>
 
-                <div>
-                    <label for="cpu_limit" class="block text-sm font-medium text-gray-300 mb-2">CPU Limit</label>
-                    <input type="text" name="cpu_limit" id="cpu_limit"
-                        value="<?= e(old('cpu_limit', '1')) ?>"
-                        class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        placeholder="1">
-                    <p class="text-xs text-gray-500 mt-1">Examples: 0.5, 1, 2</p>
+                    <div class="form-group">
+                        <label for="cpu_limit" class="form-label">CPU Limit</label>
+                        <input type="text" name="cpu_limit" id="cpu_limit"
+                            value="<?= e(old('cpu_limit', '1')) ?>"
+                            class="input"
+                            placeholder="1">
+                        <p class="form-hint">Examples: 0.5, 1, 2</p>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Backend: Make sure to require node_uuid in validation/controller logic. -->
         <!-- Actions -->
-        <div class="flex justify-end space-x-4">
-            <a href="/environments/<?= $environment->uuid ?>" class="px-4 py-2 text-gray-400 hover:text-white">Cancel</a>
-            <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg">
-                Create Application
-            </button>
+        <div class="form-actions-bar">
+            <a href="/environments/<?= $environment->uuid ?>" class="btn btn-ghost">Cancel</a>
+            <button type="submit" class="btn btn-primary">Create Application</button>
         </div>
     </form>
 </div>
 
 <?php unset($_SESSION['_errors'], $_SESSION['_old_input']); ?>
 
-<!-- Alpine.js for custom dropdown -->
-<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+<style>
+/* Form Grid */
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(1, 1fr);
+    gap: var(--space-md);
+}
 
-<script>
-function envEditor(opts={}){
-    const initial = opts.initial || '';
-    return {
-        repoEnvUrl: opts.repoEnvUrl || null,
-        rows: [],
-        serialized: '',
-        manualMode: false,
-        init() {
-            this.parseEnvString(initial);
-            this.updateSerialized();
-            // Hide reveals when pointer leaves the window or window loses focus
-            window.addEventListener('mouseout', (e) => {
-                try {
-                    if (!e.relatedTarget) {
-                        for (let r of this.rows) r.revealed = false;
-                    }
-                } catch (err) {}
-            });
-            window.addEventListener('blur', () => { for (let r of this.rows) r.revealed = false; });
-        },
-        addRow(key = '', value = '', manual = false) {
-            this.rows.push({ key: key, value: value, revealed: false, manual: manual });
-            this.updateSerialized();
-        },
-        toggleManual() {
-            this.manualMode = !this.manualMode;
-            for (let r of this.rows) r.manual = this.manualMode;
-            this.updateSerialized();
-        },
-        onEnter(i) {
-            if (!this.rows[i]) return;
-            if (this.rows[i]._revealTimeout) { clearTimeout(this.rows[i]._revealTimeout); this.rows[i]._revealTimeout = null; }
-            this.rows[i].revealed = true;
-        },
-        onLeave(i) {
-            if (!this.rows[i]) return;
-            // small delay so quick mouseoffs don't stick
-            this.rows[i]._revealTimeout = setTimeout(()=>{ if(this.rows[i]) this.rows[i].revealed = false; this.rows[i]._revealTimeout = null; }, 120);
-        },
-        removeRow(i) {
-            this.rows.splice(i, 1);
-            this.updateSerialized();
-        },
-        openBulkEditor() {
-            const self = this;
-            chapSwal({
-                title: 'Bulk Edit Environment Variables',
-                html: '<textarea id="swal-env" rows="12" class="textarea" placeholder="KEY=VALUE\nANOTHER=VAL" style="min-height: 240px"></textarea>',
-                showCancelButton: true,
-                confirmButtonText: 'Apply',
-                cancelButtonText: 'Cancel',
-                didOpen: () => {
-                    const ta = document.getElementById('swal-env');
-                    if (ta) { ta.value = self.serialized || ''; ta.focus(); }
-                },
-                preConfirm: () => {
-                    const ta = document.getElementById('swal-env');
-                    return ta ? ta.value : '';
-                }
-            }).then((result) => {
-                if (result.isConfirmed) {
-                    const txt = result.value || '';
-                    self.parseEnvString(txt);
-                    self.updateSerialized();
-                }
-            });
-        },
-        updateSerialized() {
-            this.serialized = this.rows.map(r => (r.key ? r.key + '=' + r.value : '')).filter(Boolean).join('\n');
-        },
-        showRepoError(msg) {
-            const el = document.getElementById('repo-env-error');
-            if (!el) return;
-            if (!msg) {
-                el.textContent = '';
-                el.classList.add('hidden');
-                return;
-            }
-            el.textContent = msg;
-            el.classList.remove('hidden');
-        },
-        async pullFromRepo() {
-            try {
-                this.showRepoError('');
-                if (!this.repoEnvUrl) {
-                    this.showRepoError('Env pull endpoint is not configured.');
-                    return;
-                }
-
-                const repo = (document.getElementById('git_repository')?.value || '').trim();
-                const branch = (document.getElementById('git_branch')?.value || 'main').trim();
-
-                if (!repo) {
-                    this.showRepoError('Please enter a Git repository URL first.');
-                    return;
-                }
-
-                const url = this.repoEnvUrl + '?repo=' + encodeURIComponent(repo) + '&branch=' + encodeURIComponent(branch);
-                const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-                const data = await res.json().catch(() => ({}));
-
-                if (!res.ok) {
-                    this.showRepoError(data.error || 'Failed to pull environment variables from repository.');
-                    return;
-                }
-
-                const vars = data.vars || {};
-                const existingKeys = new Set(this.rows.map(r => (r.key || '').trim()).filter(Boolean));
-                let added = 0;
-                for (const [k, v] of Object.entries(vars)) {
-                    const key = String(k || '').trim();
-                    if (!key) continue;
-                    if (existingKeys.has(key)) continue; // do not replace existing values
-                    this.addRow(key, String(v ?? ''), false);
-                    existingKeys.add(key);
-                    added++;
-                }
-
-                if (added === 0) {
-                    // No changes, but still a successful pull; keep UI quiet.
-                }
-                this.updateSerialized();
-            } catch (e) {
-                this.showRepoError('Failed to pull environment variables. Please check the repo URL and try again.');
-            }
-        },
-        parseEnvString(str) {
-            this.rows = [];
-            if (!str) return;
-            const lines = str.split(/\r?\n/);
-            for (let line of lines) {
-                line = line.trim();
-                if (!line || line.startsWith('#')) continue;
-                const idx = line.indexOf('=');
-                if (idx === -1) continue;
-                const key = line.substring(0, idx).trim();
-                const value = line.substring(idx+1);
-                this.addRow(key, value, false);
-            }
-        }
+@media (min-width: 768px) {
+    .form-grid {
+        grid-template-columns: repeat(2, 1fr);
     }
 }
+
+.form-group-full {
+    grid-column: 1 / -1;
+}
+
+/* Form Actions Bar */
+.form-actions-bar {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-md);
+    padding: var(--space-md) 0;
+}
+
+/* Environment Editor */
+.env-key {
+    flex: 0 0 180px;
+    min-width: 120px;
+}
+
+@media (max-width: 639px) {
+    .env-key {
+        flex-basis: 45%;
+    }
+}
+
+/* Card Actions */
+.card-actions {
+    display: flex;
+    gap: var(--space-sm);
+}
+
+/* Form Hint */
+.form-hint {
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+    margin-top: var(--space-xs);
+}
+
+/* Form Error */
+.form-error {
+    font-size: var(--text-sm);
+    color: var(--red-400);
+    margin-top: var(--space-xs);
+}
+</style>
+
+<script>
+(function() {
+    'use strict';
+
+    // Config from PHP
+    const config = {
+        nodes: <?= $nodesJson ?>,
+        defaultNode: '<?= $defaultNode ?>',
+        initialEnvB64: '<?= base64_encode($initialEnv) ?>',
+        repoEnvUrl: '/environments/<?= $environment->uuid ?>/applications/repo-env'
+    };
+
+    // State
+    const state = {
+        selectedNode: config.defaultNode,
+        nodeSearch: '',
+        envRows: []
+    };
+
+    // DOM Elements
+    const elements = {};
+
+    function init() {
+        cacheElements();
+        bindEvents();
+        renderNodeList();
+        parseInitialEnv();
+        renderEnvRows();
+    }
+
+    function cacheElements() {
+        elements.nodeDropdown = document.getElementById('node-dropdown');
+        elements.nodeDropdownMenu = document.getElementById('node-dropdown-menu');
+        elements.nodeSelectBtn = document.getElementById('node-select-btn');
+        elements.selectedNodeName = document.getElementById('selected-node-name');
+        elements.nodeSearch = document.getElementById('node-search');
+        elements.nodeList = document.getElementById('node-list');
+        elements.nodeUuid = document.getElementById('node_uuid');
+        elements.envRows = document.getElementById('env-rows');
+        elements.envEmpty = document.getElementById('env-empty');
+        elements.envSerialized = document.getElementById('env-serialized');
+        elements.addEnvBtn = document.getElementById('add-env-btn');
+        elements.bulkEditBtn = document.getElementById('bulk-edit-btn');
+        elements.pullEnvBtn = document.getElementById('pull-env-btn');
+        elements.repoEnvError = document.getElementById('repo-env-error');
+        elements.gitRepository = document.getElementById('git_repository');
+        elements.gitBranch = document.getElementById('git_branch');
+    }
+
+    function bindEvents() {
+        elements.nodeSearch.addEventListener('input', (e) => {
+            state.nodeSearch = e.target.value;
+            renderNodeList();
+        });
+
+        // Environment buttons
+        elements.addEnvBtn.addEventListener('click', () => {
+            addEnvRow('', '');
+            renderEnvRows();
+        });
+
+        elements.bulkEditBtn.addEventListener('click', openBulkEditor);
+        elements.pullEnvBtn.addEventListener('click', pullFromRepo);
+
+        // Update serialized on form submit
+        document.getElementById('create-app-form').addEventListener('submit', updateEnvSerialized);
+    }
+
+    // (Dropdown open/close handled by global Chap.dropdown; keep no local implementation)
+
+    // Node Selection
+    function renderNodeList() {
+        const term = state.nodeSearch.toLowerCase();
+        const filtered = config.nodes.filter(n => 
+            !term || n.name.toLowerCase().includes(term)
+        );
+
+        if (filtered.length === 0) {
+            elements.nodeList.innerHTML = '<div class="dropdown-empty">No nodes found</div>';
+            return;
+        }
+
+        elements.nodeList.innerHTML = filtered.map(n => `
+            <button type="button" class="dropdown-item ${n.uuid === state.selectedNode ? 'active' : ''}" data-uuid="${escapeAttr(n.uuid)}">
+                ${escapeHtml(n.name)}
+            </button>
+        `).join('');
+
+        elements.nodeList.querySelectorAll('.dropdown-item').forEach(item => {
+            item.addEventListener('click', () => {
+                selectNode(item.dataset.uuid);
+            });
+        });
+    }
+
+    function selectNode(uuid) {
+        state.selectedNode = uuid;
+        elements.nodeUuid.value = uuid;
+        const node = config.nodes.find(n => n.uuid === uuid);
+        elements.selectedNodeName.textContent = node ? node.name : 'Select node...';
+        if (window.Chap && window.Chap.dropdown) {
+            window.Chap.dropdown.close(elements.nodeDropdownMenu);
+        }
+        renderNodeList();
+    }
+
+    // Environment Variables
+    function parseInitialEnv() {
+        state.envRows = [];
+        try {
+            const str = atob(config.initialEnvB64);
+            if (!str) return;
+            
+            const lines = str.split(/\r?\n/);
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('#')) continue;
+                
+                const idx = trimmed.indexOf('=');
+                if (idx === -1) continue;
+                
+                const key = trimmed.substring(0, idx).trim();
+                const value = trimmed.substring(idx + 1);
+                state.envRows.push({ key, value, revealed: false });
+            }
+        } catch (e) {
+            console.warn('Failed to parse initial env:', e);
+        }
+        updateEnvSerialized();
+    }
+
+    function addEnvRow(key = '', value = '') {
+        state.envRows.push({ key, value, revealed: false });
+        updateEnvSerialized();
+    }
+
+    function removeEnvRow(index) {
+        state.envRows.splice(index, 1);
+        renderEnvRows();
+    }
+
+    function updateEnvSerialized() {
+        const serialized = state.envRows
+            .filter(r => r.key)
+            .map(r => r.key + '=' + r.value)
+            .join('\n');
+        elements.envSerialized.value = serialized;
+    }
+
+    function renderEnvRows() {
+        if (state.envRows.length === 0) {
+            elements.envEmpty.classList.remove('hidden');
+            elements.envRows.innerHTML = '';
+            return;
+        }
+
+        elements.envEmpty.classList.add('hidden');
+        elements.envRows.innerHTML = state.envRows.map((row, idx) => `
+            <div class="env-row flex flex-wrap items-center gap-2 p-2 rounded-md" data-index="${idx}">
+                <input type="text" class="input input-sm env-key" placeholder="KEY" value="${escapeAttr(row.key)}" data-field="key">
+                <input type="${row.revealed ? 'text' : 'password'}" class="input input-sm flex-1" placeholder="value" value="${escapeAttr(row.value)}" data-field="value">
+                <button type="button" class="btn btn-ghost btn-sm toggle-reveal">${row.revealed ? 'Hide' : 'Show'}</button>
+                <button type="button" class="btn btn-danger-ghost btn-sm remove-row">Remove</button>
+            </div>
+        `).join('');
+
+        // Bind events
+        elements.envRows.querySelectorAll('.env-row').forEach(row => {
+            const idx = parseInt(row.dataset.index, 10);
+            
+            row.querySelector('[data-field="key"]').addEventListener('input', (e) => {
+                state.envRows[idx].key = e.target.value;
+                updateEnvSerialized();
+            });
+            
+            row.querySelector('[data-field="value"]').addEventListener('input', (e) => {
+                state.envRows[idx].value = e.target.value;
+                updateEnvSerialized();
+            });
+            
+            row.querySelector('.toggle-reveal').addEventListener('click', () => {
+                state.envRows[idx].revealed = !state.envRows[idx].revealed;
+                renderEnvRows();
+            });
+            
+            row.querySelector('.remove-row').addEventListener('click', () => {
+                removeEnvRow(idx);
+            });
+        });
+
+        updateEnvSerialized();
+    }
+
+    function openBulkEditor() {
+        const currentValue = state.envRows
+            .filter(r => r.key)
+            .map(r => r.key + '=' + r.value)
+            .join('\n');
+
+        Modal.prompt('Bulk Edit Environment Variables', {
+            inputType: 'textarea',
+            value: currentValue,
+            placeholder: 'KEY=VALUE\nANOTHER=VAL',
+            confirmText: 'Apply',
+            required: false
+        }).then(({ confirmed, value }) => {
+            if (!confirmed) return;
+            parseEnvString(value || '');
+            renderEnvRows();
+        });
+    }
+
+    function parseEnvString(str) {
+        state.envRows = [];
+        if (!str) return;
+        
+        const lines = str.split(/\r?\n/);
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) continue;
+            
+            const idx = trimmed.indexOf('=');
+            if (idx === -1) continue;
+            
+            const key = trimmed.substring(0, idx).trim();
+            const value = trimmed.substring(idx + 1);
+            state.envRows.push({ key, value, revealed: false });
+        }
+        
+        updateEnvSerialized();
+    }
+
+    async function pullFromRepo() {
+        showRepoError('');
+        
+        const repo = (elements.gitRepository.value || '').trim();
+        const branch = (elements.gitBranch.value || 'main').trim();
+
+        if (!repo) {
+            showRepoError('Please enter a Git repository URL first.');
+            return;
+        }
+
+        try {
+            const url = config.repoEnvUrl + '?repo=' + encodeURIComponent(repo) + '&branch=' + encodeURIComponent(branch);
+            const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                showRepoError(data.error || 'Failed to pull environment variables from repository.');
+                return;
+            }
+
+            const vars = data.vars || {};
+            const existingKeys = new Set(state.envRows.map(r => (r.key || '').trim()).filter(Boolean));
+            
+            for (const [k, v] of Object.entries(vars)) {
+                const key = String(k || '').trim();
+                if (!key || existingKeys.has(key)) continue;
+                state.envRows.push({ key, value: String(v ?? ''), revealed: false });
+                existingKeys.add(key);
+            }
+
+            renderEnvRows();
+        } catch (e) {
+            showRepoError('Failed to pull environment variables. Please check the repo URL and try again.');
+        }
+    }
+
+    function showRepoError(msg) {
+        if (!msg) {
+            elements.repoEnvError.textContent = '';
+            elements.repoEnvError.classList.add('hidden');
+        } else {
+            elements.repoEnvError.textContent = msg;
+            elements.repoEnvError.classList.remove('hidden');
+        }
+    }
+
+    // Utilities
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    function escapeAttr(str) {
+        if (!str) return '';
+        return str
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    // Initialize
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
 </script>

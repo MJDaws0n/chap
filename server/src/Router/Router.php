@@ -240,7 +240,7 @@ class Router
                 redirect('/login');
                 return;
             }
-            echo view('errors/404');
+            echo view('errors/404', ['title' => '404']);
         }
     }
 

@@ -1,51 +1,73 @@
-<div class="mb-8">
-    <a href="/projects/<?= htmlspecialchars($project->uuid) ?>" class="text-gray-400 hover:text-white text-sm flex items-center mb-4">
-        <svg class="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-        </svg>
-        Back to Project
-    </a>
-    <h1 class="text-3xl font-bold">Edit Project</h1>
-    <p class="text-gray-400">Update your project details</p>
-</div>
+<?php
+/**
+ * Edit Project View
+ * Updated to use new design system
+ */
+?>
 
-<div class="max-w-2xl">
-    <form action="/projects/<?= htmlspecialchars($project->uuid) ?>" method="POST" class="bg-gray-800 rounded-lg border border-gray-700 p-6 space-y-6">
-        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-        <input type="hidden" name="_method" value="PUT">
-
-        <div>
-            <label for="name" class="block text-sm font-medium text-gray-300 mb-2">Project Name</label>
-            <input 
-                type="text" 
-                id="name" 
-                name="name" 
-                required
-                class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="My Awesome Project"
-                value="<?= htmlspecialchars($old['name'] ?? $project->name) ?>"
-            >
-            <?php if (!empty($errors['name'])): ?>
-                <p class="mt-1 text-sm text-red-400"><?= htmlspecialchars($errors['name']) ?></p>
-            <?php endif; ?>
+<div class="flex flex-col gap-6">
+    <div class="page-header">
+        <div class="page-header-top">
+            <div>
+                <nav class="breadcrumb">
+                    <span class="breadcrumb-item"><a href="/projects">Projects</a></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item"><a href="/projects/<?= htmlspecialchars($project->uuid) ?>"><?= htmlspecialchars($project->name) ?></a></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-current">Edit</span>
+                </nav>
+                <h1 class="page-header-title">Edit Project</h1>
+                <p class="page-header-description">Update your project details</p>
+            </div>
         </div>
+    </div>
 
-        <div>
-            <label for="description" class="block text-sm font-medium text-gray-300 mb-2">Description <span class="text-gray-500">(optional)</span></label>
-            <textarea 
-                id="description" 
-                name="description" 
-                rows="3"
-                class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-                placeholder="Brief description of your project"
-            ><?= htmlspecialchars($old['description'] ?? $project->description ?? '') ?></textarea>
-        </div>
+    <div class="w-full max-w-2xl">
+        <form action="/projects/<?= htmlspecialchars($project->uuid) ?>" method="POST" class="card card-glass">
+            <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+            <input type="hidden" name="_method" value="PUT">
 
-        <div class="flex items-center justify-end space-x-4 pt-4 border-t border-gray-700">
-            <a href="/projects/<?= htmlspecialchars($project->uuid) ?>" class="px-4 py-2 text-gray-400 hover:text-white transition-colors">Cancel</a>
-            <button type="submit" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors">
-                Update Project
-            </button>
-        </div>
-    </form>
+            <div class="card-header">
+                <h2 class="card-title">Project Details</h2>
+            </div>
+
+            <div class="card-body">
+                <div class="flex flex-col gap-4">
+                    <div class="form-group">
+                        <label for="name" class="form-label">Project Name <span class="text-danger">*</span></label>
+                        <input
+                            type="text"
+                            id="name"
+                            name="name"
+                            required
+                            class="input"
+                            placeholder="My Awesome Project"
+                            value="<?= htmlspecialchars($old['name'] ?? $project->name) ?>"
+                        >
+                        <?php if (!empty($errors['name'])): ?>
+                            <p class="form-error"><?= htmlspecialchars($errors['name']) ?></p>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="description" class="form-label">Description <span class="text-muted">(optional)</span></label>
+                        <textarea
+                            id="description"
+                            name="description"
+                            rows="3"
+                            class="textarea"
+                            placeholder="Brief description of your project"
+                        ><?= htmlspecialchars($old['description'] ?? $project->description ?? '') ?></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card-footer">
+                <div class="flex items-center justify-end gap-3">
+                    <a href="/projects/<?= htmlspecialchars($project->uuid) ?>" class="btn btn-ghost">Cancel</a>
+                    <button type="submit" class="btn btn-primary">Update Project</button>
+                </div>
+            </div>
+        </form>
+    </div>
 </div>

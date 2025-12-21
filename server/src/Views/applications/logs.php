@@ -1,594 +1,870 @@
 <?php
 /**
  * Application Live Logs View
+ * Updated to use new design system with vanilla JavaScript
  */
 $statusColors = [
-    'running' => 'bg-green-600',
-    'stopped' => 'bg-gray-600',
-    'building' => 'bg-yellow-600',
-    'deploying' => 'bg-blue-600',
-    'failed' => 'bg-red-600',
+    'running' => 'badge-success',
+    'stopped' => 'badge-neutral',
+    'building' => 'badge-warning',
+    'deploying' => 'badge-info',
+    'failed' => 'badge-danger',
 ];
-$statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
-
-// Containers are provided by the node logs WebSocket (WS/WSS)
-$containersJson = '[]';
-$firstContainerId = 'null';
+$statusColor = $statusColors[$application->status] ?? 'badge-default';
 ?>
-<div class="stack" x-data="liveLogs()">
-    <!-- Breadcrumb & Header -->
-    <div class="flex items-center justify-between">
-        <div>
-            <div class="flex items-center space-x-2 text-sm text-gray-400 mb-2">
-                <a href="/projects" class="hover:text-white">Projects</a>
-                <span>/</span>
-                <a href="/projects/<?= $project->uuid ?>" class="hover:text-white"><?= e($project->name) ?></a>
-                <span>/</span>
-                <a href="/environments/<?= $environment->uuid ?>"
-                    class="hover:text-white"><?= e($environment->name) ?></a>
-                <span>/</span>
-                <a href="/applications/<?= $application->uuid ?>"
-                    class="hover:text-white"><?= e($application->name) ?></a>
-                <span>/</span>
-                <span>Live Logs</span>
+
+<div class="flex flex-col gap-6">
+    <div class="page-header">
+        <div class="page-header-top">
+            <div>
+                <nav class="breadcrumb">
+                    <span class="breadcrumb-item"><a href="/projects">Projects</a></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item"><a href="/projects/<?= e($project->uuid) ?>"><?= e($project->name) ?></a></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item"><a href="/environments/<?= e($environment->uuid) ?>"><?= e($environment->name) ?></a></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item"><a href="/applications/<?= e($application->uuid) ?>"><?= e($application->name) ?></a></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-current">Live Logs</span>
+                </nav>
+
+                <div class="flex items-center flex-wrap gap-3 mt-4">
+                    <h1 class="page-header-title">Live Logs</h1>
+                    <span class="badge <?= $statusColor ?>"><?= ucfirst($application->status) ?></span>
+                </div>
+                <p class="page-header-description truncate"><?= e($application->name) ?></p>
             </div>
-            <div class="flex items-center space-x-3">
-                <h1 class="text-2xl font-bold">Live Logs</h1>
-                <span class="px-2 py-1 text-xs rounded-full <?= $statusColor ?>">
-                    <?= ucfirst($application->status) ?>
-                </span>
+
+            <div class="page-header-actions">
+                <a href="/applications/<?= e($application->uuid) ?>" class="btn btn-secondary">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                    </svg>
+                    Back to Application
+                </a>
             </div>
-            <p class="text-gray-400 mt-1"><?= e($application->name) ?></p>
-        </div>
-        <div class="flex space-x-3">
-            <a href="/applications/<?= $application->uuid ?>"
-                class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg">
-                ← Back to Application
-            </a>
         </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        <!-- Logs Panel -->
-        <div class="lg:col-span-3">
-            <div class="bg-gray-800 rounded-lg p-6">
-                <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-lg font-semibold">Container Logs</h2>
-                    <div class="flex items-center space-x-4">
+    <div class="grid grid-cols-1 lg:grid-cols-3">
+        <div class="lg:col-span-2">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Container Logs</h2>
+                    <div class="flex items-center gap-3 flex-wrap">
                         <!-- Container Dropdown -->
-                        <div class="relative">
-                            <button @click="dropdownOpen = !dropdownOpen" type="button"
-                                class="bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white text-left flex justify-between items-center min-w-[200px] focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                                <span x-text="selectedContainerName()"></span>
-                                <svg class="w-4 h-4 ml-2 text-gray-400" fill="none" viewBox="0 0 24 24"
-                                    stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M19 9l-7 7-7-7" />
+                        <div class="dropdown" id="container-dropdown">
+                            <button type="button" class="btn btn-secondary" id="container-select-btn" data-dropdown-trigger="container-dropdown-menu" data-dropdown-placement="bottom-start">
+                                <span id="selected-container-name">Select container...</span>
+                                <svg class="icon dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
                                 </svg>
                             </button>
-                            <div x-show="dropdownOpen" @click.away="dropdownOpen = false" x-cloak
-                                class="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-auto">
-                                <div class="p-2">
-                                    <input type="text" x-model="containerSearch" placeholder="Search containers..."
-                                        class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm"
-                                        autocomplete="off">
+                            <div class="dropdown-menu" id="container-dropdown-menu" style="min-width: 320px;">
+                                <div class="p-3 border-b border-primary">
+                                    <input type="text" class="input input-sm" placeholder="Search containers..." id="container-search" autocomplete="off">
                                 </div>
-                                <template x-for="container in filteredContainers()" :key="container.id">
-                                    <div @click="selectContainer(container)"
-                                        class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white"
-                                        :class="{'bg-blue-700/30': container.id === selectedContainer}">
-                                        <div class="flex items-center justify-between">
-                                            <span x-text="container.name" class="truncate"></span>
-                                            <span class="text-xs px-2 py-0.5 rounded-full"
-                                                :class="container.status === 'running' ? 'bg-green-600/30 text-green-400' : 'bg-gray-600/30 text-gray-400'"
-                                                x-text="container.status"></span>
-                                        </div>
-                                    </div>
-                                </template>
-                                <div x-show="filteredContainers().length === 0" class="px-4 py-2 text-gray-400">No
-                                    containers found</div>
+                                <div class="dropdown-items" id="container-list">
+                                    <div class="dropdown-empty">No containers available</div>
+                                </div>
                             </div>
                         </div>
 
-                        <!-- Live indicator -->
-                        <template x-if="isLive">
-                            <div class="flex items-center space-x-2 text-sm text-gray-400">
-                                <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                                <span x-text="wsConnected ? 'Live (WebSocket)' : 'Live'"></span>
-                            </div>
-                        </template>
+                        <!-- Connection Status -->
+                        <div class="flex items-center gap-2 text-sm text-secondary" id="connection-status">
+                            <span class="status-dot" id="status-dot"></span>
+                            <span class="status-text" id="status-text">Connecting...</span>
+                        </div>
 
-                        <!-- Connection status -->
-                        <template x-if="!isLive && !loading">
-                            <div class="flex items-center space-x-2 text-sm text-gray-400">
-                                <div class="w-2 h-2 bg-gray-500 rounded-full"></div>
-                                <span>Disconnected</span>
-                            </div>
-                        </template>
+                        <!-- Pause/Resume Button -->
+                        <button type="button" class="btn btn-ghost btn-icon" id="pause-btn" title="Pause/Resume">
+                            <svg class="icon icon-pause" viewBox="0 0 24 24" fill="currentColor">
+                                <rect x="6" y="4" width="4" height="16" rx="1"/>
+                                <rect x="14" y="4" width="4" height="16" rx="1"/>
+                            </svg>
+                            <svg class="icon icon-play hidden" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M8 5v14l11-7z"/>
+                            </svg>
+                        </button>
 
-                        <!-- Refresh -->
-                        <button x-show="!!logsWebsocketUrl" @click="connectWebSocket()"
-                            class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-lg text-sm">
-                            <span>Reconnect</span>
+                        <!-- Reconnect Button -->
+                        <button type="button" class="btn btn-secondary btn-sm" id="reconnect-btn">
+                            Reconnect
                         </button>
                     </div>
                 </div>
 
-                <div id="logs-container" class="logs" x-ref="logsContainer">
-                    <template x-if="logs.length === 0 && !loading">
-                        <p class="text-gray-500">No logs available. Select a container to view logs.</p>
-                    </template>
-                    <template x-if="loading">
-                        <p class="text-gray-500">Loading logs...</p>
-                    </template>
-                    <template x-for="(log, index) in logs" :key="index">
-                        <div class="log-line" :class="logClass(log)">
-                            <span class="log-line__ts" x-text="log.timestamp"></span>
-                            <span class="log-line__msg" x-text="log.message"></span>
+                <div class="card-body p-0">
+                    <div class="logs-container" id="logs-container">
+                        <div class="flex flex-col items-center justify-center h-full gap-3" id="logs-empty">
+                            <p class="text-secondary text-sm">No logs available. Select a container to view logs.</p>
                         </div>
-                    </template>
+                        <div class="flex flex-col items-center justify-center h-full gap-3 hidden" id="logs-loading">
+                            <div class="spinner"></div>
+                            <p class="text-secondary text-sm">Loading logs…</p>
+                        </div>
+                        <div class="logs-content" id="logs-content"></div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Sidebar -->
-        <div class="space-y-6">
+        <div class="flex flex-col gap-6">
             <!-- Actions Card -->
-            <div class="bg-gray-800 rounded-lg p-6">
-                <h2 class="text-lg font-semibold mb-4">Actions</h2>
-                <div class="space-y-3">
-                    <form method="POST" action="/applications/<?= $application->uuid ?>/deploy">
-                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                        <button type="submit"
-                            class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg">
-                            Redeploy
-                        </button>
-                    </form>
-                    <?php if ($application->status === 'running'): ?>
-                        <form method="POST" action="/applications/<?= $application->uuid ?>/restart">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Actions</h3>
+                </div>
+                <div class="card-body">
+                    <div class="flex flex-col gap-3">
+                        <form method="POST" action="/applications/<?= $application->uuid ?>/deploy">
                             <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                            <button type="submit"
-                                class="w-full bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg">
-                                Restart
+                            <button type="submit" class="btn btn-primary w-full">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                </svg>
+                                Redeploy
                             </button>
                         </form>
-                        <form method="POST" action="/applications/<?= $application->uuid ?>/stop">
-                            <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                            <button type="submit"
-                                class="w-full bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg">
-                                Stop Application
-                            </button>
-                        </form>
-                    <?php endif; ?>
+                        <?php if ($application->status === 'running'): ?>
+                            <form method="POST" action="/applications/<?= $application->uuid ?>/restart">
+                                <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                                <button type="submit" class="btn btn-warning w-full">
+                                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                    </svg>
+                                    Restart
+                                </button>
+                            </form>
+                            <form method="POST" action="/applications/<?= $application->uuid ?>/stop">
+                                <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                                <button type="submit" class="btn btn-secondary w-full">
+                                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="6" y="6" width="12" height="12" rx="2"/>
+                                    </svg>
+                                    Stop Application
+                                </button>
+                            </form>
+                        <?php endif; ?>
+                    </div>
                 </div>
             </div>
 
-            <!-- Tail Size -->
-            <div class="bg-gray-800 rounded-lg p-6">
-                <h2 class="text-lg font-semibold mb-4">Settings</h2>
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-2">Tail Lines</label>
-                        <div x-data="{ openTail: false }" class="relative">
-                            <input type="hidden" name="tailSize" x-model="tailSize">
-                            <button type="button" @click="openTail = !openTail"
-                                class="bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white w-full text-left flex justify-between items-center">
-                                <span x-text="tailSize + ' lines'"></span>
-                                <svg class="w-4 h-4 ml-2 text-gray-400" fill="none" viewBox="0 0 24 24"
-                                    stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M19 9l-7 7-7-7" />
+            <!-- Settings Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Settings</h3>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label class="form-label">Tail Lines</label>
+                        <div class="dropdown" id="tail-dropdown">
+                            <button type="button" class="btn btn-secondary w-full" id="tail-select-btn" data-dropdown-trigger="tail-dropdown-menu" data-dropdown-placement="bottom-start">
+                                <span id="tail-value">100 lines</span>
+                                <svg class="icon dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
                                 </svg>
                             </button>
-                            <div x-show="openTail" @click.away="openTail = false" x-cloak
-                                class="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg">
-                                <div @click="tailSize='100'; openTail=false; rebuildVisibleLogs()"
-                                    class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white">100 lines</div>
-                                <div @click="tailSize='500'; openTail=false; rebuildVisibleLogs()"
-                                    class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white">500 lines</div>
-                                <div @click="tailSize='1000'; openTail=false; rebuildVisibleLogs()"
-                                    class="px-4 py-2 cursor-pointer hover:bg-blue-600/20 text-white">1000 lines</div>
+                            <div class="dropdown-menu" id="tail-dropdown-menu" style="min-width: 220px;">
+                                <button type="button" class="dropdown-item" data-value="100">100 lines</button>
+                                <button type="button" class="dropdown-item" data-value="500">500 lines</button>
+                                <button type="button" class="dropdown-item" data-value="1000">1000 lines</button>
                             </div>
                         </div>
                     </div>
-                    <div class="flex items-center space-x-2">
-                        <input type="checkbox" x-model="autoScroll" id="autoScroll"
-                            class="w-4 h-4 bg-gray-700 border-gray-600 rounded focus:ring-blue-500">
-                        <label for="autoScroll" class="text-sm text-gray-300">Auto-scroll to bottom</label>
+                    <div class="form-group">
+                        <label class="checkbox">
+                            <input type="checkbox" id="auto-scroll" checked>
+                            <span>Auto-scroll to bottom</span>
+                        </label>
                     </div>
                 </div>
             </div>
 
-            <!-- Container Info -->
-            <div class="bg-gray-800 rounded-lg p-6">
-                <h2 class="text-lg font-semibold mb-4">Container Info</h2>
-                <div class="space-y-3 text-sm">
-                    <template x-if="selectedContainerInfo()">
-                        <div class="space-y-3">
-                            <div class="flex items-center justify-between">
-                                <span class="text-gray-400">Name</span>
-                                <span class="text-white truncate max-w-[150px]"
-                                    x-text="selectedContainerInfo()?.name"></span>
+            <!-- Container Info Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Container Info</h3>
+                </div>
+                <div class="card-body">
+                    <div id="container-info-empty">
+                        <p class="text-secondary text-sm">Select a container</p>
+                    </div>
+                    <div id="container-info" class="hidden">
+                        <dl class="flex flex-col gap-4">
+                            <div class="flex items-center justify-between gap-4 text-sm">
+                                <dt class="text-tertiary">Name</dt>
+                                <dd id="info-name" class="m-0 text-primary truncate">-</dd>
                             </div>
-                            <div class="flex items-center justify-between">
-                                <span class="text-gray-400">Status</span>
-                                <span class="px-2 py-1 text-xs rounded-full"
-                                    :class="selectedContainerInfo()?.status === 'running' ? 'bg-green-600' : 'bg-gray-600'"
-                                    x-text="selectedContainerInfo()?.status"></span>
+                            <div class="flex items-center justify-between gap-4 text-sm">
+                                <dt class="text-tertiary">Status</dt>
+                                <dd class="m-0"><span id="info-status" class="badge badge-sm">-</span></dd>
                             </div>
-                            <div class="flex items-center justify-between">
-                                <span class="text-gray-400">ID</span>
-                                <code class="text-xs bg-gray-700 px-2 py-1 rounded"
-                                    x-text="(selectedContainerInfo()?.id || '').substring(0, 12)"></code>
+                            <div class="flex items-center justify-between gap-4 text-sm">
+                                <dt class="text-tertiary">ID</dt>
+                                <dd class="m-0"><code id="info-id" class="code-inline">-</code></dd>
                             </div>
-                        </div>
-                    </template>
-                    <template x-if="!selectedContainerInfo()">
-                        <p class="text-gray-500">Select a container</p>
-                    </template>
+                        </dl>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 </div>
 
+<style>
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-gray);
+    transition: var(--transition-colors);
+}
+
+.status-dot.live {
+    background: var(--accent-green);
+    animation: pulse 2s infinite;
+}
+
+.status-dot.connecting {
+    background: var(--accent-yellow);
+    animation: pulse 1s infinite;
+}
+
+.status-dot.disconnected {
+    background: var(--accent-gray);
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Logs Container */
+.logs-container {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    height: min(600px, 70vh);
+    overflow-y: auto;
+    overflow-x: hidden;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+}
+
+.logs-content {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Log Entry */
+.log-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    padding: var(--space-xs) 0;
+    min-width: 0;
+}
+
+.log-timestamp {
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+    font-size: var(--text-xs);
+}
+
+.log-message {
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    min-width: 0;
+    flex: 1;
+    color: var(--text-secondary);
+}
+
+/* Log severity colors */
+.log-entry.log-error .log-message {
+    color: var(--accent-red);
+}
+
+.log-entry.log-warning .log-message {
+    color: var(--accent-yellow);
+}
+
+.log-entry.log-success .log-message {
+    color: var(--accent-green);
+}
+
+.log-entry.log-info .log-message {
+    color: var(--text-secondary);
+}
+
+/* Dropdown Search */
+.dropdown-items {
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.dropdown-empty {
+    padding: var(--space-4);
+    text-align: center;
+    color: var(--text-tertiary);
+    font-size: var(--text-sm);
+}
+
+.code-inline {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+}
+
+/* Pause button icons */
+#pause-btn .icon-play { display: none; }
+#pause-btn .icon-pause { display: block; }
+#pause-btn.paused .icon-play { display: block; }
+#pause-btn.paused .icon-pause { display: none; }
+</style>
+
 <script>
-    function liveLogs() {
-        return {
-            containers: [],
-            selectedContainer: null,
-            containerSearch: '',
-            dropdownOpen: false,
-            logs: [],
-            loading: false,
-            paused: false,
-            isLive: false,
-            tailSize: '100',
-            autoScroll: true,
-            maxStoredLogsPerContainer: 5000,
-            logsByContainer: {},
-            seenKeysByContainer: {},
-            rawMessages: [],
-            maxRawMessages: 2000,
-            applicationUuid: '<?= $application->uuid ?>',
+(function() {
+    'use strict';
 
-            // WebSocket properties
-            logsWebsocketUrl: <?= json_encode($logsWebsocketUrl ?? null) ?>,
-            sessionId: <?= json_encode($sessionId ?? '') ?>,
-            ws: null,
-            wsConnected: false,
-            wsReconnectTimeout: null,
-            isConnecting: false,
-            intentionalClose: false,
-            keepAliveTimer: null,
-            keepAliveIntervalMs: 25000,
-            lastPongAt: null,
+    // Configuration from PHP
+    const config = {
+        logsWebsocketUrl: <?= json_encode($logsWebsocketUrl ?? null) ?>,
+        sessionId: <?= json_encode($sessionId ?? '') ?>,
+        applicationUuid: '<?= $application->uuid ?>'
+    };
 
-            init() {
-                if (!this.logsWebsocketUrl) {
-                    console.warn('[Logs] Live logs require WebSocket; no logsWebsocketUrl configured');
-                    this.loading = false;
-                    this.wsConnected = false;
-                    this.isLive = false;
+    // State
+    const state = {
+        containers: [],
+        selectedContainer: null,
+        logs: [],
+        logsByContainer: {},
+        seenKeysByContainer: {},
+        loading: false,
+        paused: false,
+        isLive: false,
+        tailSize: 100,
+        autoScroll: true,
+        maxStoredLogsPerContainer: 5000,
+        
+        // WebSocket
+        ws: null,
+        wsConnected: false,
+        wsReconnectTimeout: null,
+        isConnecting: false,
+        intentionalClose: false,
+        keepAliveTimer: null,
+        keepAliveIntervalMs: 25000
+    };
+
+    // DOM Elements
+    const elements = {};
+
+    function init() {
+        cacheElements();
+        bindEvents();
+        
+        if (!config.logsWebsocketUrl) {
+            showStatus('disconnected', 'WebSocket not configured');
+            hideLoading();
+            return;
+        }
+
+        connectWebSocket();
+    }
+
+    function cacheElements() {
+        elements.logsContainer = document.getElementById('logs-container');
+        elements.logsContent = document.getElementById('logs-content');
+        elements.logsEmpty = document.getElementById('logs-empty');
+        elements.logsLoading = document.getElementById('logs-loading');
+        elements.containerSelectBtn = document.getElementById('container-select-btn');
+        elements.selectedContainerName = document.getElementById('selected-container-name');
+        elements.containerDropdown = document.getElementById('container-dropdown');
+        elements.containerDropdownMenu = document.getElementById('container-dropdown-menu');
+        elements.containerSearch = document.getElementById('container-search');
+        elements.containerList = document.getElementById('container-list');
+        elements.statusDot = document.getElementById('status-dot');
+        elements.statusText = document.getElementById('status-text');
+        elements.pauseBtn = document.getElementById('pause-btn');
+        elements.reconnectBtn = document.getElementById('reconnect-btn');
+        elements.tailSelectBtn = document.getElementById('tail-select-btn');
+        elements.tailValue = document.getElementById('tail-value');
+        elements.tailDropdown = document.getElementById('tail-dropdown');
+        elements.tailDropdownMenu = document.getElementById('tail-dropdown-menu');
+        elements.autoScrollCheckbox = document.getElementById('auto-scroll');
+        elements.containerInfoEmpty = document.getElementById('container-info-empty');
+        elements.containerInfo = document.getElementById('container-info');
+        elements.infoName = document.getElementById('info-name');
+        elements.infoStatus = document.getElementById('info-status');
+        elements.infoId = document.getElementById('info-id');
+    }
+
+    function bindEvents() {
+        // Dropdowns are handled by the shared dropdown system (server/public/js/dropdown.js).
+        // Keep page-specific behavior like focusing the search field.
+        elements.containerDropdownMenu.addEventListener('dropdown:open', () => {
+            // Defer to ensure menu is visible/positioned
+            setTimeout(() => {
+                elements.containerSearch.focus();
+            }, 0);
+        });
+
+        elements.containerSearch.addEventListener('input', (e) => {
+            filterContainers(e.target.value);
+        });
+
+        elements.tailDropdownMenu.querySelectorAll('.dropdown-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const value = parseInt(item.dataset.value, 10);
+                state.tailSize = value;
+                elements.tailValue.textContent = value + ' lines';
+                rebuildVisibleLogs();
+            });
+        });
+
+        // Pause button
+        elements.pauseBtn.addEventListener('click', togglePause);
+
+        // Reconnect button
+        elements.reconnectBtn.addEventListener('click', () => {
+            connectWebSocket();
+        });
+
+        // Auto-scroll checkbox
+        elements.autoScrollCheckbox.addEventListener('change', (e) => {
+            state.autoScroll = e.target.checked;
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', destroy);
+    }
+
+    // WebSocket functions
+    function connectWebSocket() {
+        if (!config.logsWebsocketUrl) return;
+
+        if (state.wsReconnectTimeout) {
+            clearTimeout(state.wsReconnectTimeout);
+            state.wsReconnectTimeout = null;
+        }
+
+        if (state.isConnecting) return;
+
+        if (state.ws) {
+            state.intentionalClose = true;
+            try { state.ws.close(1000, 'Reconnect requested'); } catch (e) {}
+        }
+
+        stopKeepAlive();
+
+        try {
+            state.isConnecting = true;
+            showLoading();
+            showStatus('connecting', 'Connecting...');
+
+            const ws = new WebSocket(config.logsWebsocketUrl);
+            state.ws = ws;
+
+            ws.onopen = () => {
+                if (ws !== state.ws) return;
+                state.intentionalClose = false;
+                ws.send(JSON.stringify({
+                    type: 'auth',
+                    session_id: config.sessionId,
+                    application_uuid: config.applicationUuid,
+                    tail: Math.min(Math.max(state.tailSize, 0), 1000)
+                }));
+            };
+
+            ws.onmessage = (event) => {
+                if (ws !== state.ws) return;
+                try {
+                    handleWsMessage(JSON.parse(event.data));
+                } catch (e) {
+                    console.error('[Logs] Failed to parse WS message:', e);
+                }
+            };
+
+            ws.onclose = (event) => {
+                if (ws !== state.ws) return;
+                console.log('[Logs] WebSocket closed:', event.code, event.reason);
+                state.wsConnected = false;
+                state.isLive = false;
+                state.isConnecting = false;
+                hideLoading();
+                showStatus('disconnected', 'Disconnected');
+                stopKeepAlive();
+
+                if (state.intentionalClose) {
+                    state.intentionalClose = false;
                     return;
                 }
 
-                this.connectWebSocket();
-            },
-
-            connectWebSocket() {
-                if (!this.logsWebsocketUrl) return;
-                // Cancel any scheduled reconnect attempts; this call is the new attempt.
-                if (this.wsReconnectTimeout) {
-                    clearTimeout(this.wsReconnectTimeout);
-                    this.wsReconnectTimeout = null;
+                if (event.code !== 1000) {
+                    state.wsReconnectTimeout = setTimeout(connectWebSocket, 3000);
                 }
+            };
 
-                // Avoid overlapping connection attempts.
-                if (this.isConnecting) return;
-
-                // If a socket already exists, close it intentionally so onclose doesn't auto-reconnect.
-                if (this.ws) {
-                    this.intentionalClose = true;
-                    try { this.ws.close(1000, 'Reconnect requested'); } catch (e) {}
-                }
-
-                this.stopKeepAlive();
-
-                try {
-                    this.isConnecting = true;
-                    this.loading = true;
-                    const ws = new WebSocket(this.logsWebsocketUrl);
-                    this.ws = ws;
-
-                    ws.onopen = () => {
-                        if (ws !== this.ws) return;
-                        this.intentionalClose = false;
-                        ws.send(JSON.stringify({
-                            type: 'auth',
-                            session_id: this.sessionId,
-                            application_uuid: this.applicationUuid,
-                            // Ask the node to send some initial history too.
-                            tail: Math.min(Math.max(parseInt(this.tailSize, 10) || 100, 0), 1000)
-                        }));
-                    };
-
-                    ws.onmessage = (event) => {
-                        if (ws !== this.ws) return;
-                        try {
-                            this.handleWsMessage(JSON.parse(event.data));
-                        } catch (e) {
-                            console.error('[Logs] Failed to parse WS message:', e);
-                        }
-                    };
-
-                    ws.onclose = (event) => {
-                        if (ws !== this.ws) return;
-                        console.log('[Logs] WebSocket closed:', event.code, event.reason);
-                        this.wsConnected = false;
-                        this.isLive = false;
-                        this.loading = false;
-                        this.isConnecting = false;
-
-                        this.stopKeepAlive();
-
-                        // If we closed it intentionally (e.g. user clicked Reconnect), do not auto-reconnect.
-                        if (this.intentionalClose) {
-                            this.intentionalClose = false;
-                            return;
-                        }
-
-                        if (event.code !== 1000) {
-                            this.wsReconnectTimeout = setTimeout(() => {
-                                this.connectWebSocket();
-                            }, 3000);
-                        }
-                    };
-
-                    ws.onerror = (error) => {
-                        if (ws !== this.ws) return;
-                        console.error('[Logs] WebSocket error:', error);
-                        this.loading = false;
-                        this.isConnecting = false;
-                    };
-                } catch (e) {
-                    console.error('[Logs] Failed to create WebSocket:', e);
-                    this.loading = false;
-                    this.isConnecting = false;
-                }
-            },
-
-            handleWsMessage(message) {
-                this.storeRawMessage(message);
-
-                switch (message.type) {
-                    case 'auth:success':
-                        this.wsConnected = true;
-                        this.isLive = !this.paused;
-                        this.loading = false;
-                        this.isConnecting = false;
-                        this.startKeepAlive();
-                        break;
-
-                    case 'auth:failed':
-                        console.error('[Logs] Authentication failed:', message.error);
-                        this.wsConnected = false;
-                        this.isLive = false;
-                        this.loading = false;
-                        this.isConnecting = false;
-                        break;
-
-                    case 'containers':
-                        this.handleContainersMessage(message);
-                        break;
-
-                    case 'log':
-                        this.handleLogMessage(message);
-                        break;
-
-                    case 'pong':
-                        this.lastPongAt = Date.now();
-                        break;
-
-                    case 'error':
-                        console.error('[Logs] Server error:', message.error);
-                        break;
-                }
-            },
-
-            startKeepAlive() {
-                this.stopKeepAlive();
-                this.keepAliveTimer = setInterval(() => {
-                    try {
-                        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                            this.ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
-                        }
-                    } catch (e) {
-                        // Ignore keepalive send errors; onclose handler will reconnect.
-                    }
-                }, this.keepAliveIntervalMs);
-            },
-
-            stopKeepAlive() {
-                if (this.keepAliveTimer) {
-                    clearInterval(this.keepAliveTimer);
-                    this.keepAliveTimer = null;
-                }
-            },
-
-            storeRawMessage(message) {
-                this.rawMessages.push(message);
-                if (this.rawMessages.length > this.maxRawMessages) {
-                    this.rawMessages = this.rawMessages.slice(-this.maxRawMessages);
-                }
-            },
-
-            normalizeContainerId(value) {
-                if (value === undefined || value === null) return null;
-                return String(value);
-            },
-
-            handleContainersMessage(payload) {
-                const incoming = Array.isArray(payload.containers) ? payload.containers : [];
-                const normalized = incoming
-                    .map(c => ({
-                        id: this.normalizeContainerId(c.id || c.container_id),
-                        name: String(c.name || c.container || c.id || ''),
-                        status: String(c.status || 'running')
-                    }))
-                    .filter(c => c.id && c.name);
-
-                const previous = this.selectedContainer;
-                this.containers = normalized;
-
-                if (!this.selectedContainer) {
-                    this.selectedContainer = normalized[0]?.id || null;
-                } else if (!normalized.find(c => c.id === this.selectedContainer)) {
-                    this.selectedContainer = normalized[0]?.id || null;
-                }
-
-                if (previous !== this.selectedContainer) {
-                    this.rebuildVisibleLogs();
-                }
-            },
-
-            handleLogMessage(payload) {
-                const stream = payload.stream || 'stdout';
-                const content = payload.content ?? payload.data ?? '';
-                if (!content) return;
-
-                const containerId = this.normalizeContainerId(payload.container_id || payload.containerId) || '__system__';
-                const containerName = payload.container || payload.container_name || payload.containerName || null;
-                const timestampOverride = payload.timestamp || null;
-
-                this.appendParsedLogLines(stream, content, containerId, containerName, timestampOverride);
-            },
-
-            appendParsedLogLines(stream, content, containerId, containerName = null, timestampOverride = null) {
-                const raw = typeof content === 'string' ? content : String(content);
-                const lines = raw.split('\n').filter(l => l.trim());
-                const storeKey = containerId || '__system__';
-
-                for (const line of lines) {
-                    let timestamp = '';
-                    let message = line;
-
-                    const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?)\s+(.*)/);
-                    if (timestampMatch) {
-                        const ts = new Date(timestampMatch[1]);
-                        timestamp = isNaN(ts.getTime()) ? '' : ts.toLocaleTimeString();
-                        message = timestampMatch[2];
-                    }
-
-                    if (!timestamp) {
-                        if (timestampOverride) {
-                            const overrideTs = new Date(timestampOverride);
-                            timestamp = isNaN(overrideTs.getTime()) ? new Date().toLocaleTimeString() : overrideTs.toLocaleTimeString();
-                        } else {
-                            timestamp = new Date().toLocaleTimeString();
-                        }
-                    }
-
-                    if (!this.seenKeysByContainer[storeKey]) this.seenKeysByContainer[storeKey] = new Set();
-                    const dedupeKey = `${timestamp}|${message}`;
-                    if (this.seenKeysByContainer[storeKey].has(dedupeKey)) continue;
-                    this.seenKeysByContainer[storeKey].add(dedupeKey);
-
-                    if (!this.logsByContainer[storeKey]) this.logsByContainer[storeKey] = [];
-                    const entry = {
-                        timestamp,
-                        message,
-                        stream,
-                        containerId: storeKey,
-                        containerName: containerName ? String(containerName) : null
-                    };
-
-                    this.logsByContainer[storeKey].push(entry);
-                    if (this.logsByContainer[storeKey].length > this.maxStoredLogsPerContainer) {
-                        this.logsByContainer[storeKey] = this.logsByContainer[storeKey].slice(-this.maxStoredLogsPerContainer);
-                    }
-
-                    if (this.shouldIncludeLog(entry)) {
-                        this.logs.push(entry);
-                        const max = parseInt(this.tailSize, 10) || 100;
-                        if (this.logs.length > max * 3) {
-                            this.logs = this.logs.slice(-max * 3);
-                        }
-                        if (this.autoScroll && !this.paused) this.scrollToBottom();
-                    }
-                }
-            },
-
-            shouldIncludeLog(logEntry) {
-                if (!this.selectedContainer) return logEntry.containerId === '__system__';
-                return logEntry.containerId === this.selectedContainer;
-            },
-
-            rebuildVisibleLogs() {
-                const key = this.selectedContainer || '__system__';
-                this.logs = (this.logsByContainer[key] || []).slice();
-
-                const max = parseInt(this.tailSize, 10) || 100;
-                if (this.logs.length > max * 3) {
-                    this.logs = this.logs.slice(-max * 3);
-                }
-
-                if (this.autoScroll && !this.paused) this.scrollToBottom();
-            },
-
-            filteredContainers() {
-                if (!this.containerSearch) return this.containers;
-                const term = this.containerSearch.toLowerCase();
-                return this.containers.filter(c =>
-                    (c.name || '').toLowerCase().includes(term)
-                );
-            },
-
-            selectedContainerName() {
-                const container = this.containers.find(c => c.id === this.selectedContainer);
-                return container ? container.name : 'Select container...';
-            },
-
-            selectedContainerInfo() {
-                return this.containers.find(c => c.id === this.selectedContainer) || null;
-            },
-
-            selectContainer(container) {
-                if (!container) return;
-                this.selectedContainer = this.normalizeContainerId(container.id || container.container_id);
-                this.dropdownOpen = false;
-                this.rebuildVisibleLogs();
-            },
-
-            scrollToBottom() {
-                this.$nextTick(() => {
-                    const container = this.$refs.logsContainer;
-                    if (container) container.scrollTop = container.scrollHeight;
-                });
-            },
-
-            togglePause() {
-                this.paused = !this.paused;
-                this.isLive = this.wsConnected && !this.paused;
-            },
-
-            logClass(log) {
-                const message = (log.message || '').toLowerCase();
-                if (message.includes('error') || message.includes('failed') || message.includes('exception')) {
-                    return 'text-red-400';
-                } else if (message.includes('warning') || message.includes('warn')) {
-                    return 'text-yellow-400';
-                } else if (message.includes('success') || message.includes('completed') || message.includes('✓') || message.includes('✅')) {
-                    return 'text-green-400';
-                }
-                return 'text-gray-300';
-            },
-
-            destroy() {
-                if (this.ws) this.ws.close(1000, 'Component destroyed');
-                if (this.wsReconnectTimeout) clearTimeout(this.wsReconnectTimeout);
-                this.stopKeepAlive();
-            }
-        };
+            ws.onerror = (error) => {
+                if (ws !== state.ws) return;
+                console.error('[Logs] WebSocket error:', error);
+                state.isConnecting = false;
+                hideLoading();
+            };
+        } catch (e) {
+            console.error('[Logs] Failed to create WebSocket:', e);
+            state.isConnecting = false;
+            hideLoading();
+        }
     }
+
+    function handleWsMessage(message) {
+        switch (message.type) {
+            case 'auth:success':
+                state.wsConnected = true;
+                state.isLive = !state.paused;
+                state.isConnecting = false;
+                hideLoading();
+                showStatus('live', 'Live (WebSocket)');
+                startKeepAlive();
+                break;
+
+            case 'auth:failed':
+                console.error('[Logs] Authentication failed:', message.error);
+                state.wsConnected = false;
+                state.isLive = false;
+                state.isConnecting = false;
+                hideLoading();
+                showStatus('disconnected', 'Auth failed');
+                break;
+
+            case 'containers':
+                handleContainersMessage(message);
+                break;
+
+            case 'log':
+                handleLogMessage(message);
+                break;
+
+            case 'pong':
+                // Keep-alive response received
+                break;
+
+            case 'error':
+                console.error('[Logs] Server error:', message.error);
+                break;
+        }
+    }
+
+    function handleContainersMessage(payload) {
+        const incoming = Array.isArray(payload.containers) ? payload.containers : [];
+        const normalized = incoming
+            .map(c => ({
+                id: normalizeContainerId(c.id || c.container_id),
+                name: String(c.name || c.container || c.id || ''),
+                status: String(c.status || 'running')
+            }))
+            .filter(c => c.id && c.name);
+
+        const previous = state.selectedContainer;
+        state.containers = normalized;
+
+        if (!state.selectedContainer) {
+            state.selectedContainer = normalized[0]?.id || null;
+        } else if (!normalized.find(c => c.id === state.selectedContainer)) {
+            state.selectedContainer = normalized[0]?.id || null;
+        }
+
+        renderContainerList();
+        updateContainerInfo();
+
+        if (previous !== state.selectedContainer) {
+            rebuildVisibleLogs();
+        }
+    }
+
+    function handleLogMessage(payload) {
+        const stream = payload.stream || 'stdout';
+        const content = payload.content ?? payload.data ?? '';
+        if (!content) return;
+
+        const containerId = normalizeContainerId(payload.container_id || payload.containerId) || '__system__';
+        const containerName = payload.container || payload.container_name || payload.containerName || null;
+        const timestampOverride = payload.timestamp || null;
+
+        appendParsedLogLines(stream, content, containerId, containerName, timestampOverride);
+    }
+
+    function appendParsedLogLines(stream, content, containerId, containerName, timestampOverride) {
+        const raw = typeof content === 'string' ? content : String(content);
+        const lines = raw.split('\n').filter(l => l.trim());
+        const storeKey = containerId || '__system__';
+
+        for (const line of lines) {
+            let timestamp = '';
+            let message = line;
+
+            const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?)\s+(.*)/);
+            if (timestampMatch) {
+                const ts = new Date(timestampMatch[1]);
+                timestamp = isNaN(ts.getTime()) ? '' : ts.toLocaleTimeString();
+                message = timestampMatch[2];
+            }
+
+            if (!timestamp) {
+                if (timestampOverride) {
+                    const overrideTs = new Date(timestampOverride);
+                    timestamp = isNaN(overrideTs.getTime()) ? new Date().toLocaleTimeString() : overrideTs.toLocaleTimeString();
+                } else {
+                    timestamp = new Date().toLocaleTimeString();
+                }
+            }
+
+            if (!state.seenKeysByContainer[storeKey]) state.seenKeysByContainer[storeKey] = new Set();
+            const dedupeKey = `${timestamp}|${message}`;
+            if (state.seenKeysByContainer[storeKey].has(dedupeKey)) continue;
+            state.seenKeysByContainer[storeKey].add(dedupeKey);
+
+            if (!state.logsByContainer[storeKey]) state.logsByContainer[storeKey] = [];
+            const entry = {
+                timestamp,
+                message,
+                stream,
+                containerId: storeKey,
+                containerName: containerName ? String(containerName) : null
+            };
+
+            state.logsByContainer[storeKey].push(entry);
+            if (state.logsByContainer[storeKey].length > state.maxStoredLogsPerContainer) {
+                state.logsByContainer[storeKey] = state.logsByContainer[storeKey].slice(-state.maxStoredLogsPerContainer);
+            }
+
+            if (shouldIncludeLog(entry)) {
+                state.logs.push(entry);
+                const max = state.tailSize;
+                if (state.logs.length > max * 3) {
+                    state.logs = state.logs.slice(-max * 3);
+                }
+                appendLogEntry(entry);
+                if (state.autoScroll && !state.paused) scrollToBottom();
+            }
+        }
+    }
+
+    function shouldIncludeLog(logEntry) {
+        if (!state.selectedContainer) return logEntry.containerId === '__system__';
+        return logEntry.containerId === state.selectedContainer;
+    }
+
+    function rebuildVisibleLogs() {
+        const key = state.selectedContainer || '__system__';
+        state.logs = (state.logsByContainer[key] || []).slice();
+
+        const max = state.tailSize;
+        if (state.logs.length > max * 3) {
+            state.logs = state.logs.slice(-max * 3);
+        }
+
+        renderLogs();
+        if (state.autoScroll && !state.paused) scrollToBottom();
+    }
+
+    // UI Functions
+    function renderContainerList() {
+        const filtered = filterContainersBySearch('');
+        renderFilteredContainers(filtered);
+        updateSelectedContainerName();
+    }
+
+    function filterContainers(searchTerm) {
+        const filtered = filterContainersBySearch(searchTerm);
+        renderFilteredContainers(filtered);
+    }
+
+    function filterContainersBySearch(term) {
+        if (!term) return state.containers;
+        const lowerTerm = term.toLowerCase();
+        return state.containers.filter(c => 
+            (c.name || '').toLowerCase().includes(lowerTerm)
+        );
+    }
+
+    function renderFilteredContainers(containers) {
+        if (containers.length === 0) {
+            elements.containerList.innerHTML = '<div class="dropdown-empty">No containers found</div>';
+            return;
+        }
+
+        elements.containerList.innerHTML = containers.map(c => `
+            <button type="button" class="dropdown-item ${c.id === state.selectedContainer ? 'active' : ''}" data-id="${escapeHtml(c.id)}">
+                <span class="truncate">${escapeHtml(c.name)}</span>
+                <span class="badge badge-sm ${c.status === 'running' ? 'badge-success' : 'badge-neutral'}">${escapeHtml(c.status)}</span>
+            </button>
+        `).join('');
+
+        // Bind click events
+        elements.containerList.querySelectorAll('.dropdown-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const id = item.dataset.id;
+                selectContainer(id);
+            });
+        });
+    }
+
+    function selectContainer(id) {
+        state.selectedContainer = id;
+        updateSelectedContainerName();
+        updateContainerInfo();
+        rebuildVisibleLogs();
+        renderContainerList();
+    }
+
+    function updateSelectedContainerName() {
+        const container = state.containers.find(c => c.id === state.selectedContainer);
+        elements.selectedContainerName.textContent = container ? container.name : 'Select container...';
+    }
+
+    function updateContainerInfo() {
+        const container = state.containers.find(c => c.id === state.selectedContainer);
+        if (container) {
+            elements.containerInfoEmpty.classList.add('hidden');
+            elements.containerInfo.classList.remove('hidden');
+            elements.infoName.textContent = container.name;
+            elements.infoStatus.textContent = container.status;
+            elements.infoStatus.className = 'badge badge-sm ' + (container.status === 'running' ? 'badge-success' : 'badge-neutral');
+            elements.infoId.textContent = (container.id || '').substring(0, 12);
+        } else {
+            elements.containerInfoEmpty.classList.remove('hidden');
+            elements.containerInfo.classList.add('hidden');
+        }
+    }
+
+    function renderLogs() {
+        if (state.logs.length === 0) {
+            elements.logsEmpty.classList.remove('hidden');
+            elements.logsContent.innerHTML = '';
+            return;
+        }
+
+        elements.logsEmpty.classList.add('hidden');
+        elements.logsContent.innerHTML = state.logs.map(log => createLogEntryHtml(log)).join('');
+    }
+
+    function appendLogEntry(log) {
+        elements.logsEmpty.classList.add('hidden');
+        elements.logsContent.insertAdjacentHTML('beforeend', createLogEntryHtml(log));
+    }
+
+    function createLogEntryHtml(log) {
+        const severityClass = getLogSeverityClass(log.message);
+        return `
+            <div class="log-entry ${severityClass}">
+                <span class="log-timestamp">${escapeHtml(log.timestamp)}</span>
+                <span class="log-message">${escapeHtml(log.message)}</span>
+            </div>
+        `;
+    }
+
+    function getLogSeverityClass(message) {
+        const lower = (message || '').toLowerCase();
+        if (lower.includes('error') || lower.includes('failed') || lower.includes('exception')) {
+            return 'log-error';
+        } else if (lower.includes('warning') || lower.includes('warn')) {
+            return 'log-warning';
+        } else if (lower.includes('success') || lower.includes('completed') || lower.includes('✓') || lower.includes('✅')) {
+            return 'log-success';
+        }
+        return 'log-info';
+    }
+
+    function scrollToBottom() {
+        requestAnimationFrame(() => {
+            elements.logsContainer.scrollTop = elements.logsContainer.scrollHeight;
+        });
+    }
+
+    function showLoading() {
+        state.loading = true;
+        elements.logsLoading.classList.remove('hidden');
+        elements.logsEmpty.classList.add('hidden');
+    }
+
+    function hideLoading() {
+        state.loading = false;
+        elements.logsLoading.classList.add('hidden');
+        if (state.logs.length === 0) {
+            elements.logsEmpty.classList.remove('hidden');
+        }
+    }
+
+    function showStatus(type, text) {
+        elements.statusDot.className = 'status-dot ' + type;
+        elements.statusText.textContent = text;
+    }
+
+    function togglePause() {
+        state.paused = !state.paused;
+        state.isLive = state.wsConnected && !state.paused;
+        elements.pauseBtn.classList.toggle('paused', state.paused);
+        
+        if (state.paused) {
+            showStatus('disconnected', 'Paused');
+        } else if (state.wsConnected) {
+            showStatus('live', 'Live (WebSocket)');
+        }
+    }
+
+    // Keep-alive
+    function startKeepAlive() {
+        stopKeepAlive();
+        state.keepAliveTimer = setInterval(() => {
+            try {
+                if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+                    state.ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+                }
+            } catch (e) {}
+        }, state.keepAliveIntervalMs);
+    }
+
+    function stopKeepAlive() {
+        if (state.keepAliveTimer) {
+            clearInterval(state.keepAliveTimer);
+            state.keepAliveTimer = null;
+        }
+    }
+
+    // Utilities
+    function normalizeContainerId(value) {
+        if (value === undefined || value === null) return null;
+        return String(value);
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    function destroy() {
+        if (state.ws) state.ws.close(1000, 'Page unload');
+        if (state.wsReconnectTimeout) clearTimeout(state.wsReconnectTimeout);
+        stopKeepAlive();
+    }
+
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
 </script>

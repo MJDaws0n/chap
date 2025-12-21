@@ -1,111 +1,132 @@
 <?php
 /**
  * Application Show View
+ * Updated to use new design system with vanilla JavaScript
  */
 $statusColors = [
-    'running' => 'bg-green-600',
-    'stopped' => 'bg-gray-600',
-    'building' => 'bg-yellow-600',
-    'deploying' => 'bg-blue-600',
-    'failed' => 'bg-red-600',
+    'running' => 'badge-success',
+    'stopped' => 'badge-neutral',
+    'building' => 'badge-warning',
+    'deploying' => 'badge-info',
+    'failed' => 'badge-danger',
 ];
-$statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
+$statusColor = $statusColors[$application->status] ?? 'badge-default';
+
+$envArr = $application->getEnvironmentVariables();
+$envVarsRaw = '';
+if (!empty($envArr)) {
+    foreach ($envArr as $k => $v) {
+        $envVarsRaw .= $k . '=' . $v . "\n";
+    }
+    $envVarsRaw = rtrim($envVarsRaw, "\n");
+}
 ?>
-<div class="space-y-6">
-    <!-- Breadcrumb & Header -->
-    <div class="flex items-center justify-between">
-        <div>
-            <div class="flex items-center space-x-2 text-sm text-gray-400 mb-2">
-                <a href="/projects" class="hover:text-white">Projects</a>
-                <span>/</span>
-                <a href="/projects/<?= $project->uuid ?>" class="hover:text-white"><?= e($project->name) ?></a>
-                <span>/</span>
-                <a href="/environments/<?= $environment->uuid ?>" class="hover:text-white"><?= e($environment->name) ?></a>
-                <span>/</span>
-                <span><?= e($application->name) ?></span>
+
+<div class="flex flex-col gap-6">
+    <div class="page-header">
+        <div class="page-header-top">
+            <div>
+                <nav class="breadcrumb">
+                    <span class="breadcrumb-item"><a href="/projects">Projects</a></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item"><a href="/projects/<?= e($project->uuid) ?>"><?= e($project->name) ?></a></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item"><a href="/environments/<?= e($environment->uuid) ?>"><?= e($environment->name) ?></a></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-current"><?= e($application->name) ?></span>
+                </nav>
+
+                <div class="flex items-center gap-4 mt-4">
+                    <div class="icon-box icon-box-lg icon-box-blue">
+                        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                    </div>
+
+                    <div class="min-w-0">
+                        <div class="flex items-center flex-wrap gap-3">
+                            <h1 class="page-header-title"><?= e($application->name) ?></h1>
+                            <span class="badge <?= $statusColor ?>"><?= ucfirst($application->status) ?></span>
+                        </div>
+                        <?php if (!empty($application->description)): ?>
+                            <p class="page-header-description truncate"><?= e($application->description) ?></p>
+                        <?php else: ?>
+                            <p class="page-header-description">No description</p>
+                        <?php endif; ?>
+                    </div>
+                </div>
             </div>
-            <div class="flex items-center space-x-3">
-                <h1 class="text-2xl font-bold"><?= e($application->name) ?></h1>
-                <span class="px-2 py-1 text-xs rounded-full <?= $statusColor ?>">
-                    <?= ucfirst($application->status) ?>
-                </span>
+
+            <div class="page-header-actions flex-wrap">
+                <a href="/applications/<?= e($application->uuid) ?>/logs" class="btn btn-secondary">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    Live Logs
+                </a>
+
+                <?php if (($application->status ?? '') === 'running'): ?>
+                    <form method="POST" action="/applications/<?= e($application->uuid) ?>/restart" class="inline-block">
+                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                        <button type="submit" class="btn btn-warning">Restart</button>
+                    </form>
+                    <form method="POST" action="/applications/<?= e($application->uuid) ?>/stop" class="inline-block">
+                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                        <button type="submit" class="btn btn-secondary">Stop</button>
+                    </form>
+                <?php endif; ?>
+
+                <form method="POST" action="/applications/<?= e($application->uuid) ?>/deploy" class="inline-block">
+                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                    <button type="submit" class="btn btn-primary">Deploy</button>
+                </form>
             </div>
-            <?php if ($application->description): ?>
-                <p class="text-gray-400 mt-1"><?= e($application->description) ?></p>
-            <?php endif; ?>
-        </div>
-        <div class="flex space-x-3">
-            <a href="/applications/<?= $application->uuid ?>/logs" class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2">
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                </svg>
-                <span>Live Logs</span>
-            </a>
-            <?php if ($application->status === 'running'): ?>
-                <form method="POST" action="/applications/<?= $application->uuid ?>/restart" class="inline">
-                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                    <button type="submit" class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg">
-                        Restart
-                    </button>
-                </form>
-                <form method="POST" action="/applications/<?= $application->uuid ?>/stop" class="inline">
-                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                    <button type="submit" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg">
-                        Stop
-                    </button>
-                </form>
-            <?php endif; ?>
-            <form method="POST" action="/applications/<?= $application->uuid ?>/deploy" class="inline">
-                <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg">
-                    Deploy
-                </button>
-            </form>
         </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Main Content -->
-        <div class="lg:col-span-2 space-y-6">
+    <div class="grid grid-cols-1 lg:grid-cols-3">
+        <div class="lg:col-span-2 flex flex-col gap-6">
             <!-- Deployments -->
-            <div class="bg-gray-800 rounded-lg p-6">
-                <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-lg font-semibold">Recent Deployments</h2>
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Recent Deployments</h2>
                 </div>
                 <?php if (empty($deployments)): ?>
-                    <p class="text-gray-400 text-center py-8">No deployments yet. Click "Deploy" to start your first deployment.</p>
+                    <div class="card-body">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">
+                                <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                                </svg>
+                            </div>
+                            <p class="empty-state-title">No deployments yet</p>
+                            <p class="empty-state-description">Click “Deploy” to start your first deployment.</p>
+                        </div>
+                    </div>
                 <?php else: ?>
-                    <div class="space-y-3">
+                    <div class="card-body p-0">
                         <?php foreach ($deployments as $deployment): ?>
                             <?php
-                            $depStatusColors = [
-                                'queued' => 'bg-gray-600',
-                                'building' => 'bg-yellow-600',
-                                'deploying' => 'bg-blue-600',
-                                'running' => 'bg-green-600',
-                                'success' => 'bg-green-600',
-                                'failed' => 'bg-red-600',
-                                'cancelled' => 'bg-gray-600',
-                            ];
-                            $depColor = $depStatusColors[$deployment->status] ?? 'bg-gray-600';
+                            $depStatus = $deployment->status ?? 'queued';
+                            $depColor = match($depStatus) {
+                                'running', 'success' => 'badge-success',
+                                'deploying' => 'badge-info',
+                                'building' => 'badge-warning',
+                                'failed' => 'badge-danger',
+                                default => 'badge-default',
+                            };
+                            $sha = $deployment->commit_sha ? substr($deployment->commit_sha, 0, 7) : 'N/A';
+                            $msg = $deployment->commit_message ?? 'Manual deployment';
                             ?>
-                            <a href="/deployments/<?= $deployment->uuid ?>" 
-                               class="block bg-gray-700 rounded-lg p-4 hover:bg-gray-650 transition">
-                                <div class="flex items-center justify-between">
-                                    <div class="flex items-center space-x-3">
-                                        <span class="px-2 py-1 text-xs rounded-full <?= $depColor ?>">
-                                            <?= ucfirst($deployment->status) ?>
-                                        </span>
-                                        <div>
-                                            <p class="font-medium"><?= e($deployment->commit_message ?? 'Manual deployment') ?></p>
-                                            <p class="text-sm text-gray-400">
-                                                <?= $deployment->commit_sha ? substr($deployment->commit_sha, 0, 7) : 'N/A' ?>
-                                                • <?= time_ago($deployment->created_at) ?>
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <svg class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                            <a href="/deployments/<?= e($deployment->uuid) ?>" class="flex items-center justify-between px-6 py-4 border-b border-primary transition-colors">
+                                <div class="min-w-0 flex-1">
+                                    <p class="font-medium truncate"><?= e($msg) ?></p>
+                                    <p class="text-sm text-secondary truncate"><?= e($sha) ?> • <?= time_ago($deployment->created_at) ?></p>
+                                </div>
+                                <div class="flex items-center gap-3 ml-4 flex-shrink-0">
+                                    <span class="badge <?= $depColor ?>"><?= ucfirst($depStatus) ?></span>
+                                    <svg class="icon text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
                                     </svg>
                                 </div>
                             </a>
@@ -115,275 +136,380 @@ $statusColor = $statusColors[$application->status] ?? 'bg-gray-600';
             </div>
 
             <!-- Configuration -->
-            <div class="bg-gray-800 rounded-lg p-6">
-                <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-lg font-semibold">Configuration</h2>
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Configuration</h2>
                 </div>
+                <div class="card-body">
+                    <form method="POST" action="/applications/<?= $application->uuid ?>" id="config-form">
+                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                        <input type="hidden" name="_method" value="PUT">
 
-                <form method="POST" action="/applications/<?= $application->uuid ?>" id="config-form" class="space-y-6">
-                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                    <input type="hidden" name="_method" value="PUT">
+                        <div class="grid grid-cols-1 md:grid-cols-2">
+                            <div class="form-group">
+                                <label class="form-label" for="name">Name</label>
+                                <input type="text" name="name" id="name" value="<?= e($application->name) ?>" class="input">
+                            </div>
 
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label class="block text-sm text-gray-400 mb-1">Name</label>
-                            <input type="text" name="name" value="<?= e($application->name) ?>"
-                                class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
+                            <div class="form-group">
+                                <label class="form-label" for="node_uuid">Node</label>
+                                <select name="node_uuid" id="node_uuid" class="select">
+                                    <?php foreach ($nodes as $node): ?>
+                                        <option value="<?= $node->uuid ?>" <?= $application->node_id === $node->id ? 'selected' : '' ?>>
+                                            <?= e($node->name) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="git_repository">Git Repository</label>
+                                <input type="text" name="git_repository" id="git_repository" value="<?= e($application->git_repository) ?>" class="input truncate">
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="git_branch">Branch</label>
+                                <input type="text" name="git_branch" id="git_branch" value="<?= e($application->git_branch) ?>" class="input">
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="build_pack">Build Pack</label>
+                                <select name="build_pack" id="build_pack" class="select">
+                                    <option value="dockerfile" <?= $application->build_pack === 'dockerfile' ? 'selected' : '' ?>>Dockerfile</option>
+                                    <option value="nixpacks" <?= $application->build_pack === 'nixpacks' ? 'selected' : '' ?>>Nixpacks</option>
+                                    <option value="static" <?= $application->build_pack === 'static' ? 'selected' : '' ?>>Static Site</option>
+                                    <option value="docker-compose" <?= $application->build_pack === 'docker-compose' ? 'selected' : '' ?>>Docker Compose</option>
+                                </select>
+                            </div>
                         </div>
 
-                        <div>
-                            <label class="block text-sm text-gray-400 mb-1">Node</label>
-                            <select name="node_uuid" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
-                                <?php foreach ($nodes as $node): ?>
-                                    <option value="<?= $node->uuid ?>" <?= $application->node_id === $node->id ? 'selected' : '' ?>>
-                                        <?= e($node->name) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
+                        <div class="flex justify-end gap-3 pt-4 mt-4 border-t">
+                            <button type="submit" class="btn btn-primary">Save Changes</button>
                         </div>
-
-                        <div>
-                            <label class="block text-sm text-gray-400 mb-1">Git Repository</label>
-                            <input type="text" name="git_repository" value="<?= e($application->git_repository) ?>"
-                                class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
-                        </div>
-
-                        <div>
-                            <label class="block text-sm text-gray-400 mb-1">Branch</label>
-                            <input type="text" name="git_branch" value="<?= e($application->git_branch) ?>"
-                                class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
-                        </div>
-
-                        <div>
-                            <label class="block text-sm text-gray-400 mb-1">Build Pack</label>
-                            <select name="build_pack" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
-                                <option value="dockerfile" <?= $application->build_pack === 'dockerfile' ? 'selected' : '' ?>>Dockerfile</option>
-                                <option value="nixpacks" <?= $application->build_pack === 'nixpacks' ? 'selected' : '' ?>>Nixpacks</option>
-                                <option value="static" <?= $application->build_pack === 'static' ? 'selected' : '' ?>>Static Site</option>
-                                <option value="docker-compose" <?= $application->build_pack === 'docker-compose' ? 'selected' : '' ?>>Docker Compose</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div id="save-buttons" class="flex justify-end space-x-4 pt-4 border-t border-gray-700">
-                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg">Save Changes</button>
-                    </div>
-                </form>
+                    </form>
+                </div>
             </div>
 
             <!-- Environment Variables -->
-            <div class="bg-gray-800 rounded-lg p-6">
-                <?php $envArr = $application->getEnvironmentVariables();
-                      $envVarsRaw = '';
-                      if (!empty($envArr)) {
-                          foreach ($envArr as $k => $v) {
-                              $envVarsRaw .= $k . '=' . $v . "\n";
-                          }
-                          $envVarsRaw = rtrim($envVarsRaw, "\n");
-                      }
-                ?>
-                <div x-data="envEditor()" x-ref="envEditor" data-initial-b64="<?= base64_encode($envVarsRaw) ?>" x-init="if($el.dataset.initialB64){ try{ $data.parseEnvString(atob($el.dataset.initialB64)); }catch(e){console.warn(e);} }" class="bg-gray-800 rounded-lg p-6">
-                    <div class="flex items-center justify-between mb-4">
-                        <h2 class="text-lg font-semibold">Environment Variables</h2>
-                        <button type="button" @click="toggleManual();" x-text="manualMode ? 'Hide' : 'Show'" class="text-blue-400 hover:text-blue-300 text-sm"></button>
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Environment Variables</h2>
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <button type="button" class="btn btn-ghost btn-sm" id="bulk-edit-btn">Bulk Edit</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="add-env-btn">Add Variable</button>
                     </div>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="/applications/<?= $application->uuid ?>" id="env-form">
+                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                        <input type="hidden" name="_method" value="PUT">
+                        <input type="hidden" name="environment_variables" id="env-serialized" value="">
 
-                <?php
-                    $envArr = $application->getEnvironmentVariables();
-                    $envVarsRaw = '';
-                    if (!empty($envArr)) {
-                        foreach ($envArr as $k => $v) {
-                            $envVarsRaw .= $k . '=' . $v . "\n";
-                        }
-                        $envVarsRaw = rtrim($envVarsRaw, "\n");
-                    }
-                ?>
-                <form method="POST" action="/applications/<?= $application->uuid ?>" id="env-form">
-                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                    <input type="hidden" name="_method" value="PUT">
-
-                    <div x-data="envEditor()" x-ref="envEditor" data-initial-b64="<?= base64_encode($envVarsRaw) ?>" x-init="if($el.dataset.initialB64){ try{ parseEnvString(atob($el.dataset.initialB64)); }catch(e){console.warn(e);} }" class="space-y-2">
-                                <div class="flex items-center space-x-2">
-                                                <div class="text-xs text-gray-400">Environment Variables</div>
-                                                <div class="ml-auto flex items-center space-x-2">
-                                                    <button type="button" @click="openBulkEditor()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">Bulk Edit</button>
-                                                    <button type="button" @click="addRow()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">New Variable</button>
-                                                </div>
-                                            </div>
-
-                        <div class="space-y-2">
-                            <template x-for="(row, idx) in rows" :key="idx">
-                                    <div class="rounded-lg p-3">
-                                        <div class="flex items-center space-x-3">
-                                            <input x-model="row.key" placeholder="KEY" class="w-1/3 bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white text-sm" @input="updateSerialized()">
-                                            <div class="flex-1 relative" @mouseenter="onEnter(idx)" @mouseleave="onLeave(idx)">
-                                                <input :type="(row.manual || manualMode) ? 'text' : (row.revealed ? 'text' : 'password')" x-model="row.value" placeholder="value" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white text-sm" @input="updateSerialized()">
-                                                <div class="absolute right-2 top-1/2 transform -translate-y-1/2">
-                                                    <button type="button" @click="removeRow(idx)" class="text-red-400 px-2">Remove</button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </template>
-                            <div x-show="rows.length === 0" class="text-gray-400 text-sm">No environment variables configured.</div>
+                        <div id="env-rows" class="flex flex-col gap-3">
+                            <!-- Rows will be rendered by JS -->
                         </div>
 
-                        <textarea name="environment_variables" x-model="serialized" class="hidden"></textarea>
-
-                        <div class="flex justify-end space-x-4 mt-4">
-                            <button type="button" onclick="document.getElementById('env-form').reset();" class="px-4 py-2 text-gray-400 hover:text-white">Cancel</button>
-                            <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg">Save Variables</button>
+                        <div id="env-empty" class="text-muted text-sm hidden">
+                            No environment variables configured.
                         </div>
-                    </div>
-                </form>
+
+                        <div class="flex justify-end gap-3 pt-4 mt-4 border-t flex-wrap">
+                            <button type="button" class="btn btn-ghost" id="env-cancel-btn">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Save Variables</button>
+                        </div>
+                    </form>
+                </div>
             </div>
         </div>
 
-        <!-- Sidebar -->
-        <div class="space-y-6">
+        <div class="flex flex-col gap-6">
             <!-- Status Card -->
-            <div class="bg-gray-800 rounded-lg p-6">
-                <h2 class="text-lg font-semibold mb-4">Status</h2>
-                <div class="space-y-4">
-                    <div class="flex items-center justify-between">
-                        <span class="text-gray-400">Status</span>
-                        <span class="px-2 py-1 text-xs rounded-full <?= $statusColor ?>">
-                            <?= ucfirst($application->status) ?>
-                        </span>
-                    </div>
-                    <div class="flex items-center justify-between">
-                        <span class="text-gray-400">Node</span>
-                        <span><?= $application->node() ? e($application->node()->name) : 'Not assigned' ?></span>
-                    </div>
-                    <div class="flex items-center justify-between">
-                        <span class="text-gray-400">Memory</span>
-                        <span><?= e($application->memory_limit ?? '512m') ?></span>
-                    </div>
-                    <div class="flex items-center justify-between">
-                        <span class="text-gray-400">CPU</span>
-                        <span><?= e($application->cpu_limit ?? '1') ?> CPU</span>
-                    </div>
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Status</h3>
+                </div>
+                <div class="card-body">
+                    <dl class="flex flex-col gap-4">
+                        <div class="flex items-center justify-between gap-4 text-sm">
+                            <dt class="text-tertiary">Status</dt>
+                            <dd class="m-0"><span class="badge <?= $statusColor ?>"><?= ucfirst($application->status) ?></span></dd>
+                        </div>
+                        <div class="flex items-center justify-between gap-4 text-sm">
+                            <dt class="text-tertiary">Node</dt>
+                            <dd class="m-0 text-primary truncate"><?= $application->node() ? e($application->node()->name) : 'Not assigned' ?></dd>
+                        </div>
+                        <div class="flex items-center justify-between gap-4 text-sm">
+                            <dt class="text-tertiary">Memory</dt>
+                            <dd class="m-0 text-primary"><?= e($application->memory_limit ?? '512m') ?></dd>
+                        </div>
+                        <div class="flex items-center justify-between gap-4 text-sm">
+                            <dt class="text-tertiary">CPU</dt>
+                            <dd class="m-0 text-primary"><?= e($application->cpu_limit ?? '1') ?> CPU</dd>
+                        </div>
+                    </dl>
                 </div>
             </div>
 
             <!-- URLs Card -->
-            <div class="bg-gray-800 rounded-lg p-6">
-                <h2 class="text-lg font-semibold mb-4">URLs</h2>
-                <?php if (!empty($application->domains)): ?>
-                    <div class="space-y-2">
-                        <?php foreach (explode(',', $application->domains) as $domain): ?>
-                            <a href="https://<?= e(trim($domain)) ?>" target="_blank" 
-                               class="flex items-center justify-between bg-gray-700 px-3 py-2 rounded hover:bg-gray-600">
-                                <span class="text-sm truncate"><?= e(trim($domain)) ?></span>
-                                <svg class="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
-                                </svg>
-                            </a>
-                        <?php endforeach; ?>
-                    </div>
-                <?php else: ?>
-                    <p class="text-gray-400 text-sm">No custom domains configured.</p>
-                <?php endif; ?>
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">URLs</h3>
+                </div>
+                <div class="card-body">
+                    <?php if (!empty($application->domains)): ?>
+                        <div class="flex flex-col gap-2">
+                            <?php foreach (explode(',', $application->domains) as $domain): ?>
+                                <a href="https://<?= e(trim($domain)) ?>" target="_blank" rel="noopener" class="flex items-center justify-between gap-3 px-4 py-3 bg-tertiary rounded-lg transition-opacity hover:opacity-75">
+                                    <span class="truncate min-w-0 flex-1"><?= e(trim($domain)) ?></span>
+                                    <svg class="icon text-muted flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+                                    </svg>
+                                </a>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php else: ?>
+                        <p class="text-muted text-sm">No custom domains configured.</p>
+                    <?php endif; ?>
+                </div>
             </div>
 
             <!-- Danger Zone -->
-            <div class="bg-gray-800 rounded-lg p-6 border border-red-600/30">
-                <h2 class="text-lg font-semibold text-red-400 mb-4">Danger Zone</h2>
-                <form method="POST" action="/applications/<?= $application->uuid ?>" 
-                      onsubmit="event.preventDefault(); chapSwal({title: 'Are you sure?', text: 'This cannot be undone.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel'}).then((result) => { if(result.isConfirmed) this.submit(); }); return false;">
-                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                    <input type="hidden" name="_method" value="DELETE">
-                    <button type="submit" class="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg">
-                        Delete Application
-                    </button>
-                </form>
+            <div class="card border-red">
+                <div class="card-header">
+                    <h3 class="card-title text-red">Danger Zone</h3>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="/applications/<?= $application->uuid ?>" id="delete-form">
+                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                        <input type="hidden" name="_method" value="DELETE">
+                        <button type="button" class="btn btn-danger w-full" id="delete-app-btn">
+                            Delete Application
+                        </button>
+                    </form>
+                </div>
             </div>
         </div>
     </div>
 </div>
 
-<script>
-function envEditor(opts={}){
-    const initial = opts.initial || '';
-    return {
-        rows: [],
-        serialized: '',
-        manualMode: false,
-        init() {
-            this.parseEnvString(initial);
-            this.updateSerialized();
-            window.addEventListener('mouseout', (e) => {
-                try {
-                    if (!e.relatedTarget) {
-                        for (let r of this.rows) r.revealed = false;
-                    }
-                } catch (err) {}
-            });
-            window.addEventListener('blur', () => { for (let r of this.rows) r.revealed = false; });
-        },
-        openBulkEditor() {
-            const self = this;
-            chapSwal({
-                title: 'Bulk Edit Environment Variables',
-                html: '<textarea id="swal-env" rows="12" class="textarea" placeholder="KEY=VALUE\nANOTHER=VAL" style="min-height: 240px"></textarea>',
-                showCancelButton: true,
-                confirmButtonText: 'Apply',
-                cancelButtonText: 'Cancel',
-                didOpen: () => {
-                    const ta = document.getElementById('swal-env');
-                    if (ta) { ta.value = self.serialized || ''; ta.focus(); }
-                },
-                preConfirm: () => {
-                    const ta = document.getElementById('swal-env');
-                    return ta ? ta.value : '';
-                }
-            }).then((result) => {
-                if (result.isConfirmed) {
-                    const txt = result.value || '';
-                    self.parseEnvString(txt);
-                    self.updateSerialized();
-                }
-            });
-        },
-        addRow(key = '', value = '', manual = false) {
-            this.rows.push({ key: key, value: value, revealed: false, manual: manual });
-            this.updateSerialized();
-        },
-        toggleManual() {
-            this.manualMode = !this.manualMode;
-            for (let r of this.rows) r.manual = this.manualMode;
-            this.updateSerialized();
-        },
-        onEnter(i) {
-            if (!this.rows[i]) return;
-            if (this.rows[i]._revealTimeout) { clearTimeout(this.rows[i]._revealTimeout); this.rows[i]._revealTimeout = null; }
-            this.rows[i].revealed = true;
-        },
-        onLeave(i) {
-            if (!this.rows[i]) return;
-            this.rows[i]._revealTimeout = setTimeout(()=>{ if(this.rows[i]) this.rows[i].revealed = false; this.rows[i]._revealTimeout = null; }, 120);
-        },
-        removeRow(i) {
-            this.rows.splice(i, 1);
-            this.updateSerialized();
-        },
-        updateSerialized() {
-            this.serialized = this.rows.map(r => (r.key ? r.key + '=' + r.value : '')).filter(Boolean).join('\n');
-        },
-        parseEnvString(str) {
-            this.rows = [];
-            if (!str) return;
-            const lines = str.split(/\r?\n/);
-            for (let line of lines) {
-                line = line.trim();
-                if (!line || line.startsWith('#')) continue;
-                const idx = line.indexOf('=');
-                if (idx === -1) continue;
-                const key = line.substring(0, idx).trim();
-                const value = line.substring(idx+1);
-                this.addRow(key, value, false);
-            }
-        }
+<style>
+.env-key {
+    flex: 0 0 180px;
+    min-width: 120px;
+}
+
+@media (max-width: 639px) {
+    .env-key {
+        flex-basis: 45%;
     }
 }
+</style>
+
+<script>
+(function() {
+    'use strict';
+
+    // Initial environment variables from PHP
+    const initialEnvB64 = '<?= base64_encode($envVarsRaw) ?>';
+
+    // State
+    const state = {
+        rows: [],
+        originalRows: []
+    };
+
+    // DOM Elements
+    const elements = {};
+
+    function init() {
+        cacheElements();
+        bindEvents();
+        parseInitialEnv();
+        renderRows();
+    }
+
+    function cacheElements() {
+        elements.envRows = document.getElementById('env-rows');
+        elements.envEmpty = document.getElementById('env-empty');
+        elements.envSerialized = document.getElementById('env-serialized');
+        elements.envForm = document.getElementById('env-form');
+        elements.addEnvBtn = document.getElementById('add-env-btn');
+        elements.bulkEditBtn = document.getElementById('bulk-edit-btn');
+        elements.envCancelBtn = document.getElementById('env-cancel-btn');
+        elements.deleteAppBtn = document.getElementById('delete-app-btn');
+        elements.deleteForm = document.getElementById('delete-form');
+    }
+
+    function bindEvents() {
+        elements.addEnvBtn.addEventListener('click', () => {
+            addRow('', '');
+            renderRows();
+        });
+
+        elements.bulkEditBtn.addEventListener('click', openBulkEditor);
+
+        elements.envCancelBtn.addEventListener('click', () => {
+            state.rows = JSON.parse(JSON.stringify(state.originalRows));
+            renderRows();
+        });
+
+        elements.deleteAppBtn.addEventListener('click', () => {
+            Modal.confirmDelete('Are you sure you want to delete this application? This action cannot be undone.')
+                .then(confirmed => {
+                    if (confirmed) {
+                        elements.deleteForm.submit();
+                    }
+                });
+        });
+
+        elements.envForm.addEventListener('submit', () => {
+            updateSerialized();
+        });
+    }
+
+    function parseInitialEnv() {
+        state.rows = [];
+        try {
+            const str = atob(initialEnvB64);
+            if (!str) return;
+            
+            const lines = str.split(/\r?\n/);
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('#')) continue;
+                
+                const idx = trimmed.indexOf('=');
+                if (idx === -1) continue;
+                
+                const key = trimmed.substring(0, idx).trim();
+                const value = trimmed.substring(idx + 1);
+                state.rows.push({ key, value, revealed: false });
+            }
+        } catch (e) {
+            console.warn('Failed to parse initial env:', e);
+        }
+        
+        state.originalRows = JSON.parse(JSON.stringify(state.rows));
+        updateSerialized();
+    }
+
+    function addRow(key = '', value = '') {
+        state.rows.push({ key, value, revealed: false });
+        updateSerialized();
+    }
+
+    function removeRow(index) {
+        state.rows.splice(index, 1);
+        renderRows();
+    }
+
+    function updateSerialized() {
+        const serialized = state.rows
+            .filter(r => r.key)
+            .map(r => r.key + '=' + r.value)
+            .join('\n');
+        elements.envSerialized.value = serialized;
+    }
+
+    function renderRows() {
+        if (state.rows.length === 0) {
+            elements.envEmpty.classList.remove('hidden');
+            elements.envRows.innerHTML = '';
+            return;
+        }
+
+        elements.envEmpty.classList.add('hidden');
+        elements.envRows.innerHTML = state.rows.map((row, idx) => `
+            <div class="env-row flex flex-wrap items-center gap-2 p-2 rounded-md" data-index="${idx}">
+                <input type="text" class="input input-sm env-key" placeholder="KEY" value="${escapeAttr(row.key)}" data-field="key">
+                <input type="${row.revealed ? 'text' : 'password'}" class="input input-sm flex-1" placeholder="value" value="${escapeAttr(row.value)}" data-field="value">
+                <button type="button" class="btn btn-ghost btn-sm toggle-reveal">${row.revealed ? 'Hide' : 'Show'}</button>
+                <button type="button" class="btn btn-danger-ghost btn-sm remove-row">Remove</button>
+            </div>
+        `).join('');
+
+        // Bind events to new elements
+        elements.envRows.querySelectorAll('.env-row').forEach(row => {
+            const idx = parseInt(row.dataset.index, 10);
+            
+            row.querySelector('[data-field="key"]').addEventListener('input', (e) => {
+                state.rows[idx].key = e.target.value;
+                updateSerialized();
+            });
+            
+            row.querySelector('[data-field="value"]').addEventListener('input', (e) => {
+                state.rows[idx].value = e.target.value;
+                updateSerialized();
+            });
+            
+            row.querySelector('.toggle-reveal').addEventListener('click', () => {
+                state.rows[idx].revealed = !state.rows[idx].revealed;
+                renderRows();
+            });
+            
+            row.querySelector('.remove-row').addEventListener('click', () => {
+                removeRow(idx);
+            });
+        });
+
+        updateSerialized();
+    }
+
+    function openBulkEditor() {
+        const currentValue = state.rows
+            .filter(r => r.key)
+            .map(r => r.key + '=' + r.value)
+            .join('\n');
+
+        Modal.prompt('Bulk Edit Environment Variables', {
+            inputType: 'textarea',
+            value: currentValue,
+            placeholder: 'KEY=VALUE\nANOTHER=VAL',
+            confirmText: 'Apply',
+            required: false
+        }).then(({ confirmed, value }) => {
+            if (!confirmed) return;
+            parseEnvString(value || '');
+            state.originalRows = JSON.parse(JSON.stringify(state.rows));
+            renderRows();
+        });
+    }
+
+    function parseEnvString(str) {
+        state.rows = [];
+        if (!str) return;
+        
+        const lines = str.split(/\r?\n/);
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) continue;
+            
+            const idx = trimmed.indexOf('=');
+            if (idx === -1) continue;
+            
+            const key = trimmed.substring(0, idx).trim();
+            const value = trimmed.substring(idx + 1);
+            state.rows.push({ key, value, revealed: false });
+        }
+        
+        updateSerialized();
+    }
+
+    function escapeAttr(str) {
+        if (!str) return '';
+        return str
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
 </script>
