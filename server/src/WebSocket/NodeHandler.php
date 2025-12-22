@@ -639,7 +639,11 @@ class NodeHandler implements MessageComponentInterface {
 
             // Find application by UUID
             $application = $db->fetch(
-                "SELECT * FROM applications WHERE uuid = ?",
+                "SELECT a.*, e.project_id AS env_project_id, p.team_id AS project_team_id
+                 FROM applications a
+                 LEFT JOIN environments e ON e.id = a.environment_id
+                 LEFT JOIN projects p ON p.id = e.project_id
+                 WHERE a.uuid = ?",
                 [$applicationUuid]
             );
 
@@ -655,24 +659,11 @@ class NodeHandler implements MessageComponentInterface {
                 return;
             }
 
-            // Debug: log the application row
-            error_log('[handleSessionValidate] Application row: ' . json_encode($application));
-
-            // Only check that the user owns the application
-            if (empty($application['user_id'])) {
-                $error = "Application user_id is missing or null (row: " . json_encode($application) . ")";
-                error_log("[handleSessionValidate] $error");
-                $this->send($from, [
-                    'type' => 'session:validate:response',
-                    'request_id' => $requestId,
-                    'authorized' => false,
-                    'error' => $error
-                ]);
-                return;
-            }
-            if ($application['user_id'] != $session['user_id']) {
-                $error = "Access denied: user does not own application (session user_id={$session['user_id']}, application user_id={$application['user_id']})";
-                error_log("[handleSessionValidate] $error");
+            // Bind validation to the node connection to prevent other nodes from authorizing access
+            $connNodeId = $from->nodeId ?? null;
+            if (!$connNodeId || empty($application['node_id']) || (int)$application['node_id'] !== (int)$connNodeId) {
+                $error = "Access denied: application is not assigned to this node";
+                error_log("[handleSessionValidate] $error (connNodeId={$connNodeId}, appNodeId=" . ($application['node_id'] ?? 'null') . ")");
                 $this->send($from, [
                     'type' => 'session:validate:response',
                     'request_id' => $requestId,
@@ -682,22 +673,35 @@ class NodeHandler implements MessageComponentInterface {
                 return;
             }
 
-            // --- Commented out team/project checks ---
-            // $project = $db->fetch(
-            //     "SELECT * FROM projects WHERE id = ?",
-            //     [$application['project_id']]
-            // );
-            // if (!$project || $project['team_id'] !== $session['team_id']) {
-            //     $error = "Access denied for user {$session['user_id']} to app {$applicationUuid}";
-            //     error_log("[handleSessionValidate] $error");
-            //     $this->send($from, [
-            //         'type' => 'session:validate:response',
-            //         'request_id' => $requestId,
-            //         'authorized' => false,
-            //         'error' => $error
-            //     ]);
-            //     return;
-            // }
+            $teamId = $application['project_team_id'] ?? null;
+            if (!$teamId) {
+                $error = "Access denied: application is missing team context";
+                error_log("[handleSessionValidate] $error");
+                $this->send($from, [
+                    'type' => 'session:validate:response',
+                    'request_id' => $requestId,
+                    'authorized' => false,
+                    'error' => $error
+                ]);
+                return;
+            }
+
+            // Authorize if the user is a member of the owning team
+            $teamUser = $db->fetch(
+                "SELECT id FROM team_user WHERE team_id = ? AND user_id = ? LIMIT 1",
+                [$teamId, $session['user_id']]
+            );
+            if (!$teamUser) {
+                $error = "Access denied: user is not a member of the application's team";
+                error_log("[handleSessionValidate] $error (user_id={$session['user_id']}, team_id={$teamId})");
+                $this->send($from, [
+                    'type' => 'session:validate:response',
+                    'request_id' => $requestId,
+                    'authorized' => false,
+                    'error' => $error
+                ]);
+                return;
+            }
 
             // Session is valid and user has access
             error_log("[handleSessionValidate] Session valid, user {$session['user_id']} authorized for app {$applicationUuid}");
@@ -706,7 +710,7 @@ class NodeHandler implements MessageComponentInterface {
                 'request_id' => $requestId,
                 'authorized' => true,
                 'user_id' => $session['user_id'],
-                // 'team_id' => $session['team_id'],
+                'team_id' => $teamId,
                 'application_id' => $application['id']
             ]);
 

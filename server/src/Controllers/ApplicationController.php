@@ -707,6 +707,48 @@ class ApplicationController extends BaseController
     }
 
     /**
+     * Container file manager page for application
+     */
+    public function files(string $uuid): void
+    {
+        $team = $this->currentTeam();
+        $application = Application::findByUuid($uuid);
+
+        if (!$this->canAccessApplication($application, $team)) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Application not found'], 404);
+            } else {
+                flash('error', 'Application not found');
+                $this->redirect('/projects');
+            }
+            return;
+        }
+
+        // File manager is WebSocket-only; the HTTP API is intentionally not supported.
+        if ($this->isApiRequest()) {
+            $this->json(['error' => 'File manager requires WebSocket'], 400);
+            return;
+        }
+
+        $node = $application->node();
+        if (!$node && $application->node_id) {
+            $node = \Chap\Models\Node::find($application->node_id);
+        }
+
+        // Reuse the node browser WS URL (currently named logs_websocket_url in DB/model)
+        $browserWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
+
+        $this->view('applications/files', [
+            'title' => 'Files - ' . $application->name,
+            'application' => $application,
+            'environment' => $application->environment(),
+            'project' => $application->environment()->project(),
+            'browserWebsocketUrl' => $browserWebsocketUrl,
+            'sessionId' => session_id(),
+        ]);
+    }
+
+    /**
      * Get containers for an application
      */
     private function getContainersForApplication(Application $application): array

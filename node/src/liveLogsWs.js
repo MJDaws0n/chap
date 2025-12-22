@@ -9,6 +9,294 @@ const WebSocket = require('ws');
 const { WebSocketServer } = require('ws');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const security = require('./security');
+
+const EXEC_LIMIT = {
+    // per connection
+    maxRequestsPerWindow: 3,
+    windowMs: 10000,
+    maxDurationMs: 30000,
+    // output caps
+    maxStdoutBytes: 64 * 1024,
+    maxStderrBytes: 64 * 1024,
+    maxTotalBytes: 128 * 1024,
+};
+
+const CONSOLE_LIMIT = {
+    // per connection
+    maxRequestsPerWindow: 10,
+    windowMs: 10000,
+    // output caps per message burst (attach can be noisy)
+    maxChunkBytes: 64 * 1024,
+};
+
+const FILES_LIMIT = {
+    maxRequestsPerWindow: 20,
+    windowMs: 10000,
+    maxPathLength: 2048,
+    maxReadBytes: 1024 * 1024, // 1MB editor reads
+    maxWriteBytes: 1024 * 1024, // 1MB editor writes
+    maxUploadBytes: 25 * 1024 * 1024, // 25MB
+    maxDownloadBytes: 50 * 1024 * 1024, // 50MB
+    downloadChunkBytes: 48 * 1024,
+};
+
+function isSafePathValue(p) {
+    if (typeof p !== 'string') return false;
+    if (!p.length) return false;
+    if (p.length > FILES_LIMIT.maxPathLength) return false;
+    if (/\0|\r|\n/.test(p)) return false;
+    if (p[0] !== '/') return false;
+    if (p.includes('\\')) return false;
+    if (/(^|\/)\.\.(\/|$)/.test(p)) return false;
+    return true;
+}
+
+function isSafeNameSegment(s) {
+    if (typeof s !== 'string') return false;
+    const v = s.trim();
+    if (!v) return false;
+    if (v.length > 255) return false;
+    if (/\0|\r|\n|\//.test(v)) return false;
+    if (v === '.' || v === '..') return false;
+    if (v.startsWith('-')) return false;
+    return true;
+}
+
+function checkFilesRateLimit(browserWs) {
+    const now = Date.now();
+    if (!browserWs._filesWindowStart) {
+        browserWs._filesWindowStart = now;
+        browserWs._filesWindowCount = 0;
+    }
+    if (now - browserWs._filesWindowStart > FILES_LIMIT.windowMs) {
+        browserWs._filesWindowStart = now;
+        browserWs._filesWindowCount = 0;
+    }
+    if (browserWs._filesWindowCount >= FILES_LIMIT.maxRequestsPerWindow) return false;
+    browserWs._filesWindowCount += 1;
+    return true;
+}
+
+function runDockerInspectMounts(containerId) {
+    return new Promise((resolve) => {
+        const proc = spawn('docker', ['inspect', '--format', '{{json .Mounts}}', containerId], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let out = '';
+        proc.stdout.on('data', (c) => { out += c.toString(); });
+        proc.on('close', () => {
+            try {
+                const mounts = JSON.parse((out || '').trim() || '[]');
+                const dests = Array.isArray(mounts)
+                    ? mounts.map((m) => (m && m.Destination ? String(m.Destination) : '')).filter(Boolean)
+                    : [];
+                resolve(dests.filter((d) => d !== '/'));
+            } catch {
+                resolve([]);
+            }
+        });
+        proc.on('error', () => resolve([]));
+    });
+}
+
+function runDockerExec(containerId, argv, opts = {}) {
+    return new Promise((resolve, reject) => {
+        const args = ['exec'];
+        if (opts.stdin) args.push('-i');
+        args.push(containerId, ...argv);
+
+        const proc = spawn('docker', args, {
+            stdio: [opts.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+        });
+
+        let stdout = Buffer.alloc(0);
+        let stderr = Buffer.alloc(0);
+        const max = opts.maxBytes || (256 * 1024);
+        const maxErr = opts.maxErrBytes || (128 * 1024);
+
+        proc.stdout.on('data', (chunk) => {
+            if (stdout.length < max) {
+                const take = Math.min(chunk.length, max - stdout.length);
+                stdout = Buffer.concat([stdout, chunk.subarray(0, take)]);
+            }
+        });
+        proc.stderr.on('data', (chunk) => {
+            if (stderr.length < maxErr) {
+                const take = Math.min(chunk.length, maxErr - stderr.length);
+                stderr = Buffer.concat([stderr, chunk.subarray(0, take)]);
+            }
+        });
+
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+            resolve({ code: code ?? 0, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8') });
+        });
+
+        if (opts.stdin) {
+            try {
+                proc.stdin.write(opts.stdin);
+                proc.stdin.end();
+            } catch {
+                // ignore
+            }
+        }
+    });
+}
+
+function isSafePrintableCommandChar(ch) {
+    // Reject control chars and newlines; allow common printable ASCII.
+    const code = ch.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f) return false;
+    return true;
+}
+
+function tokenizeExecCommand(command) {
+    const s = String(command ?? '').trim();
+    if (!s) throw new Error('Empty command');
+    if (s.length > 1000) throw new Error('Command too long');
+
+    for (const ch of s) {
+        if (!isSafePrintableCommandChar(ch)) {
+            throw new Error('Command contains invalid characters');
+        }
+    }
+
+    // Block obvious shell metacharacters. Even though we do not use a shell,
+    // allowing these encourages sh -c workflows and increases risk.
+    if (/[|&;<>`$]/.test(s)) {
+        throw new Error('Command contains blocked characters');
+    }
+
+    const argv = [];
+    let cur = '';
+    let mode = 'none'; // none | single | double
+    let escaped = false;
+
+    const pushCur = () => {
+        if (cur.length) argv.push(cur);
+        cur = '';
+    };
+
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+
+        if (escaped) {
+            // Only allow escaping quotes, backslash, and space.
+            if (ch === '\\' || ch === '"' || ch === "'" || ch === ' ') {
+                cur += ch;
+                escaped = false;
+                continue;
+            }
+            throw new Error('Invalid escape sequence');
+        }
+
+        if (ch === '\\' && mode !== 'single') {
+            escaped = true;
+            continue;
+        }
+
+        if (mode === 'single') {
+            if (ch === "'") {
+                mode = 'none';
+            } else {
+                cur += ch;
+            }
+            continue;
+        }
+
+        if (mode === 'double') {
+            if (ch === '"') {
+                mode = 'none';
+            } else {
+                cur += ch;
+            }
+            continue;
+        }
+
+        if (ch === "'") {
+            mode = 'single';
+            continue;
+        }
+        if (ch === '"') {
+            mode = 'double';
+            continue;
+        }
+
+        if (/\s/.test(ch)) {
+            pushCur();
+            continue;
+        }
+
+        cur += ch;
+    }
+
+    if (escaped) throw new Error('Invalid escape sequence');
+    if (mode !== 'none') throw new Error('Unterminated quote');
+    pushCur();
+
+    if (argv.length === 0) throw new Error('Empty command');
+    if (argv.length > 32) throw new Error('Too many arguments');
+    for (const a of argv) {
+        if (a.length > 256) throw new Error('Argument too long');
+    }
+
+    const head = (argv[0] || '').toLowerCase();
+    if (['sh', 'bash', 'zsh', 'dash', 'ksh'].includes(head) && argv.includes('-c')) {
+        throw new Error('Shell execution is not allowed');
+    }
+
+    return argv;
+}
+
+function checkExecRateLimit(browserWs) {
+    const now = Date.now();
+    if (!browserWs._execWindowStart) {
+        browserWs._execWindowStart = now;
+        browserWs._execWindowCount = 0;
+    }
+    if (now - browserWs._execWindowStart > EXEC_LIMIT.windowMs) {
+        browserWs._execWindowStart = now;
+        browserWs._execWindowCount = 0;
+    }
+    if (browserWs._execWindowCount >= EXEC_LIMIT.maxRequestsPerWindow) {
+        return false;
+    }
+    browserWs._execWindowCount += 1;
+    return true;
+}
+
+function checkConsoleRateLimit(browserWs) {
+    const now = Date.now();
+    if (!browserWs._consoleWindowStart) {
+        browserWs._consoleWindowStart = now;
+        browserWs._consoleWindowCount = 0;
+    }
+    if (now - browserWs._consoleWindowStart > CONSOLE_LIMIT.windowMs) {
+        browserWs._consoleWindowStart = now;
+        browserWs._consoleWindowCount = 0;
+    }
+    if (browserWs._consoleWindowCount >= CONSOLE_LIMIT.maxRequestsPerWindow) {
+        return false;
+    }
+    browserWs._consoleWindowCount += 1;
+    return true;
+}
+
+function validateConsoleInput(command) {
+    const s = String(command ?? '').trim();
+    if (!s) return { valid: false, error: 'Empty command' };
+    if (s.length > 512) return { valid: false, error: 'Command too long' };
+    for (const ch of s) {
+        const code = ch.charCodeAt(0);
+        if (code < 0x20 || code === 0x7f) {
+            return { valid: false, error: 'Command contains invalid characters' };
+        }
+    }
+    // Hard-block newlines; we append our own \n when writing.
+    if (/[\r\n]/.test(s)) return { valid: false, error: 'Command contains invalid characters' };
+    return { valid: true, value: s };
+}
 
 function clampInt(value, min, max, fallback) {
     const n = parseInt(value, 10);
@@ -76,6 +364,340 @@ function createLiveLogsWs(deps) {
 
     // Map of requestId -> { browserWs, applicationUuid, sessionId, timestamp }
     const pendingValidations = new Map();
+
+    // Upload transfer state: transferId -> { containerId, path, size, received, chunks: Buffer[] }
+    const uploads = new Map();
+
+    function filesReply(browserWs, requestId, ok, resultOrError) {
+        if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+        if (ok) {
+            safeJsonSend(browserWs, { type: 'files:response', request_id: requestId, ok: true, result: resultOrError || {} });
+        } else {
+            safeJsonSend(browserWs, { type: 'files:response', request_id: requestId, ok: false, error: String(resultOrError || 'Request failed') });
+        }
+    }
+
+    async function resolveContainerForFiles(browserWs, requestedContainerId) {
+        const appUuid = browserWs.applicationUuid;
+        const allowed = await getRunningContainers(appUuid);
+        const running = allowed.filter((c) => c.status === 'running');
+        if (!running.length) return { containers: allowed, container: null };
+        if (requestedContainerId) {
+            const found = running.find((c) => c.id === requestedContainerId);
+            if (found) return { containers: allowed, container: found };
+        }
+        return { containers: allowed, container: running[0] };
+    }
+
+    async function handleFilesRequest(browserWs, message) {
+        const requestId = typeof message.request_id === 'string' ? message.request_id.trim() : '';
+        const action = typeof message.action === 'string' ? message.action.trim() : '';
+        const payload = message.payload && typeof message.payload === 'object' ? message.payload : {};
+
+        if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+        if (!browserWs.authenticated) return filesReply(browserWs, requestId, false, 'Not authenticated');
+        if (!requestId || !action) return filesReply(browserWs, requestId, false, 'Missing request_id or action');
+        if (!checkFilesRateLimit(browserWs)) return filesReply(browserWs, requestId, false, 'Rate limit exceeded');
+
+        try {
+            const requestedContainerId = typeof payload.container_id === 'string' ? payload.container_id.trim() : '';
+            const { containers, container } = await resolveContainerForFiles(browserWs, requestedContainerId);
+            if (!container) return filesReply(browserWs, requestId, false, 'No running containers found');
+
+            browserWs.selectedContainerId = container.id;
+            const persistentPrefixes = await runDockerInspectMounts(container.id);
+            const root = '/';
+
+            if (action === 'meta') {
+                return filesReply(browserWs, requestId, true, {
+                    root,
+                    default_path: '/',
+                    containers,
+                    selected_container_id: container.id,
+                    persistent_prefixes: persistentPrefixes,
+                });
+            }
+
+            if (action === 'list') {
+                const dir = String(payload.path || '/');
+                if (!isSafePathValue(dir)) return filesReply(browserWs, requestId, false, 'Invalid path');
+
+                const listScript = [
+                    'set -e',
+                    'dir="$1"',
+                    'if [ ! -d "$dir" ]; then exit 2; fi',
+                    'if command -v find >/dev/null 2>&1; then',
+                    '  find "$dir" -mindepth 1 -maxdepth 1 -print0',
+                    'else',
+                    '  ls -A1 "$dir" 2>/dev/null | while IFS= read -r n; do printf "%s\0" "$dir/$n"; done',
+                    'fi',
+                ].join('\n');
+
+                const listRes = await runDockerExec(container.id, ['sh', '-c', listScript, 'sh', dir], {
+                    maxBytes: 1024 * 1024,
+                    maxErrBytes: 64 * 1024,
+                });
+
+                if (listRes.code !== 0) {
+                    return filesReply(browserWs, requestId, false, (listRes.stderr || '').trim() || 'Failed to list directory');
+                }
+
+                const paths = listRes.stdout.split('\0').map((x) => x.trim()).filter(Boolean).slice(0, 2000);
+
+                const statScript = [
+                    'set -e',
+                    'dir="$1"',
+                    'shift',
+                    'for p in "$@"; do',
+                    '  name=${p##*/}',
+                    '  type=file',
+                    '  if [ -d "$p" ]; then type=dir; fi',
+                    '  size=""',
+                    '  mtime=""',
+                    '  if command -v stat >/dev/null 2>&1; then',
+                    '    size=$(stat -c %s "$p" 2>/dev/null || true)',
+                    '    mtime=$(stat -c %Y "$p" 2>/dev/null || true)',
+                    '  fi',
+                    '  printf "%s\t%s\t%s\t%s\t%s\n" "$name" "$type" "$size" "$mtime" "$p"',
+                    'done',
+                ].join('\n');
+
+                const statRes = await runDockerExec(container.id, ['sh', '-c', statScript, 'sh', dir, ...paths], {
+                    maxBytes: 2 * 1024 * 1024,
+                    maxErrBytes: 64 * 1024,
+                });
+
+                if (statRes.code !== 0) {
+                    return filesReply(browserWs, requestId, false, (statRes.stderr || '').trim() || 'Failed to stat directory entries');
+                }
+
+                const entries = [];
+                for (const line of statRes.stdout.split('\n')) {
+                    if (!line.trim()) continue;
+                    const parts = line.split('\t');
+                    if (parts.length < 5) continue;
+                    const [name, type, sizeRaw, mtimeRaw, fullPath] = parts;
+                    const mtimeNum = mtimeRaw ? parseInt(mtimeRaw, 10) : null;
+                    const sizeNum = sizeRaw ? parseInt(sizeRaw, 10) : null;
+                    const persistent = persistentPrefixes.some((p) => fullPath === p || fullPath.startsWith(p + '/'));
+                    entries.push({
+                        name,
+                        type: type === 'dir' ? 'dir' : 'file',
+                        size: Number.isFinite(sizeNum) ? sizeNum : null,
+                        mtime: Number.isFinite(mtimeNum) ? new Date(mtimeNum * 1000).toISOString() : null,
+                        path: fullPath,
+                        persistent,
+                    });
+                }
+
+                entries.sort((a, b) => {
+                    if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+                    return String(a.name).localeCompare(String(b.name));
+                });
+
+                return filesReply(browserWs, requestId, true, { root, entries, persistent_prefixes: persistentPrefixes });
+            }
+
+            if (action === 'read') {
+                const p = String(payload.path || '');
+                if (!isSafePathValue(p)) return filesReply(browserWs, requestId, false, 'Invalid path');
+
+                const sizeRes = await runDockerExec(container.id, ['sh', '-c', 'stat -c %s "$1" 2>/dev/null || echo -1', 'sh', p], {
+                    maxBytes: 1024,
+                    maxErrBytes: 1024,
+                });
+                const size = parseInt((sizeRes.stdout || '').trim(), 10);
+                if (Number.isFinite(size) && size > FILES_LIMIT.maxReadBytes) {
+                    return filesReply(browserWs, requestId, false, `File too large to edit (>${FILES_LIMIT.maxReadBytes} bytes)`);
+                }
+
+                const res = await runDockerExec(container.id, ['cat', '--', p], {
+                    maxBytes: FILES_LIMIT.maxReadBytes,
+                    maxErrBytes: 64 * 1024,
+                });
+                if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to read file');
+                return filesReply(browserWs, requestId, true, { content: res.stdout });
+            }
+
+            if (action === 'write') {
+                const p = String(payload.path || '');
+                const content = typeof payload.content === 'string' ? payload.content : '';
+                if (!isSafePathValue(p)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                if (Buffer.byteLength(content, 'utf8') > FILES_LIMIT.maxWriteBytes) {
+                    return filesReply(browserWs, requestId, false, `Content too large (>${FILES_LIMIT.maxWriteBytes} bytes)`);
+                }
+
+                const res = await runDockerExec(container.id, ['sh', '-c', 'cat > "$1"', 'sh', p], {
+                    stdin: Buffer.from(content, 'utf8'),
+                    maxBytes: 1024,
+                    maxErrBytes: 64 * 1024,
+                });
+                if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to write file');
+                return filesReply(browserWs, requestId, true, {});
+            }
+
+            if (action === 'delete') {
+                const p = String(payload.path || '');
+                const type = String(payload.type || 'file');
+                if (!isSafePathValue(p)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                if (p === '/' || p === '.') return filesReply(browserWs, requestId, false, 'Refusing to delete root');
+                const cmd = type === 'dir' ? 'rm -rf -- "$1"' : 'rm -f -- "$1"';
+                const res = await runDockerExec(container.id, ['sh', '-c', cmd, 'sh', p], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to delete');
+                return filesReply(browserWs, requestId, true, {});
+            }
+
+            if (action === 'mkdir') {
+                const dir = String(payload.dir || '/');
+                const name = String(payload.name || '');
+                if (!isSafePathValue(dir) || !isSafeNameSegment(name)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                const res = await runDockerExec(container.id, ['sh', '-c', 'mkdir -p -- "$1/$2"', 'sh', dir, name], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to create folder');
+                return filesReply(browserWs, requestId, true, {});
+            }
+
+            if (action === 'touch') {
+                const dir = String(payload.dir || '/');
+                const name = String(payload.name || '');
+                if (!isSafePathValue(dir) || !isSafeNameSegment(name)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                const res = await runDockerExec(container.id, ['sh', '-c', ': > "$1/$2"', 'sh', dir, name], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to create file');
+                return filesReply(browserWs, requestId, true, {});
+            }
+
+            if (action === 'rename') {
+                const p = String(payload.path || '');
+                const newName = String(payload.new_name || '');
+                if (!isSafePathValue(p) || !isSafeNameSegment(newName)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                const res = await runDockerExec(container.id, ['sh', '-c', 'd=$(dirname "$1"); mv -- "$1" "$d/$2"', 'sh', p, newName], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to rename');
+                return filesReply(browserWs, requestId, true, {});
+            }
+
+            if (action === 'move') {
+                const p = String(payload.path || '');
+                const destDir = String(payload.dest_dir || '');
+                if (!isSafePathValue(p) || !isSafePathValue(destDir)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                const res = await runDockerExec(container.id, ['sh', '-c', 'base=$(basename "$1"); mv -- "$1" "$2/$base"', 'sh', p, destDir], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to move');
+                return filesReply(browserWs, requestId, true, {});
+            }
+
+            if (action === 'archive') {
+                const p = String(payload.path || '');
+                const outDir = String(payload.out_dir || '/');
+                const outName = String(payload.out_name || 'archive.tar.gz');
+                if (!isSafePathValue(p) || !isSafePathValue(outDir) || !isSafeNameSegment(outName)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                const res = await runDockerExec(container.id, ['sh', '-c', 'src="$1"; out="$2/$3"; tar -czf "$out" -C "$(dirname "$src")" "$(basename "$src")"', 'sh', p, outDir, outName], { maxBytes: 1024, maxErrBytes: 128 * 1024 });
+                if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to archive (tar required)');
+                return filesReply(browserWs, requestId, true, {});
+            }
+
+            if (action === 'unarchive') {
+                const p = String(payload.path || '');
+                const destDir = String(payload.dest_dir || '/');
+                if (!isSafePathValue(p) || !isSafePathValue(destDir)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                const res = await runDockerExec(container.id, ['sh', '-c', 'mkdir -p "$2" && tar -xzf "$1" -C "$2"', 'sh', p, destDir], { maxBytes: 1024, maxErrBytes: 128 * 1024 });
+                if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to unarchive (tar required)');
+                return filesReply(browserWs, requestId, true, {});
+            }
+
+            if (action === 'upload:init') {
+                const dir = String(payload.dir || '/');
+                const name = String(payload.name || '');
+                const size = parseInt(String(payload.size || '0'), 10);
+                if (!isSafePathValue(dir) || !isSafeNameSegment(name)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                if (!Number.isFinite(size) || size < 0 || size > FILES_LIMIT.maxUploadBytes) {
+                    return filesReply(browserWs, requestId, false, `Upload too large (max ${FILES_LIMIT.maxUploadBytes} bytes)`);
+                }
+                const transferId = `up_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+                uploads.set(transferId, { containerId: container.id, path: `${dir}/${name}`, size, received: 0, chunks: [] });
+                return filesReply(browserWs, requestId, true, { transfer_id: transferId, chunk_size: 128 * 1024 });
+            }
+
+            if (action === 'upload:chunk') {
+                const transferId = String(payload.transfer_id || '');
+                const offset = parseInt(String(payload.offset || '0'), 10);
+                const dataB64 = String(payload.data_b64 || '');
+                const t = uploads.get(transferId);
+                if (!t || t.containerId !== container.id) return filesReply(browserWs, requestId, false, 'Invalid transfer');
+                if (!Number.isFinite(offset) || offset !== t.received) return filesReply(browserWs, requestId, false, 'Invalid offset');
+                let buf;
+                try {
+                    buf = Buffer.from(dataB64, 'base64');
+                } catch {
+                    return filesReply(browserWs, requestId, false, 'Invalid base64');
+                }
+                t.received += buf.length;
+                if (t.received > t.size || t.received > FILES_LIMIT.maxUploadBytes) {
+                    uploads.delete(transferId);
+                    return filesReply(browserWs, requestId, false, 'Upload too large');
+                }
+                t.chunks.push(buf);
+                return filesReply(browserWs, requestId, true, {});
+            }
+
+            if (action === 'upload:commit') {
+                const transferId = String(payload.transfer_id || '');
+                const t = uploads.get(transferId);
+                if (!t || t.containerId !== container.id) return filesReply(browserWs, requestId, false, 'Invalid transfer');
+                if (t.received !== t.size) {
+                    uploads.delete(transferId);
+                    return filesReply(browserWs, requestId, false, 'Upload incomplete');
+                }
+                const body = Buffer.concat(t.chunks);
+                uploads.delete(transferId);
+                const res = await runDockerExec(container.id, ['sh', '-c', 'cat > "$1"', 'sh', t.path], { stdin: body, maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to write upload');
+                return filesReply(browserWs, requestId, true, {});
+            }
+
+            if (action === 'download') {
+                const p = String(payload.path || '');
+                if (!isSafePathValue(p)) return filesReply(browserWs, requestId, false, 'Invalid path');
+
+                const sizeRes = await runDockerExec(container.id, ['sh', '-c', 'stat -c %s "$1" 2>/dev/null || echo -1', 'sh', p], { maxBytes: 1024, maxErrBytes: 1024 });
+                const size = parseInt((sizeRes.stdout || '').trim(), 10);
+                if (Number.isFinite(size) && size > FILES_LIMIT.maxDownloadBytes) {
+                    return filesReply(browserWs, requestId, false, `File too large to download (>${FILES_LIMIT.maxDownloadBytes} bytes)`);
+                }
+
+                const transferId = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+                safeJsonSend(browserWs, { type: 'files:download:start', transfer_id: transferId, name: p.split('/').pop() || 'download', mime: 'application/octet-stream' });
+
+                const proc = spawn('docker', ['exec', container.id, 'cat', '--', p], { stdio: ['ignore', 'pipe', 'pipe'] });
+                let sent = 0;
+
+                proc.stdout.on('data', (chunk) => {
+                    if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+                    sent += chunk.length;
+                    if (sent > FILES_LIMIT.maxDownloadBytes) {
+                        try { proc.kill(); } catch {}
+                        return;
+                    }
+                    for (let i = 0; i < chunk.length; i += FILES_LIMIT.downloadChunkBytes) {
+                        const part = chunk.subarray(i, i + FILES_LIMIT.downloadChunkBytes);
+                        safeJsonSend(browserWs, { type: 'files:download:chunk', transfer_id: transferId, data_b64: part.toString('base64') });
+                    }
+                });
+
+                proc.on('close', (code) => {
+                    if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+                    if ((code ?? 0) !== 0) {
+                        safeJsonSend(browserWs, { type: 'error', error: 'Download failed' });
+                        return;
+                    }
+                    safeJsonSend(browserWs, { type: 'files:download:done', transfer_id: transferId, name: p.split('/').pop() || 'download' });
+                });
+
+                return filesReply(browserWs, requestId, true, { transfer_id: transferId });
+            }
+
+            return filesReply(browserWs, requestId, false, 'Unknown action');
+        } catch (e) {
+            return filesReply(browserWs, requestId, false, e && e.message ? e.message : 'Error');
+        }
+    }
 
     function schedulePendingCleanup() {
         if (pendingCleanupInterval) return;
@@ -303,11 +925,280 @@ function createLiveLogsWs(deps) {
             case 'ping':
                 safeJsonSend(browserWs, { type: 'pong' });
                 break;
+            case 'files:request':
+                handleFilesRequest(browserWs, message);
+                break;
+            case 'exec:request':
+                handleBrowserExec(browserWs, message);
+                break;
+            case 'console:input':
+                handleBrowserConsoleInput(browserWs, message);
+                break;
             default:
                 if (!browserWs.authenticated) {
                     safeJsonSend(browserWs, { type: 'error', error: 'Not authenticated' });
                 }
         }
+    }
+
+    async function handleBrowserConsoleInput(browserWs, message) {
+        const requestId = typeof message.request_id === 'string' ? message.request_id.trim() : '';
+        const containerId = typeof message.container_id === 'string' ? message.container_id.trim() : '';
+        const commandRaw = typeof message.command === 'string' ? message.command : '';
+
+        const reject = (err) => {
+            safeJsonSend(browserWs, {
+                type: 'console:rejected',
+                request_id: requestId || undefined,
+                container_id: containerId || undefined,
+                error: err,
+                timestamp: Date.now(),
+            });
+        };
+
+        if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+        if (!browserWs.authenticated) return reject('Not authenticated');
+        if (!requestId || !containerId) return reject('Missing request_id or container_id');
+        if (!checkConsoleRateLimit(browserWs)) return reject('Rate limit exceeded');
+
+        const validated = validateConsoleInput(commandRaw);
+        if (!validated.valid) return reject(validated.error);
+        const command = validated.value;
+
+        // Scope: only allow console input to containers for this application.
+        const appUuid = browserWs.applicationUuid;
+        const allowed = await getRunningContainers(appUuid);
+        const target = allowed.find((c) => c.id === containerId);
+        if (!target) return reject('Container not found for application');
+        if (target.status !== 'running') return reject('Container is not running');
+
+        browserWs._consoleSessions = browserWs._consoleSessions || new Map();
+        let session = browserWs._consoleSessions.get(containerId);
+
+        if (!session || !session.proc) {
+            // Start an attach session so we can write to stdin.
+            // This requires the container to be started with stdin open (docker run -i or compose stdin_open).
+            const proc = spawn('docker', ['attach', '--sig-proxy=false', containerId], {
+                stdio: ['pipe', 'pipe', 'pipe'],
+            });
+
+            const emit = (stream) => (line) => {
+                if (!line) return;
+                safeJsonSend(browserWs, {
+                    type: 'console:output',
+                    stream,
+                    container: target.name,
+                    container_id: containerId,
+                    content: line,
+                    timestamp: Date.now(),
+                });
+            };
+
+            const emitStdout = createLineEmitter(emit('stdout'));
+            const emitStderr = createLineEmitter(emit('stderr'));
+
+            proc.stdout.on('data', (chunk) => {
+                const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+                emitStdout(buf.subarray(0, CONSOLE_LIMIT.maxChunkBytes));
+            });
+            proc.stderr.on('data', (chunk) => {
+                const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+                emitStderr(buf.subarray(0, CONSOLE_LIMIT.maxChunkBytes));
+            });
+
+            proc.on('error', (err) => {
+                safeJsonSend(browserWs, {
+                    type: 'console:error',
+                    request_id: requestId,
+                    container: target.name,
+                    container_id: containerId,
+                    error: err.message,
+                    timestamp: Date.now(),
+                });
+            });
+
+            proc.on('close', (code, signal) => {
+                const s = browserWs._consoleSessions && browserWs._consoleSessions.get(containerId);
+                if (s) {
+                    s.proc = null;
+                }
+                safeJsonSend(browserWs, {
+                    type: 'console:status',
+                    container: target.name,
+                    container_id: containerId,
+                    status: 'disconnected',
+                    exit_code: typeof code === 'number' ? code : null,
+                    signal: signal || null,
+                    timestamp: Date.now(),
+                });
+            });
+
+            session = { proc, containerName: target.name };
+            browserWs._consoleSessions.set(containerId, session);
+
+            safeJsonSend(browserWs, {
+                type: 'console:status',
+                container: target.name,
+                container_id: containerId,
+                status: 'connected',
+                timestamp: Date.now(),
+            });
+        }
+
+        // Send the command to stdin of the attached process.
+        try {
+            session.proc.stdin.write(command + '\n');
+        } catch (e) {
+            return reject('Failed to write to container console (is stdin open?)');
+        }
+
+        safeJsonSend(browserWs, {
+            type: 'console:ack',
+            request_id: requestId,
+            container: target.name,
+            container_id: containerId,
+            timestamp: Date.now(),
+        });
+    }
+
+    async function handleBrowserExec(browserWs, message) {
+        const requestId = typeof message.request_id === 'string' ? message.request_id.trim() : '';
+        const containerId = typeof message.container_id === 'string' ? message.container_id.trim() : '';
+        const command = typeof message.command === 'string' ? message.command.trim() : '';
+
+        const reject = (err) => {
+            safeJsonSend(browserWs, {
+                type: 'exec:rejected',
+                request_id: requestId || undefined,
+                container_id: containerId || undefined,
+                error: err,
+                timestamp: Date.now(),
+            });
+        };
+
+        if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+        if (!browserWs.authenticated) return reject('Not authenticated');
+        if (!requestId || !containerId || !command) return reject('Missing request_id, container_id, or command');
+        if (browserWs._execInFlight) return reject('Exec already running');
+        if (!checkExecRateLimit(browserWs)) return reject('Rate limit exceeded');
+
+        // Secondary validation: existing policy blocks obvious dangerous patterns.
+        const validation = security.validateExecCommand(command);
+        if (!validation.valid) return reject(`Security: ${validation.error}`);
+
+        let argv;
+        try {
+            argv = tokenizeExecCommand(command);
+        } catch (e) {
+            return reject(e.message || 'Invalid command');
+        }
+
+        // Scope: only allow exec into containers for this application.
+        const appUuid = browserWs.applicationUuid;
+        const allowed = await getRunningContainers(appUuid);
+        const target = allowed.find((c) => c.id === containerId);
+        if (!target) return reject('Container not found for application');
+        if (target.status !== 'running') return reject('Container is not running');
+
+        browserWs._execInFlight = true;
+        const startedAt = Date.now();
+
+        const proc = spawn('docker', ['exec', '-i', containerId, ...argv], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+
+        browserWs._execProc = proc;
+        browserWs._execRequestId = requestId;
+
+        let stdout = '';
+        let stderr = '';
+        let stdoutBytes = 0;
+        let stderrBytes = 0;
+        let truncated = false;
+        let timedOut = false;
+
+        const append = (which, chunk) => {
+            if (!chunk) return;
+            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+            const len = buf.length;
+
+            const totalBytes = stdoutBytes + stderrBytes;
+            if (totalBytes >= EXEC_LIMIT.maxTotalBytes) {
+                truncated = true;
+                return;
+            }
+
+            if (which === 'stdout') {
+                if (stdoutBytes >= EXEC_LIMIT.maxStdoutBytes) {
+                    truncated = true;
+                    return;
+                }
+                const allowedLen = Math.min(len, EXEC_LIMIT.maxStdoutBytes - stdoutBytes, EXEC_LIMIT.maxTotalBytes - totalBytes);
+                stdoutBytes += allowedLen;
+                stdout += buf.subarray(0, allowedLen).toString();
+                if (allowedLen < len) truncated = true;
+            } else {
+                if (stderrBytes >= EXEC_LIMIT.maxStderrBytes) {
+                    truncated = true;
+                    return;
+                }
+                const allowedLen = Math.min(len, EXEC_LIMIT.maxStderrBytes - stderrBytes, EXEC_LIMIT.maxTotalBytes - totalBytes);
+                stderrBytes += allowedLen;
+                stderr += buf.subarray(0, allowedLen).toString();
+                if (allowedLen < len) truncated = true;
+            }
+        };
+
+        const timer = setTimeout(() => {
+            timedOut = true;
+            try { proc.kill('SIGKILL'); } catch {}
+        }, EXEC_LIMIT.maxDurationMs);
+
+        proc.stdout.on('data', (chunk) => append('stdout', chunk));
+        proc.stderr.on('data', (chunk) => append('stderr', chunk));
+
+        proc.on('error', (err) => {
+            clearTimeout(timer);
+            browserWs._execInFlight = false;
+            browserWs._execProc = null;
+            safeJsonSend(browserWs, {
+                type: 'exec:result',
+                request_id: requestId,
+                container_id: containerId,
+                container: target.name,
+                ok: false,
+                exit_code: null,
+                signal: null,
+                duration_ms: Date.now() - startedAt,
+                stdout: stdout,
+                stderr: stderr,
+                truncated,
+                error: err.message,
+                timestamp: Date.now(),
+            });
+        });
+
+        proc.on('close', (code, signal) => {
+            clearTimeout(timer);
+            browserWs._execInFlight = false;
+            browserWs._execProc = null;
+
+            safeJsonSend(browserWs, {
+                type: 'exec:result',
+                request_id: requestId,
+                container_id: containerId,
+                container: target.name,
+                ok: !timedOut && code === 0,
+                exit_code: typeof code === 'number' ? code : null,
+                signal: signal || null,
+                duration_ms: Date.now() - startedAt,
+                stdout: stdout,
+                stderr: stderr,
+                truncated,
+                error: timedOut ? 'Timeout' : null,
+                timestamp: Date.now(),
+            });
+        });
     }
 
     function handleSessionValidateResponse(message) {
@@ -387,6 +1278,18 @@ function createLiveLogsWs(deps) {
             browserWs.logProcesses = [];
             browserWs._restartTimers = [];
 
+            // Exec control
+            browserWs._execInFlight = false;
+            browserWs._execProc = null;
+            browserWs._execRequestId = null;
+            browserWs._execWindowStart = 0;
+            browserWs._execWindowCount = 0;
+
+            // Console input (docker attach) sessions
+            browserWs._consoleSessions = new Map();
+            browserWs._consoleWindowStart = 0;
+            browserWs._consoleWindowCount = 0;
+
             browserWs.on('pong', () => {
                 browserWs.isAlive = true;
             });
@@ -410,6 +1313,18 @@ function createLiveLogsWs(deps) {
                 if (browserWs.authTimeout) {
                     clearTimeout(browserWs.authTimeout);
                     browserWs.authTimeout = null;
+                }
+                if (browserWs._execProc) {
+                    try { browserWs._execProc.kill('SIGKILL'); } catch {}
+                    browserWs._execProc = null;
+                }
+
+                if (browserWs._consoleSessions && browserWs._consoleSessions.size) {
+                    for (const [, s] of browserWs._consoleSessions) {
+                        if (!s || !s.proc) continue;
+                        try { s.proc.kill('SIGKILL'); } catch {}
+                    }
+                    try { browserWs._consoleSessions.clear(); } catch {}
                 }
                 stopAllLogProcesses(browserWs);
                 if (browserWs._containerDiscoveryTimer) {

@@ -90,27 +90,34 @@ $statusBadge = [
                     <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                     <input type="hidden" name="_method" value="PUT">
                     
-                    <div class="form-group">
-                        <label for="description" class="form-label">Description</label>
-                        <input 
-                            type="text" 
-                            id="description" 
-                            name="description" 
-                            class="input"
-                            placeholder="Production server in AWS us-east-1"
-                            value="<?= e($node->description ?? '') ?>"
-                        >
+                    <div class="flex flex-col gap-4">
+                        <div class="form-group">
+                            <label for="description" class="form-label">Description</label>
+                            <input 
+                                type="text" 
+                                id="description" 
+                                name="description" 
+                                class="input"
+                                placeholder="Production server in AWS us-east-1"
+                                value="<?= e($node->description ?? '') ?>"
+                            >
+                        </div>
 
-                        <label for="logs_websocket_url" class="form-label">Live Logs WebSocket URL</label>
-                        <input 
-                            type="text" 
-                            id="logs_websocket_url" 
-                            name="logs_websocket_url" 
-                            class="input"
-                            placeholder="wss://node.example.com:6002"
-                            value="<?= e($node->logs_websocket_url ?? '') ?>"
-                        >
-                        <button type="submit" class="btn btn-primary">Update</button>
+                        <div class="form-group">
+                            <label for="logs_websocket_url" class="form-label">Live Logs WebSocket URL</label>
+                            <input 
+                                type="text" 
+                                id="logs_websocket_url" 
+                                name="logs_websocket_url" 
+                                class="input"
+                                placeholder="wss://node.example.com:6002"
+                                value="<?= e($node->logs_websocket_url ?? '') ?>"
+                            >
+                        </div>
+
+                        <div class="flex items-center justify-start">
+                            <button type="submit" class="btn btn-primary">Update</button>
+                        </div>
                     </div>
                 </form>
             </div>

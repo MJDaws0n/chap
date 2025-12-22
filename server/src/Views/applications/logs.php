@@ -106,6 +106,25 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
                         </div>
                         <div class="logs-content" id="logs-content"></div>
                     </div>
+
+                    <div class="border-t border-primary p-4">
+                        <div class="flex items-center gap-3">
+                            <input
+                                type="text"
+                                class="input input-sm flex-1"
+                                id="exec-input"
+                                placeholder="Send command to container console…"
+                                autocomplete="off"
+                                spellcheck="false"
+                            >
+                            <button type="button" class="btn btn-secondary btn-sm" id="exec-send-btn">
+                                Run
+                            </button>
+                        </div>
+                        <p class="text-tertiary text-xs mt-2">
+                            Sends input to the container's main process (stdin) via the node WebSocket.
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -405,6 +424,10 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
         elements.infoName = document.getElementById('info-name');
         elements.infoStatus = document.getElementById('info-status');
         elements.infoId = document.getElementById('info-id');
+
+        // Exec
+        elements.execInput = document.getElementById('exec-input');
+        elements.execSendBtn = document.getElementById('exec-send-btn');
     }
 
     function bindEvents() {
@@ -445,6 +468,19 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
 
         // Cleanup on page unload
         window.addEventListener('beforeunload', destroy);
+
+        // Exec
+        elements.execInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendExecFromInput();
+            }
+        });
+        elements.execSendBtn.addEventListener('click', () => {
+            sendExecFromInput();
+        });
+
+        updateExecControls();
     }
 
     // WebSocket functions
@@ -502,6 +538,7 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
                 hideLoading();
                 showStatus('disconnected', 'Disconnected');
                 stopKeepAlive();
+                updateExecControls();
 
                 if (state.intentionalClose) {
                     state.intentionalClose = false;
@@ -518,11 +555,13 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
                 console.error('[Logs] WebSocket error:', error);
                 state.isConnecting = false;
                 hideLoading();
+                updateExecControls();
             };
         } catch (e) {
             console.error('[Logs] Failed to create WebSocket:', e);
             state.isConnecting = false;
             hideLoading();
+            updateExecControls();
         }
     }
 
@@ -535,6 +574,7 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
                 hideLoading();
                 showStatus('live', 'Live (WebSocket)');
                 startKeepAlive();
+                updateExecControls();
                 break;
 
             case 'auth:failed':
@@ -544,6 +584,7 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
                 state.isConnecting = false;
                 hideLoading();
                 showStatus('disconnected', 'Auth failed');
+                updateExecControls();
                 break;
 
             case 'containers':
@@ -561,7 +602,133 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
             case 'error':
                 console.error('[Logs] Server error:', message.error);
                 break;
+
+            case 'exec:result':
+                handleExecResultMessage(message);
+                break;
+
+            case 'exec:rejected':
+                handleExecRejectedMessage(message);
+                break;
+
+            case 'console:output':
+                handleConsoleOutputMessage(message);
+                break;
+
+            case 'console:rejected':
+                handleConsoleRejectedMessage(message);
+                break;
+
+            case 'console:error':
+                handleConsoleErrorMessage(message);
+                break;
+
+            case 'console:status':
+                handleConsoleStatusMessage(message);
+                break;
         }
+    }
+
+    function getSelectedContainerName() {
+        const container = state.containers.find(c => c.id === state.selectedContainer);
+        return container ? container.name : null;
+    }
+
+    function updateExecControls() {
+        const enabled = !!(state.wsConnected && !state.paused && state.selectedContainer);
+        elements.execInput.disabled = !enabled;
+        elements.execSendBtn.disabled = !enabled;
+    }
+
+    function sendExecFromInput() {
+        const cmd = (elements.execInput.value || '').trim();
+        if (!cmd) return;
+        if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+        if (!state.wsConnected) return;
+        if (state.paused) return;
+        if (!state.selectedContainer) return;
+
+        const requestId = `console_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const containerId = state.selectedContainer;
+        const containerName = getSelectedContainerName();
+
+        // Show the command immediately in the log stream.
+        appendParsedLogLines('system', `$ ${cmd}`, containerId, containerName, null);
+
+        try {
+            state.ws.send(JSON.stringify({
+                type: 'console:input',
+                request_id: requestId,
+                container_id: containerId,
+                command: cmd,
+                timestamp: Date.now(),
+            }));
+        } catch (e) {
+            appendParsedLogLines('system', `[console] Failed to send: ${e.message}`, containerId, containerName, null);
+            return;
+        }
+
+        elements.execInput.value = '';
+        elements.execInput.focus();
+    }
+
+    function handleExecRejectedMessage(payload) {
+        const containerId = normalizeContainerId(payload.container_id || payload.containerId) || state.selectedContainer || '__system__';
+        const containerName = payload.container || payload.container_name || payload.containerName || getSelectedContainerName();
+        const error = payload.error || 'Exec rejected';
+        appendParsedLogLines('system', `[exec] ${error}`, containerId, containerName, null);
+    }
+
+    function handleExecResultMessage(payload) {
+        const containerId = normalizeContainerId(payload.container_id || payload.containerId) || state.selectedContainer || '__system__';
+        const containerName = payload.container || payload.container_name || payload.containerName || getSelectedContainerName();
+
+        if (payload.error) {
+            appendParsedLogLines('system', `[exec] ${payload.error}`, containerId, containerName, null);
+        }
+
+        const stdout = (payload.stdout || '').trimEnd();
+        const stderr = (payload.stderr || '').trimEnd();
+        if (stdout) appendParsedLogLines('system', stdout, containerId, containerName, null);
+        if (stderr) appendParsedLogLines('system', stderr, containerId, containerName, null);
+
+        if (payload.truncated) {
+            appendParsedLogLines('system', '[exec] Output truncated', containerId, containerName, null);
+        }
+
+        if (payload.exit_code !== undefined && payload.exit_code !== null) {
+            appendParsedLogLines('system', `[exec] Exit code: ${payload.exit_code}`, containerId, containerName, null);
+        }
+    }
+
+    function handleConsoleOutputMessage(payload) {
+        const stream = payload.stream || 'stdout';
+        const content = payload.content ?? payload.data ?? '';
+        if (!content) return;
+        const containerId = normalizeContainerId(payload.container_id || payload.containerId) || '__system__';
+        const containerName = payload.container || payload.container_name || payload.containerName || null;
+        appendParsedLogLines(stream, content, containerId, containerName, payload.timestamp || null);
+    }
+
+    function handleConsoleRejectedMessage(payload) {
+        const containerId = normalizeContainerId(payload.container_id || payload.containerId) || state.selectedContainer || '__system__';
+        const containerName = payload.container || payload.container_name || payload.containerName || getSelectedContainerName();
+        const error = payload.error || 'Console input rejected';
+        appendParsedLogLines('system', `[console] ${error}`, containerId, containerName, null);
+    }
+
+    function handleConsoleErrorMessage(payload) {
+        const containerId = normalizeContainerId(payload.container_id || payload.containerId) || state.selectedContainer || '__system__';
+        const containerName = payload.container || payload.container_name || payload.containerName || getSelectedContainerName();
+        const error = payload.error || 'Console error';
+        appendParsedLogLines('system', `[console] ${error}`, containerId, containerName, null);
+    }
+
+    function handleConsoleStatusMessage(payload) {
+        const containerId = normalizeContainerId(payload.container_id || payload.containerId) || state.selectedContainer || '__system__';
+        const containerName = payload.container || payload.container_name || payload.containerName || getSelectedContainerName();
+        const status = payload.status || 'unknown';
+        appendParsedLogLines('system', `[console] ${status}`, containerId, containerName, null);
     }
 
     function handleContainersMessage(payload) {
@@ -589,6 +756,8 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
         if (previous !== state.selectedContainer) {
             rebuildVisibleLogs();
         }
+
+        updateExecControls();
     }
 
     function handleLogMessage(payload) {
@@ -820,6 +989,8 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
         } else if (state.wsConnected) {
             showStatus('live', 'Live (WebSocket)');
         }
+
+        updateExecControls();
     }
 
     // Keep-alive

@@ -147,6 +147,7 @@ function buildSecureDockerArgs(applicationId, deploymentId, options = {}) {
     
     // Basic container settings
     args.push('-d'); // Detached
+    args.push('-i'); // Keep stdin open (enables console input for apps that read stdin)
     args.push('--name', `chap-${applicationId}`);
     args.push('--restart', 'unless-stopped');
     

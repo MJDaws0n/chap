@@ -65,6 +65,13 @@ if (!empty($envArr)) {
                     Live Logs
                 </a>
 
+                <a href="/applications/<?= e($application->uuid) ?>/files" class="btn btn-secondary">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+                    </svg>
+                    Files
+                </a>
+
                 <?php if (($application->status ?? '') === 'running'): ?>
                     <form method="POST" action="/applications/<?= e($application->uuid) ?>/restart" class="inline-block">
                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
