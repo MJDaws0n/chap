@@ -332,9 +332,8 @@
 }
 
 .card-footer {
-    padding: var(--space-4) var(--space-6);
+    padding: var(--space-4);
     border-top: 1px solid var(--border-primary);
-    background-color: var(--bg-tertiary);
     border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
@@ -614,41 +613,57 @@
 .icon-box-blue {
     background-color: var(--accent-blue-subtle);
     color: var(--accent-blue);
+    min-width: 40px;
+    min-height: 40px;
 }
 
 .icon-box-green {
     background-color: var(--accent-green-subtle);
     color: var(--accent-green);
+    min-width: 40px;
+    min-height: 40px;
 }
 
 .icon-box-purple {
     background-color: var(--accent-purple-subtle);
     color: var(--accent-purple);
+    min-width: 40px;
+    min-height: 40px;
 }
 
 .icon-box-yellow {
     background-color: var(--accent-yellow-subtle);
     color: var(--accent-yellow);
+    min-width: 40px;
+    min-height: 40px;
 }
 
 .icon-box-red {
     background-color: var(--accent-red-subtle);
     color: var(--accent-red);
+    min-width: 40px;
+    min-height: 40px;
 }
 
 .icon-box-orange {
     background-color: var(--accent-orange-subtle);
     color: var(--accent-orange);
+    min-width: 40px;
+    min-height: 40px;
 }
 
 .icon-box-pink {
     background-color: var(--accent-pink-subtle);
     color: var(--accent-pink);
+    min-width: 40px;
+    min-height: 40px;
 }
 
 .icon-box-teal {
     background-color: var(--accent-teal-subtle);
     color: var(--accent-teal);
+    min-width: 40px;
+    min-height: 40px;
 }
 
 /* Compatibility aliases (used by older converted templates) */

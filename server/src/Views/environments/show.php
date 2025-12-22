@@ -52,7 +52,7 @@
                 <h2 class="text-xl font-semibold text-primary">Applications</h2>
                 <span class="badge badge-neutral"><?= count($applications) ?></span>
             </div>
-            <a href="/environments/<?= e($environment->uuid) ?>/applications/create" class="btn btn-primary btn-sm">New Application</a>
+            <a href="/environments/<?= e($environment->uuid) ?>/applications/create" class="btn btn-primary">+ New Application</a>
         </div>
 
         <?php if (empty($applications)): ?>

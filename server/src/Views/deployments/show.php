@@ -16,118 +16,132 @@ $statusBadge = [
 $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying']);
 ?>
 
-<div class="deployment-show">
+<div class="flex flex-col gap-6">
     <!-- Breadcrumb & Header -->
     <div class="page-header">
-        <div>
-            <nav class="breadcrumb">
-                <a href="/projects">Projects</a>
-                <span class="breadcrumb-separator">/</span>
-                <a href="/projects/<?= $project->uuid ?>"><?= e($project->name) ?></a>
-                <span class="breadcrumb-separator">/</span>
-                <a href="/environments/<?= $environment->uuid ?>"><?= e($environment->name) ?></a>
-                <span class="breadcrumb-separator">/</span>
-                <a href="/applications/<?= $application->uuid ?>"><?= e($application->name) ?></a>
-                <span class="breadcrumb-separator">/</span>
-                <span class="breadcrumb-current">Deployment</span>
-            </nav>
-            <div class="flex items-center gap-md mt-sm">
-                <h1 class="page-title">Deployment</h1>
-                <span class="badge <?= $statusBadge ?>">
-                    <?= ucfirst($deployment->status) ?>
-                </span>
+        <div class="page-header-top">
+            <div>
+                <nav class="breadcrumb">
+                    <span class="breadcrumb-item">
+                        <a href="/projects">Projects</a>
+                    </span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item">
+                        <a href="/projects/<?= e($project->uuid) ?>"><?= e($project->name) ?></a>
+                    </span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item">
+                        <a href="/environments/<?= e($environment->uuid) ?>"><?= e($environment->name) ?></a>
+                    </span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-item">
+                        <a href="/applications/<?= e($application->uuid) ?>"><?= e($application->name) ?></a>
+                    </span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-current">Deployment</span>
+                </nav>
+
+                <div class="flex items-center flex-wrap gap-3 mt-4">
+                    <h1 class="page-header-title">Deployment</h1>
+                    <span class="badge <?= $statusBadge ?>"><?= ucfirst($deployment->status) ?></span>
+                </div>
+                <p class="page-header-description">
+                    <?= e($deployment->commit_message ?? 'Manual deployment') ?>
+                    <?php if ($deployment->commit_sha): ?>
+                        • <code class="code-inline"><?= substr($deployment->commit_sha, 0, 7) ?></code>
+                    <?php endif; ?>
+                </p>
             </div>
-            <p class="text-muted mt-xs">
-                <?= e($deployment->commit_message ?? 'Manual deployment') ?>
-                <?php if ($deployment->commit_sha): ?>
-                    • <code class="code-inline"><?= substr($deployment->commit_sha, 0, 7) ?></code>
+
+            <div class="page-header-actions">
+                <a href="/applications/<?= e($application->uuid) ?>" class="btn btn-secondary">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                    </svg>
+                    Back to Application
+                </a>
+                <?php if ($isInProgress): ?>
+                    <form method="POST" action="/deployments/<?= e($deployment->uuid) ?>/cancel" class="inline">
+                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                        <button type="submit" class="btn btn-danger">Cancel</button>
+                    </form>
                 <?php endif; ?>
-            </p>
-        </div>
-        <div class="page-actions">
-            <a href="/applications/<?= $application->uuid ?>" class="btn btn-secondary">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-                </svg>
-                Back to Application
-            </a>
-            <?php if ($isInProgress): ?>
-                <form method="POST" action="/deployments/<?= $deployment->uuid ?>/cancel" class="inline">
-                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                    <button type="submit" class="btn btn-danger">Cancel</button>
-                </form>
-            <?php endif; ?>
+            </div>
         </div>
     </div>
 
-    <div class="deployment-layout">
+    <div class="grid grid-cols-1 lg:grid-cols-3">
         <!-- Logs -->
-        <div class="logs-panel">
-            <div class="card card-glass">
+        <div class="lg:col-span-2 min-w-0">
+            <div class="card">
                 <div class="card-header">
-                    <h2 class="card-title">Build Logs</h2>
-                    <?php if ($isInProgress): ?>
-                        <div class="live-indicator">
-                            <span class="live-dot"></span>
-                            <span>Live</span>
-                        </div>
-                    <?php endif; ?>
-                </div>
-                
-                <div class="logs-container" id="logs-container">
-                    <?php 
-                    $logs = $deployment->logsArray();
-                    if (empty($logs)):
-                    ?>
-                        <p class="text-muted">Waiting for logs...</p>
-                    <?php else: ?>
-                        <?php foreach ($logs as $log): ?>
-                            <?php
-                            $logClass = 'log-info';
-                            $msg = strtolower($log['message'] ?? '');
-                            if (str_contains($msg, 'error') || str_contains($msg, 'failed')) {
-                                $logClass = 'log-error';
-                            } elseif (str_contains($msg, 'warning') || str_contains($msg, 'warn')) {
-                                $logClass = 'log-warning';
-                            } elseif (str_contains($msg, 'success') || str_contains($msg, 'completed')) {
-                                $logClass = 'log-success';
-                            }
-                            ?>
-                            <div class="log-entry <?= $logClass ?>">
-                                <span class="log-timestamp"><?= e($log['timestamp'] ?? '') ?></span>
-                                <span class="log-message"><?= e($log['message'] ?? '') ?></span>
+                    <div class="flex items-center justify-between gap-3 flex-wrap">
+                        <h2 class="card-title">Build Logs</h2>
+                        <?php if ($isInProgress): ?>
+                            <div class="live-indicator">
+                                <span class="live-dot"></span>
+                                <span>Live</span>
                             </div>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
+                <div class="card-body p-0">
+                    <div class="logs-container" id="logs-container">
+                        <?php
+                        $logs = $deployment->logsArray();
+                        if (empty($logs)):
+                        ?>
+                            <p class="text-secondary text-sm">Waiting for logs...</p>
+                        <?php else: ?>
+                            <?php foreach ($logs as $log): ?>
+                                <?php
+                                $logClass = 'log-info';
+                                $msg = strtolower($log['message'] ?? '');
+                                if (str_contains($msg, 'error') || str_contains($msg, 'failed') || str_contains($msg, 'exception')) {
+                                    $logClass = 'log-error';
+                                } elseif (str_contains($msg, 'warning') || str_contains($msg, 'warn')) {
+                                    $logClass = 'log-warning';
+                                } elseif (str_contains($msg, 'success') || str_contains($msg, 'completed')) {
+                                    $logClass = 'log-success';
+                                }
+                                ?>
+                                <div class="log-entry <?= $logClass ?>">
+                                    <span class="log-timestamp"><?= e($log['timestamp'] ?? '') ?></span>
+                                    <span class="log-message"><?= e($log['message'] ?? '') ?></span>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Sidebar -->
-        <div class="deployment-sidebar">
+        <div class="flex flex-col gap-6">
             <!-- Details Card -->
-            <div class="card card-glass">
+            <div class="card">
                 <div class="card-header">
                     <h3 class="card-title">Details</h3>
                 </div>
                 <div class="card-body">
-                    <dl class="info-list">
-                        <div class="info-item">
-                            <dt>Status</dt>
-                            <dd><span class="badge <?= $statusBadge ?>"><?= ucfirst($deployment->status) ?></span></dd>
+                    <dl class="flex flex-col gap-4">
+                        <div class="flex items-center justify-between gap-4 text-sm">
+                            <dt class="text-tertiary">Status</dt>
+                            <dd class="m-0"><span class="badge <?= $statusBadge ?>"><?= ucfirst($deployment->status) ?></span></dd>
                         </div>
-                        <div class="info-item">
-                            <dt>Started</dt>
-                            <dd><?= time_ago($deployment->created_at) ?></dd>
+                        <div class="flex items-center justify-between gap-4 text-sm">
+                            <dt class="text-tertiary">Started</dt>
+                            <dd class="m-0 text-primary"><?= time_ago($deployment->created_at) ?></dd>
                         </div>
                         <?php if ($deployment->finished_at): ?>
-                            <div class="info-item">
-                                <dt>Finished</dt>
-                                <dd><?= time_ago($deployment->finished_at) ?></dd>
+                            <div class="flex items-center justify-between gap-4 text-sm">
+                                <dt class="text-tertiary">Finished</dt>
+                                <dd class="m-0 text-primary"><?= time_ago($deployment->finished_at) ?></dd>
                             </div>
-                            <div class="info-item">
-                                <dt>Duration</dt>
-                                <dd>
+                            <div class="flex items-center justify-between gap-4 text-sm">
+                                <dt class="text-tertiary">Duration</dt>
+                                <dd class="m-0 text-primary">
                                     <?php
                                     $start = strtotime($deployment->created_at);
                                     $end = strtotime($deployment->finished_at);
@@ -141,32 +155,32 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
                                 </dd>
                             </div>
                         <?php endif; ?>
-                        <div class="info-item">
-                            <dt>Application</dt>
-                            <dd><a href="/applications/<?= $application->uuid ?>" class="link"><?= e($application->name) ?></a></dd>
+                        <div class="flex items-center justify-between gap-4 text-sm">
+                            <dt class="text-tertiary">Application</dt>
+                            <dd class="m-0"><a href="/applications/<?= e($application->uuid) ?>" class="link"><?= e($application->name) ?></a></dd>
                         </div>
                         <?php if ($deployment->commit_sha): ?>
-                            <div class="info-item">
-                                <dt>Commit</dt>
-                                <dd><code class="code-inline"><?= substr($deployment->commit_sha, 0, 7) ?></code></dd>
+                            <div class="flex items-center justify-between gap-4 text-sm">
+                                <dt class="text-tertiary">Commit</dt>
+                                <dd class="m-0"><code class="code-inline"><?= substr($deployment->commit_sha, 0, 7) ?></code></dd>
                             </div>
                         <?php endif; ?>
-                        <div class="info-item">
-                            <dt>Triggered by</dt>
-                            <dd><?= e($deployment->triggered_by ?? 'Manual') ?></dd>
+                        <div class="flex items-center justify-between gap-4 text-sm">
+                            <dt class="text-tertiary">Triggered by</dt>
+                            <dd class="m-0 text-primary"><?= e($deployment->triggered_by ?? 'Manual') ?></dd>
                         </div>
                     </dl>
                 </div>
             </div>
 
             <!-- Actions Card -->
-            <div class="card card-glass">
+            <div class="card">
                 <div class="card-header">
                     <h3 class="card-title">Actions</h3>
                 </div>
                 <div class="card-body">
-                    <div class="btn-stack">
-                        <form method="POST" action="/applications/<?= $application->uuid ?>/deploy">
+                    <div class="flex flex-col gap-3">
+                        <form method="POST" action="/applications/<?= e($application->uuid) ?>/deploy">
                             <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                             <button type="submit" class="btn btn-primary w-full">
                                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -176,7 +190,7 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
                             </button>
                         </form>
                         <?php if ($deployment->status === 'success' || $deployment->status === 'running'): ?>
-                            <form method="POST" action="/applications/<?= $application->uuid ?>/stop">
+                            <form method="POST" action="/applications/<?= e($application->uuid) ?>/stop">
                                 <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                                 <button type="submit" class="btn btn-secondary w-full">
                                     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -194,34 +208,6 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
 </div>
 
 <style>
-.deployment-show {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-lg);
-}
-
-.deployment-layout {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: var(--space-lg);
-}
-
-@media (min-width: 1024px) {
-    .deployment-layout {
-        grid-template-columns: 3fr 1fr;
-    }
-}
-
-.logs-panel {
-    min-width: 0;
-}
-
-.deployment-sidebar {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-lg);
-}
-
 .live-indicator {
     display: flex;
     align-items: center;
@@ -234,7 +220,7 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--green-500);
+    background: var(--accent-green);
     animation: pulse 2s infinite;
 }
 
@@ -245,17 +231,15 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
 
 /* Logs Container */
 .logs-container {
-    background: var(--gray-900);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-primary);
     border-radius: var(--radius-lg);
-    padding: var(--space-md);
-    height: 600px;
+    padding: var(--space-4);
+    height: min(600px, 70vh);
     overflow-y: auto;
+    overflow-x: hidden;
     font-family: var(--font-mono);
     font-size: var(--text-sm);
-}
-
-[data-theme="light"] .logs-container {
-    background: var(--gray-100);
 }
 
 .log-entry {
@@ -263,6 +247,7 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
     align-items: flex-start;
     gap: var(--space-sm);
     padding: var(--space-xs) 0;
+    min-width: 0;
 }
 
 .log-timestamp {
@@ -276,69 +261,38 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
     word-break: break-all;
     overflow-wrap: anywhere;
     color: var(--text-secondary);
+    min-width: 0;
+    flex: 1;
 }
 
 .log-entry.log-error .log-message {
-    color: var(--red-400);
+    color: var(--accent-red);
 }
 
 .log-entry.log-warning .log-message {
-    color: var(--yellow-400);
+    color: var(--accent-yellow);
 }
 
 .log-entry.log-success .log-message {
-    color: var(--green-400);
-}
-
-/* Info List */
-.info-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-md);
-}
-
-.info-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: var(--text-sm);
-}
-
-.info-item dt {
-    color: var(--text-tertiary);
-}
-
-.info-item dd {
-    color: var(--text-primary);
-    margin: 0;
+    color: var(--accent-green);
 }
 
 .link {
-    color: var(--blue-400);
+    color: var(--accent-blue);
     text-decoration: none;
 }
 
 .link:hover {
-    color: var(--blue-300);
+    color: var(--accent-blue-hover);
 }
 
 .code-inline {
     font-family: var(--font-mono);
     font-size: var(--text-xs);
-    background: var(--surface-secondary);
-    padding: var(--space-xs) var(--space-sm);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
-}
-
-/* Button Stack */
-.btn-stack {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-}
-
-.btn-stack form {
-    width: 100%;
 }
 </style>
 

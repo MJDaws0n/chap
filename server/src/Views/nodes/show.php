@@ -23,8 +23,8 @@ $statusBadge = [
 
                 <div class="flex items-center gap-4 mt-4">
                     <div class="icon-box icon-box-purple icon-box-lg">
-                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2"/>
+                        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"></path>
                         </svg>
                     </div>
                     <div class="min-w-0">
@@ -91,6 +91,16 @@ $statusBadge = [
                     <input type="hidden" name="_method" value="PUT">
                     
                     <div class="form-group">
+                        <label for="description" class="form-label">Description</label>
+                        <input 
+                            type="text" 
+                            id="description" 
+                            name="description" 
+                            class="input"
+                            placeholder="Production server in AWS us-east-1"
+                            value="<?= e($node->description ?? '') ?>"
+                        >
+
                         <label for="logs_websocket_url" class="form-label">Live Logs WebSocket URL</label>
                         <input 
                             type="text" 
@@ -100,8 +110,8 @@ $statusBadge = [
                             placeholder="wss://node.example.com:6002"
                             value="<?= e($node->logs_websocket_url ?? '') ?>"
                         >
+                        <button type="submit" class="btn btn-primary">Update</button>
                     </div>
-                    <button type="submit" class="btn btn-primary btn-sm">Update</button>
                 </form>
             </div>
         </div>
