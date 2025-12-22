@@ -101,7 +101,7 @@ Default login:
 
 Run this on **each server** where you want to deploy applications.
 
-> **Note:** You only run ONE node per server. Each node connects back to your central Chap server.
+> **Note:** You only run ONE node per host. Each node connects back to your central Chap server.
 
 ### Quick Install
 
