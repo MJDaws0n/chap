@@ -749,6 +749,52 @@ class ApplicationController extends BaseController
     }
 
     /**
+     * Dedicated file editor page (loads file via node WebSocket)
+     */
+    public function fileEditor(string $uuid): void
+    {
+        $team = $this->currentTeam();
+        $application = Application::findByUuid($uuid);
+
+        if (!$this->canAccessApplication($application, $team)) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Application not found'], 404);
+            } else {
+                flash('error', 'Application not found');
+                $this->redirect('/projects');
+            }
+            return;
+        }
+
+        if ($this->isApiRequest()) {
+            $this->json(['error' => 'File editor requires WebSocket'], 400);
+            return;
+        }
+
+        $path = isset($_GET['path']) ? (string) $_GET['path'] : '';
+        $dir = isset($_GET['dir']) ? (string) $_GET['dir'] : '';
+        $containerId = isset($_GET['container']) ? (string) $_GET['container'] : '';
+
+        $node = $application->node();
+        if (!$node && $application->node_id) {
+            $node = \Chap\Models\Node::find($application->node_id);
+        }
+        $browserWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
+
+        $this->view('applications/file_editor', [
+            'title' => 'Edit File - ' . $application->name,
+            'application' => $application,
+            'environment' => $application->environment(),
+            'project' => $application->environment()->project(),
+            'browserWebsocketUrl' => $browserWebsocketUrl,
+            'sessionId' => session_id(),
+            'path' => $path,
+            'dir' => $dir,
+            'containerId' => $containerId,
+        ]);
+    }
+
+    /**
      * Get containers for an application
      */
     private function getContainersForApplication(Application $application): array

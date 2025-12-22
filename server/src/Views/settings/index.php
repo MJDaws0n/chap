@@ -68,6 +68,22 @@
     </div>
 
     <div class="flex flex-col gap-6">
+        <!-- About -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <h2 class="card-title">About</h2>
+                    <p class="text-secondary text-sm">Version information for this Chap instance.</p>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="flex items-center justify-between gap-4">
+                    <span class="text-secondary text-sm">Server Version</span>
+                    <code><?= e(\Chap\Config::SERVER_VERSION) ?></code>
+                </div>
+            </div>
+        </div>
+
         <!-- Notifications -->
         <div class="card">
             <div class="card-header">

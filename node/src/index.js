@@ -13,6 +13,16 @@ const StorageManager = require('./storage');
 const security = require('./security');
 const { createLiveLogsWs } = require('./liveLogsWs');
 
+// Node Agent version (single source of truth)
+const AGENT_VERSION = (() => {
+    try {
+        // node/src/index.js -> node/package.json
+        return process.env.CHAP_AGENT_VERSION || require('../package.json').version;
+    } catch (e) {
+        return process.env.CHAP_AGENT_VERSION || '0.0.0';
+    }
+})();
+
 // Configuration
 const config = {
     serverUrl: process.env.CHAP_SERVER_URL || 'ws://localhost:6001',
@@ -65,7 +75,7 @@ function connect() {
         send('node:auth', {
             payload: {
                 token: config.nodeToken,
-                version: '1.0.0'
+                version: AGENT_VERSION
             }
         });
     });
@@ -1072,7 +1082,7 @@ function sendSystemInfo() {
             arch: os.arch(),
             cpus: os.cpus().length,
             memory: os.totalmem(),
-            agent_version: '1.0.0'
+            agent_version: AGENT_VERSION
         }
     });
 }

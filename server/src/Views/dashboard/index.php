@@ -3,7 +3,7 @@
     <div class="page-header-top">
         <div>
             <h1 class="page-header-title">Dashboard</h1>
-            <p class="page-header-description">Welcome back, <?= htmlspecialchars($user['name'] ?? 'User') ?>!</p>
+            <p class="page-header-description">Overview of your projects, applications, and deployments.</p>
         </div>
     </div>
 </div>

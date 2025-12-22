@@ -566,20 +566,59 @@
 
     // ===== Auto-hide flash messages =====
     function initFlashMessages() {
-        document.querySelectorAll('.alert[data-auto-hide]').forEach(alert => {
+        const flashAlerts = Array.from(document.querySelectorAll('.alert[data-auto-hide]'));
+
+        // If our toast system is available, convert flash banners into nice popups.
+        if (window.Toast && typeof window.Toast.show === 'function') {
+            flashAlerts.forEach((alertEl) => {
+                if (!(alertEl instanceof HTMLElement)) return;
+                if (alertEl.dataset.chapToasted === 'true') return;
+                alertEl.dataset.chapToasted = 'true';
+
+                const duration = parseInt(alertEl.dataset.autoHide) || 5000;
+
+                const msgSpan = alertEl.querySelector('span');
+                const message = (msgSpan ? msgSpan.textContent : alertEl.textContent) || '';
+                const text = message.trim();
+                if (!text) {
+                    alertEl.remove();
+                    return;
+                }
+
+                let type = 'info';
+                if (alertEl.classList.contains('alert-success')) type = 'success';
+                else if (alertEl.classList.contains('alert-danger')) type = 'error';
+                else if (alertEl.classList.contains('alert-warning')) type = 'warning';
+                else if (alertEl.classList.contains('alert-info')) type = 'info';
+
+                // Keep timing consistent with the banner auto-hide.
+                if (typeof window.Toast[type] === 'function') {
+                    window.Toast[type](text, { duration });
+                } else {
+                    window.Toast.show(text, { type: type === 'error' ? 'danger' : type, duration });
+                }
+
+                alertEl.remove();
+            });
+
+            return;
+        }
+
+        // Fallback: keep old in-page banners with auto-hide + dismiss.
+        flashAlerts.forEach(alert => {
             const duration = parseInt(alert.dataset.autoHide) || 5000;
-            
+
             setTimeout(() => {
                 alert.classList.add('alert-hiding');
                 setTimeout(() => alert.remove(), 300);
             }, duration);
         });
-        
+
         // Dismiss button
         document.addEventListener('click', (e) => {
             const dismissBtn = e.target.closest('[data-dismiss="alert"]');
             if (!dismissBtn) return;
-            
+
             const alert = dismissBtn.closest('.alert');
             if (alert) {
                 alert.classList.add('alert-hiding');

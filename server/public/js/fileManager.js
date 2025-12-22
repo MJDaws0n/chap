@@ -22,6 +22,73 @@
         alert(message);
     }
 
+    async function chapConfirm(options) {
+        const title = (options && options.title) ? String(options.title) : 'Confirm';
+        const text = (options && options.text) ? String(options.text) : '';
+        const confirmButtonText = (options && options.confirmButtonText) ? String(options.confirmButtonText) : 'Confirm';
+
+        if (window.Chap && window.Chap.modal && typeof window.Chap.modal.confirm === 'function') {
+            const res = await window.Chap.modal.confirm(title, text, { confirmText: confirmButtonText });
+            return !!(res && res.confirmed);
+        }
+
+        return confirm(text ? `${title}\n\n${text}` : title);
+    }
+
+    async function chapConfirmDelete(options) {
+        const title = (options && options.title) ? String(options.title) : 'Confirm Delete';
+        const text = (options && options.text) ? String(options.text) : 'Are you sure?';
+
+        if (window.Chap && window.Chap.modal && typeof window.Chap.modal.confirmDelete === 'function') {
+            const res = await window.Chap.modal.confirmDelete(title, text);
+            return !!(res && res.confirmed);
+        }
+
+        return confirm(`${title}\n\n${text}`);
+    }
+
+    async function chapPrompt(options) {
+        const title = (options && options.title) ? String(options.title) : 'Input';
+        const label = (options && options.label) ? String(options.label) : '';
+        const placeholder = (options && options.placeholder) ? String(options.placeholder) : '';
+        const confirmButtonText = (options && options.confirmButtonText) ? String(options.confirmButtonText) : 'OK';
+        const defaultValue = (options && options.defaultValue != null) ? String(options.defaultValue) : '';
+        const validate = (options && typeof options.validate === 'function') ? options.validate : null;
+
+        // Keep asking until valid (or cancelled).
+        for (;;) {
+            if (window.Chap && window.Chap.modal && typeof window.Chap.modal.prompt === 'function') {
+                const res = await window.Chap.modal.prompt(title, {
+                    message: label,
+                    placeholder,
+                    value: defaultValue,
+                    confirmText: confirmButtonText,
+                    required: true,
+                });
+                if (!res || !res.confirmed) return null;
+                const out = String(res.value || '').trim();
+                if (validate) {
+                    const err = validate(out);
+                    if (err) {
+                        showToast('error', err);
+                        continue;
+                    }
+                }
+                return out;
+            }
+
+            const v = prompt(title, defaultValue);
+            if (v == null) return null;
+            const out2 = String(v).trim();
+            if (!out2) return null;
+            if (validate) {
+                const err2 = validate(out2);
+                if (err2) return null;
+            }
+            return out2;
+        }
+    }
+
     function openModal(id) {
         const modal = document.getElementById(id);
         if (!modal) return;
@@ -68,8 +135,7 @@
 
         const statusEl = qs('#fm-status');
         const rootEl = qs('#fm-root');
-        const pathInput = qs('#fm-path');
-        const goBtn = qs('#fm-go');
+        const manualLocationBtn = qs('#fm-manual-location');
         const refreshBtn = qs('#fm-refresh');
         const rowsEl = qs('#fm-rows');
         const breadcrumbEl = qs('#fm-breadcrumb');
@@ -82,16 +148,13 @@
         const newFileBtn = qs('#fm-new-file');
         const renameBtn = qs('#fm-rename');
         const moveBtn = qs('#fm-move');
+        const copyBtn = qs('#fm-copy');
         const downloadBtn = qs('#fm-download');
         const deleteBtn = qs('#fm-delete');
         const archiveBtn = qs('#fm-archive');
         const unarchiveBtn = qs('#fm-unarchive');
 
-        const editorWrap = qs('#fm-editor');
-        const editorPathEl = qs('#fm-editor-path');
-        const editorSaveBtn = qs('#fm-editor-save');
-        const editorReloadBtn = qs('#fm-editor-reload');
-        const editorTextarea = qs('#fm-editor-textarea');
+        const selectAllCb = qs('#fm-select-all');
 
         const containerSelectBtn = qs('#fm-container-select-btn');
         const selectedContainerNameEl = qs('#fm-selected-container-name');
@@ -102,12 +165,31 @@
         let ws = null;
         let authenticated = false;
         let currentPath = '/';
+        let initialPathFromUrl = false;
         let containerRoot = null;
         let persistentPrefixes = [];
-        let selected = null; // { name, path, type }
+        const selectedPaths = new Set();
+        const selectedItems = new Map(); // path -> { name, path, type }
 
         let containers = [];
         let selectedContainerId = null;
+
+        let lastRenderedEntries = [];
+        const visibleRowRefs = new Map(); // path -> { tr, cb, item }
+
+        // Restore navigation state from query params (used by editor Back button)
+        try {
+            const u = new URL(window.location.href);
+            const qp = u.searchParams.get('path');
+            if (qp && typeof qp === 'string' && qp.startsWith('/')) {
+                currentPath = qp;
+                initialPathFromUrl = true;
+            }
+            const qc = u.searchParams.get('container');
+            if (qc && typeof qc === 'string' && qc.trim()) selectedContainerId = qc.trim();
+        } catch {
+            // ignore
+        }
 
         const pending = new Map(); // requestId -> { resolve, reject }
 
@@ -115,12 +197,131 @@
         const downloads = new Map(); // transferId -> { name, chunks: Uint8Array[], received }
         const uploads = new Map(); // transferId -> { file, offset, chunkSize, destDir, name }
 
-        let cm = null;
-        let editingPath = null;
+        function dirnameOf(p) {
+            const s = String(p || '');
+            if (!s || s === '/') return '/';
+            const parts = s.split('/');
+            parts.pop();
+            const d = parts.join('/');
+            return d === '' ? '/' : d;
+        }
+
+        function joinPath(dir, name) {
+            const d = String(dir || '/');
+            const n = String(name || '');
+            if (!n) return d || '/';
+            if (d === '/' || d === '') return '/' + n.replace(/^\/+/, '');
+            return d.replace(/\/+$/, '') + '/' + n.replace(/^\/+/, '');
+        }
+
+        function splitBaseExt(filename) {
+            const s = String(filename || '');
+            const i = s.lastIndexOf('.');
+            if (i > 0 && i < s.length - 1) {
+                return { base: s.slice(0, i), ext: s.slice(i) };
+            }
+            return { base: s, ext: '' };
+        }
+
+        function isDirectChildPath(childPath, dirPath) {
+            return dirnameOf(childPath) === (dirPath || '/');
+        }
+
+        function clearSelection() {
+            selectedPaths.clear();
+            selectedItems.clear();
+        }
+
+        function updateToolbarVisibility() {
+            const list = getSelectedList();
+            const count = list.length;
+            const one = count === 1 ? list[0] : null;
+
+            const toggle = (btn, visible) => {
+                if (!btn) return;
+                btn.classList.toggle('hidden', !visible);
+            };
+
+            // Show multi-select-related icons only when selection exists.
+            toggle(renameBtn, count === 1);
+            toggle(moveBtn, count >= 1);
+            toggle(copyBtn, count >= 1);
+            toggle(archiveBtn, count >= 1);
+            toggle(deleteBtn, count >= 1);
+
+            // Only show download/unarchive when selection makes sense.
+            toggle(downloadBtn, count === 1 && one && one.type === 'file');
+            toggle(unarchiveBtn, count === 1 && one && one.type === 'file');
+        }
+
+        function updateSelectAllState() {
+            if (!selectAllCb) return;
+            const total = Array.isArray(lastRenderedEntries) ? lastRenderedEntries.length : 0;
+            if (total === 0) {
+                selectAllCb.checked = false;
+                selectAllCb.indeterminate = false;
+                return;
+            }
+            let selectedVisible = 0;
+            for (const e of lastRenderedEntries) {
+                if (e && e.path && selectedPaths.has(e.path)) selectedVisible += 1;
+            }
+            selectAllCb.checked = selectedVisible === total;
+            selectAllCb.indeterminate = selectedVisible > 0 && selectedVisible < total;
+        }
+
+        function toggleSelection(item, checked, tr) {
+            if (!item || !item.path) return;
+            if (checked) {
+                selectedPaths.add(item.path);
+                selectedItems.set(item.path, item);
+                if (tr) tr.classList.add('selected');
+            } else {
+                selectedPaths.delete(item.path);
+                selectedItems.delete(item.path);
+                if (tr) tr.classList.remove('selected');
+            }
+
+            updateToolbarVisibility();
+            updateSelectAllState();
+        }
+
+        function getSelectedList() {
+            return Array.from(selectedItems.values());
+        }
 
         function setStatus(kind, text) {
             statusEl.textContent = text;
             statusEl.className = 'badge ' + (kind || 'badge-default');
+        }
+
+        function syncUrlState() {
+            try {
+                const u = new URL(window.location.href);
+                // Keep in sync for editor Back button + shareable links.
+                u.searchParams.set('path', currentPath || '/');
+                if (selectedContainerId) u.searchParams.set('container', selectedContainerId);
+                else u.searchParams.delete('container');
+                window.history.replaceState({}, '', u.toString());
+            } catch {
+                // ignore
+            }
+        }
+
+        function formatMtimeShort(iso) {
+            const s = String(iso || '').trim();
+            if (!s) return '';
+            // Prefer ISO compact "YYYY-MM-DD HH:MM" when possible.
+            if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) {
+                return s.slice(0, 16).replace('T', ' ');
+            }
+            try {
+                const d = new Date(s);
+                if (!Number.isFinite(d.getTime())) return s;
+                return d.toISOString().slice(0, 16).replace('T', ' ');
+            } catch {
+                return s;
+            }
         }
 
         function send(type, payload) {
@@ -189,33 +390,26 @@
             return svg;
         }
 
-        function selectRow(path, name, type, tr) {
-            selected = { path, name, type };
-            qsa('tr.fm-row', rowsEl).forEach(r => r.classList.remove('selected'));
-            if (tr) tr.classList.add('selected');
-        }
-
         function render(entries) {
             rowsEl.innerHTML = '';
+            visibleRowRefs.clear();
+            lastRenderedEntries = Array.isArray(entries) ? entries : [];
 
             // Parent dir row
             if (currentPath !== '/') {
                 const tr = document.createElement('tr');
                 tr.className = 'fm-row';
                 const td0 = document.createElement('td');
+                td0.className = 'fm-select-cell';
                 td0.textContent = '';
+
                 const td1 = document.createElement('td');
                 const wrap = document.createElement('div');
                 wrap.className = 'fm-name';
                 wrap.appendChild(iconSvg('folder'));
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.textContent = '..';
-                btn.addEventListener('click', () => {
-                    const parent = currentPath.split('/').slice(0, -1).join('/') || '/';
-                    navigate(parent);
-                });
-                wrap.appendChild(btn);
+                const label = document.createElement('span');
+                label.textContent = '..';
+                wrap.appendChild(label);
                 td1.appendChild(wrap);
                 const td2 = document.createElement('td');
                 td2.textContent = 'folder';
@@ -232,6 +426,11 @@
                 tr.appendChild(td4);
                 tr.appendChild(td5);
                 rowsEl.appendChild(tr);
+
+                tr.addEventListener('click', () => {
+                    const parent = currentPath.split('/').slice(0, -1).join('/') || '/';
+                    navigate(parent);
+                });
             }
 
             for (const e of (entries || [])) {
@@ -239,27 +438,49 @@
                 tr.className = 'fm-row';
 
                 const td0 = document.createElement('td');
-                td0.textContent = '';
+                td0.className = 'fm-select-cell';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.className = 'fm-checkbox';
+                cb.title = 'Select';
+                cb.setAttribute('aria-label', 'Select');
+                cb.checked = selectedPaths.has(e.path);
+                cb.addEventListener('click', (ev) => { ev.stopPropagation(); });
+                cb.addEventListener('change', () => {
+                    toggleSelection({ name: e.name, path: e.path, type: e.type }, cb.checked, tr);
+                });
+                td0.appendChild(cb);
+
+                visibleRowRefs.set(e.path, { tr, cb, item: { name: e.name, path: e.path, type: e.type } });
+
+                function selectOnlyThisRow() {
+                    // If it is already the only selected item, keep it.
+                    if (selectedPaths.size === 1 && selectedPaths.has(e.path)) return;
+
+                    clearSelection();
+                    // Clear UI checkboxes/rows quickly without a full refresh.
+                    qsa('#fm-rows tr.fm-row.selected').forEach((row) => row.classList.remove('selected'));
+                    qsa('#fm-rows input.fm-checkbox').forEach((x) => { x.checked = false; });
+                    cb.checked = true;
+                    toggleSelection({ name: e.name, path: e.path, type: e.type }, true, tr);
+                }
 
                 const td1 = document.createElement('td');
                 const wrap = document.createElement('div');
                 wrap.className = 'fm-name';
                 wrap.appendChild(iconSvg(e.type === 'dir' ? 'folder' : 'file'));
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.textContent = e.name;
-                btn.title = e.path;
-                btn.addEventListener('click', () => {
-                    selectRow(e.path, e.name, e.type, tr);
-                });
-                btn.addEventListener('dblclick', () => {
-                    if (e.type === 'dir') {
-                        navigate(e.path);
-                    } else {
-                        openEditor(e.path);
-                    }
-                });
-                wrap.appendChild(btn);
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = e.name;
+                nameSpan.title = e.path;
+                nameSpan.className = 'truncate';
+                wrap.appendChild(nameSpan);
+
+                if (e.persistent) {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge badge-info';
+                    badge.textContent = 'Persistent';
+                    wrap.appendChild(badge);
+                }
                 td1.appendChild(wrap);
 
                 const td2 = document.createElement('td');
@@ -269,17 +490,89 @@
                 td3.textContent = e.type === 'dir' ? '' : formatBytes(e.size);
 
                 const td4 = document.createElement('td');
-                td4.textContent = e.mtime || '';
+                td4.className = 'fm-mtime';
+                td4.textContent = formatMtimeShort(e.mtime);
+                td4.title = e.mtime || '';
 
                 const td5 = document.createElement('td');
-                if (e.persistent) {
-                    const badge = document.createElement('span');
-                    badge.className = 'badge badge-info';
-                    badge.textContent = 'Persistent';
-                    td5.appendChild(badge);
-                } else {
-                    td5.textContent = '';
-                }
+                td5.className = 'fm-row-actions';
+
+                // Per-row actions dropdown (match toolbar actions)
+                const dropdownId = generateId('fm_row_menu');
+                const dd = document.createElement('div');
+                dd.className = 'dropdown';
+                const trigger = document.createElement('button');
+                trigger.type = 'button';
+                trigger.className = 'btn btn-ghost btn-sm';
+                trigger.title = 'Actions';
+                trigger.setAttribute('aria-label', 'Actions');
+                trigger.setAttribute('data-dropdown-trigger', dropdownId);
+                trigger.setAttribute('data-dropdown-placement', 'bottom-end');
+                trigger.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6h.01M12 12h.01M12 18h.01"/></svg>';
+
+                const menu = document.createElement('div');
+                menu.className = 'dropdown-menu';
+                menu.id = dropdownId;
+                const items = document.createElement('div');
+                items.className = 'dropdown-items';
+
+                const mkItem = (label, onClick, danger) => {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = 'dropdown-item';
+                    b.textContent = label;
+                    if (danger) b.classList.add('text-danger');
+                    b.addEventListener('click', (ev) => {
+                        ev.preventDefault();
+                        Promise.resolve(onClick()).catch((err) => {
+                            showToast('error', err && err.message ? err.message : 'Action failed');
+                        });
+                    });
+                    return b;
+                };
+
+                items.appendChild(mkItem('Upload', async () => {
+                    uploadInput.click();
+                }));
+                items.appendChild(mkItem('New folder', async () => {
+                    await doMkdir();
+                }));
+                items.appendChild(mkItem('New file', async () => {
+                    await doNewFile();
+                }));
+                items.appendChild(mkItem('Rename', async () => {
+                    selectOnlyThisRow();
+                    await doRename();
+                }));
+                items.appendChild(mkItem('Move', async () => {
+                    selectOnlyThisRow();
+                    await doMove();
+                }));
+                items.appendChild(mkItem('Copy', async () => {
+                    selectOnlyThisRow();
+                    await doCopy();
+                }));
+                items.appendChild(mkItem('Download', async () => {
+                    selectOnlyThisRow();
+                    await doDownload();
+                }));
+                items.appendChild(mkItem('Archive', async () => {
+                    selectOnlyThisRow();
+                    await doArchive();
+                }));
+                items.appendChild(mkItem('Unarchive', async () => {
+                    selectOnlyThisRow();
+                    await doUnarchive();
+                }));
+                items.appendChild(mkItem('Delete', async () => {
+                    selectOnlyThisRow();
+                    await doDelete();
+                }, true));
+
+                menu.appendChild(items);
+                dd.appendChild(trigger);
+                dd.appendChild(menu);
+                td5.appendChild(dd);
 
                 tr.appendChild(td0);
                 tr.appendChild(td1);
@@ -288,134 +581,231 @@
                 tr.appendChild(td4);
                 tr.appendChild(td5);
 
-                tr.addEventListener('click', () => {
-                    selectRow(e.path, e.name, e.type, tr);
+                tr.addEventListener('click', (ev) => {
+                    // Prevent row navigation when interacting with actions/selection.
+                    if (ev && ev.target && ev.target.closest) {
+                        if (ev.target.closest('.fm-row-actions')) return;
+                        if (ev.target.closest('.fm-select-cell')) return;
+                        if (ev.target.closest('[data-dropdown-trigger]')) return;
+                    }
+
+                    if (e.type === 'dir') {
+                        navigate(e.path);
+                        return;
+                    }
+
+                    const u = new URL(`/applications/${encodeURIComponent(appUuid)}/files/edit`, window.location.origin);
+                    if (selectedContainerId) u.searchParams.set('container', selectedContainerId);
+                    u.searchParams.set('path', e.path);
+                    u.searchParams.set('dir', currentPath);
+                    window.location.href = u.toString();
+                });
+
+                // Right-click opens the same actions menu.
+                tr.addEventListener('contextmenu', (ev) => {
+                    ev.preventDefault();
+                    // Ensure selection matches the row.
+                    selectOnlyThisRow();
+                    // Open the dropdown at cursor (viewport clamped by Chap dropdown system).
+                    if (window.Chap && window.Chap.dropdown && typeof window.Chap.dropdown.open === 'function') {
+                        const cursorTrigger = document.createElement('button');
+                        cursorTrigger.type = 'button';
+                        cursorTrigger.setAttribute('aria-hidden', 'true');
+                        cursorTrigger.tabIndex = -1;
+                        cursorTrigger.style.position = 'fixed';
+                        cursorTrigger.style.left = `${ev.clientX}px`;
+                        cursorTrigger.style.top = `${ev.clientY}px`;
+                        cursorTrigger.style.width = '1px';
+                        cursorTrigger.style.height = '1px';
+                        cursorTrigger.style.opacity = '0';
+                        cursorTrigger.style.pointerEvents = 'none';
+                        cursorTrigger.style.zIndex = '0';
+                        document.body.appendChild(cursorTrigger);
+
+                        const cleanup = () => {
+                            try { cursorTrigger.remove(); } catch (_) { /* ignore */ }
+                            menu.removeEventListener('dropdown:close', cleanup);
+                        };
+                        menu.addEventListener('dropdown:close', cleanup);
+
+                        window.Chap.dropdown.open(cursorTrigger, menu, { placement: 'bottom-start', offset: 6 });
+                    } else {
+                        // Fallback
+                        trigger.click();
+                    }
                 });
 
                 rowsEl.appendChild(tr);
+
+                if (selectedPaths.has(e.path)) tr.classList.add('selected');
             }
+
+            updateToolbarVisibility();
+            updateSelectAllState();
         }
 
         async function refresh() {
             if (!authenticated) return;
-            const res = await request('list', { path: currentPath });
-            if (res && res.root) {
-                containerRoot = res.root;
-                rootEl.textContent = `Root: ${containerRoot}`;
+            try {
+                const res = await request('list', { path: currentPath });
+                if (res && res.root) {
+                    containerRoot = res.root;
+                    rootEl.textContent = `Root: ${containerRoot}`;
+                }
+                if (Array.isArray(res && res.persistent_prefixes)) {
+                    persistentPrefixes = res.persistent_prefixes;
+                }
+                buildBreadcrumb(currentPath);
+                render(res.entries || []);
+                syncUrlState();
+            } catch (e) {
+                // If the directory doesn't exist in this container (common when switching containers),
+                // auto-fallback to root instead of spamming an error toast.
+                if (currentPath !== '/') {
+                    currentPath = '/';
+                    clearSelection();
+                    try {
+                        const res2 = await request('list', { path: currentPath });
+                        if (res2 && res2.root) {
+                            containerRoot = res2.root;
+                            rootEl.textContent = `Root: ${containerRoot}`;
+                        }
+                        if (Array.isArray(res2 && res2.persistent_prefixes)) {
+                            persistentPrefixes = res2.persistent_prefixes;
+                        }
+                        buildBreadcrumb(currentPath);
+                        render(res2.entries || []);
+                        syncUrlState();
+                        return;
+                    } catch {
+                        // fall through
+                    }
+                }
+
+                setStatus('badge-danger', 'Error');
+                showToast('error', e && e.message ? e.message : 'Failed to load directory');
             }
-            if (Array.isArray(res && res.persistent_prefixes)) {
-                persistentPrefixes = res.persistent_prefixes;
-            }
-            pathInput.value = currentPath;
-            buildBreadcrumb(currentPath);
-            render(res.entries || []);
         }
 
         async function navigate(path) {
             currentPath = path || '/';
-            selected = null;
+            clearSelection();
+            syncUrlState();
             await refresh();
         }
 
-        function guessModeByFilename(filename) {
-            if (!window.CodeMirror || !window.CodeMirror.findModeByFileName) return null;
-            const info = window.CodeMirror.findModeByFileName(filename || '') || window.CodeMirror.findModeByExtension((filename || '').split('.').pop());
-            return info || null;
-        }
-
-        function ensureCodeMirrorMode(modeInfo) {
-            if (!window.CodeMirror || !window.CodeMirror.requireMode) return Promise.resolve();
-            if (!modeInfo || !modeInfo.mode) return Promise.resolve();
-
-            if (!window.CodeMirror.modeURL) {
-                window.CodeMirror.modeURL = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/%N/%N.min.js';
-            }
-
-            return new Promise((resolve) => {
-                window.CodeMirror.requireMode(modeInfo.mode, () => resolve());
-            });
-        }
-
-        async function openEditor(path) {
-            const res = await request('read', { path: path });
-            const content = (res && typeof res.content === 'string') ? res.content : '';
-            editingPath = path;
-            editorPathEl.textContent = path;
-
-            if (editorWrap) editorWrap.classList.remove('hidden');
-
-            if (!cm && window.CodeMirror) {
-                // Initialize CodeMirror on first open
-                cm = window.CodeMirror.fromTextArea(editorTextarea, {
-                    lineNumbers: true,
-                    indentUnit: 2,
-                    tabSize: 2,
-                    indentWithTabs: false,
-                    lineWrapping: false,
-                    viewportMargin: Infinity,
-                });
-            }
-
-            if (cm) {
-                cm.setValue(content);
-                const modeInfo = guessModeByFilename(path.split('/').pop());
-                await ensureCodeMirrorMode(modeInfo);
-                if (modeInfo && modeInfo.mime) {
-                    cm.setOption('mode', modeInfo.mime);
-                }
-                setTimeout(() => cm.refresh(), 0);
-            } else {
-                editorTextarea.value = content;
-            }
-        }
-
-        async function saveEditor() {
-            if (!editingPath) return;
-            const content = cm ? cm.getValue() : (editorTextarea.value || '');
-            await request('write', { path: editingPath, content: content });
-            showToast('success', 'Saved');
-        }
-
-        async function reloadEditor() {
-            if (!editingPath) return;
-            const res = await request('read', { path: editingPath });
-            const content = (res && typeof res.content === 'string') ? res.content : '';
-            if (cm) cm.setValue(content);
-            else editorTextarea.value = content;
-            showToast('success', 'Reloaded');
-        }
-
         async function doDelete() {
-            if (!selected) return showToast('error', 'Select a file or folder');
-            if (!confirm(`Delete ${selected.path}?`)) return;
-            await request('delete', { path: selected.path, type: selected.type });
-            selected = null;
+            const list = getSelectedList();
+            if (!list.length) return showToast('error', 'Select one or more items');
+            const label = list.length === 1 ? list[0].path : `${list.length} items`;
+
+            const ok = await chapConfirmDelete({
+                title: 'Delete',
+                text: `Delete ${label}?`,
+            });
+            if (!ok) return;
+
+            if (list.length === 1) {
+                await request('delete', { path: list[0].path, type: list[0].type });
+            } else {
+                await request('delete', { paths: list.map((x) => x.path) });
+            }
+            clearSelection();
             await refresh();
             showToast('success', 'Deleted');
         }
 
         async function doRename() {
-            if (!selected) return showToast('error', 'Select a file or folder');
-            const newName = prompt('New name', selected.name);
+            const list = getSelectedList();
+            if (list.length !== 1) return showToast('error', 'Select exactly one item');
+            const item = list[0];
+
+            const newName = await chapPrompt({
+                title: 'Rename',
+                label: 'New name',
+                defaultValue: item.name,
+                confirmButtonText: 'Rename',
+            });
             if (!newName) return;
-            await request('rename', { path: selected.path, new_name: newName });
-            selected = null;
+
+            await request('rename', { path: item.path, new_name: newName });
+            clearSelection();
             await refresh();
             showToast('success', 'Renamed');
         }
 
         async function doMove() {
-            if (!selected) return showToast('error', 'Select a file or folder');
-            const dest = prompt('Move to (destination directory path)', currentPath);
+            const list = getSelectedList();
+            if (!list.length) return showToast('error', 'Select one or more items');
+
+            const dest = await chapPrompt({
+                title: 'Move',
+                label: 'Destination directory path',
+                defaultValue: currentPath,
+                placeholder: '/',
+                confirmButtonText: 'Move',
+                validate: (v) => {
+                    const s = String(v || '').trim();
+                    if (!s.startsWith('/')) return 'Path must start with /';
+                    return null;
+                },
+            });
             if (!dest) return;
-            await request('move', { path: selected.path, dest_dir: dest });
-            selected = null;
+
+            if (list.length === 1) {
+                await request('move', { path: list[0].path, dest_dir: dest });
+            } else {
+                await request('move', { paths: list.map((x) => x.path), dest_dir: dest });
+            }
+            clearSelection();
             await refresh();
             showToast('success', 'Moved');
         }
 
+        async function doCopy() {
+            const list = getSelectedList();
+            if (!list.length) return showToast('error', 'Select one or more items');
+
+            async function duplicateOne(it) {
+                const dir = dirnameOf(it.path);
+                const parts = splitBaseExt(it.name);
+                const base2 = parts.base + '2';
+                const candidates = [base2 + parts.ext];
+                for (let i = 0; i < 12; i++) {
+                    const r = Math.floor(1000 + Math.random() * 9000);
+                    candidates.push(base2 + String(r) + parts.ext);
+                }
+
+                for (const name of candidates) {
+                    const destPath = joinPath(dir, name);
+                    try {
+                        await request('copy', { path: it.path, dest_path: destPath });
+                        return name;
+                    } catch (e) {
+                        const msg = (e && e.message) ? String(e.message) : '';
+                        if (/exists|already exists/i.test(msg)) continue;
+                        throw e;
+                    }
+                }
+                throw new Error('Could not find an available name');
+            }
+
+            let okCount = 0;
+            for (const it of list) {
+                await duplicateOne(it);
+                okCount += 1;
+            }
+            clearSelection();
+            await refresh();
+            showToast('success', okCount === 1 ? 'Duplicated' : `Duplicated ${okCount} items`);
+        }
+
         async function doMkdir() {
-            const name = prompt('Folder name');
+            const name = await chapPrompt({
+                title: 'New folder',
+                label: 'Folder name',
+                confirmButtonText: 'Create',
+            });
             if (!name) return;
             await request('mkdir', { dir: currentPath, name: name });
             await refresh();
@@ -423,7 +813,11 @@
         }
 
         async function doNewFile() {
-            const name = prompt('File name');
+            const name = await chapPrompt({
+                title: 'New file',
+                label: 'File name',
+                confirmButtonText: 'Create',
+            });
             if (!name) return;
             await request('touch', { dir: currentPath, name: name });
             await refresh();
@@ -431,26 +825,66 @@
         }
 
         async function doArchive() {
-            if (!selected) return showToast('error', 'Select a file or folder');
-            const outName = prompt('Archive name (e.g. archive.tar.gz)', selected.name + '.tar.gz');
+            const list = getSelectedList();
+            if (!list.length) return showToast('error', 'Select one or more items');
+
+            for (const it of list) {
+                if (!isDirectChildPath(it.path, currentPath)) {
+                    showToast('error', 'To archive multiple items, select items from the same directory');
+                    return;
+                }
+            }
+
+            const defaultName = list.length === 1 ? `${list[0].name}.tar.gz` : 'archive.tar.gz';
+            const outName = await chapPrompt({
+                title: 'Archive',
+                label: 'Archive name (e.g. archive.tar.gz)',
+                defaultValue: defaultName,
+                confirmButtonText: 'Archive',
+            });
             if (!outName) return;
-            await request('archive', { path: selected.path, out_dir: currentPath, out_name: outName });
+
+            await request('archive', {
+                dir: currentPath,
+                names: list.map((x) => x.name),
+                out_dir: currentPath,
+                out_name: outName,
+            });
+
+            clearSelection();
             await refresh();
             showToast('success', 'Archived');
         }
 
         async function doUnarchive() {
-            if (!selected || selected.type !== 'file') return showToast('error', 'Select an archive file');
-            const into = prompt('Extract into directory', currentPath);
+            const list = getSelectedList();
+            if (list.length !== 1 || list[0].type !== 'file') return showToast('error', 'Select exactly one archive file');
+            const item = list[0];
+
+            const into = await chapPrompt({
+                title: 'Unarchive',
+                label: 'Extract into directory',
+                defaultValue: currentPath,
+                placeholder: '/',
+                confirmButtonText: 'Extract',
+                validate: (v) => {
+                    const s = String(v || '').trim();
+                    if (!s.startsWith('/')) return 'Path must start with /';
+                    return null;
+                },
+            });
             if (!into) return;
-            await request('unarchive', { path: selected.path, dest_dir: into });
+
+            await request('unarchive', { path: item.path, dest_dir: into });
+            clearSelection();
             await refresh();
             showToast('success', 'Unarchived');
         }
 
         async function doDownload() {
-            if (!selected || selected.type !== 'file') return showToast('error', 'Select a file');
-            await request('download', { path: selected.path });
+            const list = getSelectedList();
+            if (list.length !== 1 || list[0].type !== 'file') return showToast('error', 'Select exactly one file');
+            await request('download', { path: list[0].path });
             // actual file bytes come via files:download:* events
         }
 
@@ -498,7 +932,9 @@
                     containerRoot = res.root || '/';
                     rootEl.textContent = `Root: ${containerRoot}`;
                     if (Array.isArray(res.persistent_prefixes)) persistentPrefixes = res.persistent_prefixes;
-                    currentPath = res.default_path || '/';
+                    if (!initialPathFromUrl) {
+                        currentPath = res.default_path || '/';
+                    }
                     if (Array.isArray(res.containers)) {
                         containers = res.containers;
                         renderContainerList(containers);
@@ -506,7 +942,9 @@
                             setSelectedContainer(res.selected_container_id);
                         }
                     }
-                    navigate(currentPath);
+                    navigate(currentPath).catch((e) => {
+                        showToast('error', e && e.message ? e.message : 'Failed to load directory');
+                    });
                 }).catch((e) => {
                     showToast('error', e.message || 'Failed to initialize');
                 });
@@ -589,6 +1027,8 @@
             }
             // Refresh the current dir when container changes
             if (authenticated) {
+                clearSelection();
+                syncUrlState();
                 refresh().catch(() => {});
             }
         }
@@ -651,16 +1091,41 @@
         }
 
         // Bind UI
-        goBtn.addEventListener('click', () => {
-            navigate(pathInput.value || '/');
-        });
-        pathInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                navigate(pathInput.value || '/');
-            }
-        });
+        if (manualLocationBtn) {
+            manualLocationBtn.addEventListener('click', async () => {
+                const path = await chapPrompt({
+                    title: 'Manual location',
+                    label: 'Directory path',
+                    defaultValue: currentPath,
+                    placeholder: '/',
+                    confirmButtonText: 'Go',
+                    validate: (v) => {
+                        const s = String(v || '').trim();
+                        if (!s.startsWith('/')) return 'Path must start with /';
+                        return null;
+                    },
+                });
+                if (!path) return;
+                navigate(path);
+            });
+        }
         refreshBtn.addEventListener('click', () => refresh());
+
+        if (selectAllCb) {
+            selectAllCb.addEventListener('click', (ev) => {
+                // Avoid row click interactions (header is not a row, but keep consistent)
+                ev.stopPropagation();
+            });
+            selectAllCb.addEventListener('change', () => {
+                const want = !!selectAllCb.checked;
+                for (const [path, ref] of visibleRowRefs.entries()) {
+                    if (!ref || !ref.item) continue;
+                    ref.cb.checked = want;
+                    toggleSelection(ref.item, want, ref.tr);
+                }
+                updateSelectAllState();
+            });
+        }
 
         uploadBtn.addEventListener('click', () => uploadInput.click());
         uploadInput.addEventListener('change', () => {
@@ -672,13 +1137,13 @@
         newFileBtn.addEventListener('click', doNewFile);
         renameBtn.addEventListener('click', doRename);
         moveBtn.addEventListener('click', doMove);
+        if (copyBtn) copyBtn.addEventListener('click', doCopy);
         deleteBtn.addEventListener('click', doDelete);
         downloadBtn.addEventListener('click', doDownload);
         archiveBtn.addEventListener('click', doArchive);
         unarchiveBtn.addEventListener('click', doUnarchive);
 
-        editorSaveBtn.addEventListener('click', saveEditor);
-        editorReloadBtn.addEventListener('click', reloadEditor);
+        // File editing is now on /applications/{uuid}/files/edit
 
         // Drag and drop
         dropzone.addEventListener('dragover', (e) => {

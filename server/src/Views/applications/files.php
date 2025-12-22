@@ -84,15 +84,76 @@ $wsUrl = $browserWebsocketUrl ?? '';
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">
                         <input type="file" id="fm-upload-input" class="hidden" multiple>
-                        <button type="button" class="btn btn-secondary btn-sm" id="fm-upload-btn">Upload</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="fm-new-folder">New Folder</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="fm-new-file">New File</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="fm-rename">Rename</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="fm-move">Move</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="fm-download">Download</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="fm-archive">Archive</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="fm-unarchive">Unarchive</button>
-                        <button type="button" class="btn btn-danger btn-sm" id="fm-delete">Delete</button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-upload-btn" title="Upload" aria-label="Upload">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M7 9l5-5 5 5"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M20 20H4"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-new-folder" title="New folder" aria-label="New folder">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 11v6m-3-3h6"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-new-file" title="New file" aria-label="New file">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M7 3h7l5 5v13a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M14 3v6h6"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 11v6m-3-3h6"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-rename" title="Rename" aria-label="Rename">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 4h10"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 8h7"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 20h4l10-10-4-4L4 16v4z"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-move" title="Move" aria-label="Move">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 12h13"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 7l5 5-5 5"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-copy" title="Copy" aria-label="Copy">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M8 8h12v12H8z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16V4h12"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-download" title="Download" aria-label="Download">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v10"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M7 10l5 5 5-5"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M20 20H4"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-archive" title="Archive" aria-label="Archive">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M21 8v13a2 2 0 01-2 2H5a2 2 0 01-2-2V8"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l2-5h14l2 5H3z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M10 12h4"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-unarchive" title="Unarchive" aria-label="Unarchive">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M21 8v13a2 2 0 01-2 2H5a2 2 0 01-2-2V8"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l2-5h14l2 5H3z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 12v6"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 15l3-3 3 3"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-danger btn-sm fm-icon-btn" id="fm-delete" title="Delete" aria-label="Delete">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M8 6V4h8v2"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 6l-1 16H6L5 6"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M10 11v6"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M14 11v6"/>
+                            </svg>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -100,8 +161,7 @@ $wsUrl = $browserWebsocketUrl ?? '';
                 <div class="flex items-center justify-between gap-3 flex-wrap">
                     <div class="flex items-center gap-2 flex-wrap" id="fm-breadcrumb"></div>
                     <div class="flex items-center gap-2 flex-wrap">
-                        <input type="text" class="input input-sm" id="fm-path" placeholder="/" style="min-width: 260px;">
-                        <button type="button" class="btn btn-secondary btn-sm" id="fm-go">Go</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="fm-manual-location">Manual Location</button>
                         <button type="button" class="btn btn-ghost btn-sm" id="fm-refresh">Refresh</button>
                     </div>
                 </div>
@@ -111,12 +171,14 @@ $wsUrl = $browserWebsocketUrl ?? '';
                         <table class="table" id="fm-table">
                             <thead>
                             <tr>
-                                <th style="width: 44px;"></th>
+                                <th style="width: 56px;">
+                                    <input type="checkbox" class="fm-checkbox" id="fm-select-all" aria-label="Select all">
+                                </th>
                                 <th>Name</th>
                                 <th style="width: 120px;">Type</th>
                                 <th style="width: 140px;">Size</th>
-                                <th style="width: 200px;">Modified</th>
-                                <th style="width: 140px;">Persistence</th>
+                                <th style="width: 140px;">Modified</th>
+                                <th style="width: 96px;">Actions</th>
                             </tr>
                             </thead>
                             <tbody id="fm-rows"></tbody>
@@ -124,40 +186,60 @@ $wsUrl = $browserWebsocketUrl ?? '';
                     </div>
                     <div class="text-sm text-tertiary mt-2">Tip: drag & drop files here to upload.</div>
                 </div>
-
-                <div class="mt-5 hidden" id="fm-editor">
-                    <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
-                        <div class="min-w-0">
-                            <h3 class="card-title">Edit file</h3>
-                            <div class="text-sm text-secondary truncate" id="fm-editor-path"></div>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <button type="button" class="btn btn-secondary btn-sm" id="fm-editor-reload">Reload</button>
-                            <button type="button" class="btn btn-primary btn-sm" id="fm-editor-save">Save</button>
-                        </div>
-                    </div>
-                    <textarea id="fm-editor-textarea" class="textarea" rows="14"></textarea>
-                </div>
             </div>
         </div>
 
-        <!-- CodeMirror 5 (MIT) via CDN + dynamic mode loader -->
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/mode/loadmode.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/meta.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-
-        <script src="/js/fileManager.js"></script>
+        <?php $fmVer = @filemtime(__DIR__ . '/../../../public/js/fileManager.js') ?: time(); ?>
+        <script src="/js/fileManager.js?v=<?= e((string) $fmVer) ?>"></script>
 
         <style>
             .fm-dropzone.dragover { outline: 2px dashed var(--border-strong); outline-offset: 4px; }
             .fm-name { display:flex; align-items:center; gap: 10px; min-width: 0; }
-            .fm-name button { all: unset; cursor: pointer; color: inherit; min-width: 0; }
-            .fm-name button:hover { text-decoration: underline; }
             .fm-icon { width: 18px; height: 18px; color: var(--text-tertiary); }
             .fm-row.selected { background: var(--bg-secondary); }
+            .fm-row { cursor: pointer; }
+            .fm-row:hover { background: var(--bg-secondary); }
             .fm-table-wrap { overflow-x: auto; }
-            .CodeMirror { border: 1px solid var(--border); border-radius: var(--radius-md); height: min(520px, 60vh); }
+            #fm-table th, #fm-table td { padding-top: 10px; padding-bottom: 10px; }
+            #fm-table td { font-size: 13px; }
+            .fm-icon-btn { padding-left: 10px; padding-right: 10px; }
+            .fm-icon-btn .icon { width: 16px; height: 16px; }
+            .fm-row-actions .btn { padding-left: 10px; padding-right: 10px; }
+            .fm-select-cell { text-align: left; }
+            .fm-mtime { max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .fm-row-actions .dropdown-menu { min-width: 200px; }
+
+            .fm-checkbox {
+                appearance: none;
+                -webkit-appearance: none;
+                width: 16px;
+                height: 16px;
+                border-radius: var(--radius-sm);
+                border: 1px solid var(--border-primary);
+                background: var(--bg-secondary);
+                display: inline-grid;
+                place-content: center;
+                cursor: pointer;
+            }
+            .fm-checkbox:focus-visible {
+                outline: 2px solid var(--accent-blue);
+                outline-offset: 2px;
+            }
+            .fm-checkbox:checked {
+                background: var(--accent-blue);
+                border-color: var(--accent-blue);
+            }
+            .fm-checkbox:checked::after {
+                content: '';
+                width: 9px;
+                height: 5px;
+                border: 2px solid rgba(255, 255, 255, 0.95);
+                border-top: 0;
+                border-right: 0;
+                transform: rotate(-45deg);
+                margin-top: -1px;
+            }
+            #fm-select-all { margin-left: 2px; }
         </style>
     <?php endif; ?>
 </div>

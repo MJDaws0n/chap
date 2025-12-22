@@ -112,6 +112,8 @@ function runDockerExec(containerId, argv, opts = {}) {
 
         let stdout = Buffer.alloc(0);
         let stderr = Buffer.alloc(0);
+        let stdoutTruncated = false;
+        let stderrTruncated = false;
         const max = opts.maxBytes || (256 * 1024);
         const maxErr = opts.maxErrBytes || (128 * 1024);
 
@@ -119,18 +121,32 @@ function runDockerExec(containerId, argv, opts = {}) {
             if (stdout.length < max) {
                 const take = Math.min(chunk.length, max - stdout.length);
                 stdout = Buffer.concat([stdout, chunk.subarray(0, take)]);
+                if (take < chunk.length) stdoutTruncated = true;
+            } else {
+                stdoutTruncated = true;
             }
         });
         proc.stderr.on('data', (chunk) => {
             if (stderr.length < maxErr) {
                 const take = Math.min(chunk.length, maxErr - stderr.length);
                 stderr = Buffer.concat([stderr, chunk.subarray(0, take)]);
+                if (take < chunk.length) stderrTruncated = true;
+            } else {
+                stderrTruncated = true;
             }
         });
 
         proc.on('error', reject);
         proc.on('close', (code) => {
-            resolve({ code: code ?? 0, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8') });
+            resolve({
+                code: code ?? 0,
+                stdout: stdout.toString('utf8'),
+                stderr: stderr.toString('utf8'),
+                stdoutBytes: stdout.length,
+                stderrBytes: stderr.length,
+                stdoutTruncated,
+                stderrTruncated,
+            });
         });
 
         if (opts.stdin) {
@@ -404,6 +420,10 @@ function createLiveLogsWs(deps) {
             const { containers, container } = await resolveContainerForFiles(browserWs, requestedContainerId);
             if (!container) return filesReply(browserWs, requestId, false, 'No running containers found');
 
+            try {
+                console.log(`[BrowserWS] files:${action} app=${browserWs.applicationUuid} container=${container.id}`);
+            } catch {}
+
             browserWs.selectedContainerId = container.id;
             const persistentPrefixes = await runDockerInspectMounts(container.id);
             const root = '/';
@@ -427,9 +447,9 @@ function createLiveLogsWs(deps) {
                     'dir="$1"',
                     'if [ ! -d "$dir" ]; then exit 2; fi',
                     'if command -v find >/dev/null 2>&1; then',
-                    '  find "$dir" -mindepth 1 -maxdepth 1 -print0',
+                    '  find "$dir" -mindepth 1 -maxdepth 1 -print',
                     'else',
-                    '  ls -A1 "$dir" 2>/dev/null | while IFS= read -r n; do printf "%s\0" "$dir/$n"; done',
+                    '  ls -A1 "$dir" 2>/dev/null | while IFS= read -r n; do printf "%s\n" "$dir/$n"; done',
                     'fi',
                 ].join('\n');
 
@@ -439,10 +459,13 @@ function createLiveLogsWs(deps) {
                 });
 
                 if (listRes.code !== 0) {
+                    try {
+                        console.warn(`[BrowserWS] files:list failed code=${listRes.code} stderr=${(listRes.stderr || '').trim()}`);
+                    } catch {}
                     return filesReply(browserWs, requestId, false, (listRes.stderr || '').trim() || 'Failed to list directory');
                 }
 
-                const paths = listRes.stdout.split('\0').map((x) => x.trim()).filter(Boolean).slice(0, 2000);
+                const paths = listRes.stdout.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 2000);
 
                 const statScript = [
                     'set -e',
@@ -468,6 +491,9 @@ function createLiveLogsWs(deps) {
                 });
 
                 if (statRes.code !== 0) {
+                    try {
+                        console.warn(`[BrowserWS] files:list stat failed code=${statRes.code} stderr=${(statRes.stderr || '').trim()}`);
+                    } catch {}
                     return filesReply(browserWs, requestId, false, (statRes.stderr || '').trim() || 'Failed to stat directory entries');
                 }
 
@@ -502,20 +528,29 @@ function createLiveLogsWs(deps) {
                 const p = String(payload.path || '');
                 if (!isSafePathValue(p)) return filesReply(browserWs, requestId, false, 'Invalid path');
 
-                const sizeRes = await runDockerExec(container.id, ['sh', '-c', 'stat -c %s "$1" 2>/dev/null || echo -1', 'sh', p], {
-                    maxBytes: 1024,
-                    maxErrBytes: 1024,
-                });
-                const size = parseInt((sizeRes.stdout || '').trim(), 10);
-                if (Number.isFinite(size) && size > FILES_LIMIT.maxReadBytes) {
-                    return filesReply(browserWs, requestId, false, `File too large to edit (>${FILES_LIMIT.maxReadBytes} bytes)`);
-                }
+                // Avoid hanging on special files and avoid reading full large files.
+                // Read only up to (limit + 1) bytes; if we get >limit we reject.
+                const limit = FILES_LIMIT.maxReadBytes;
+                const readScript = [
+                    'set -e',
+                    'p="$1"',
+                    '[ -f "$p" ] || exit 3',
+                    '[ -r "$p" ] || exit 4',
+                    // busybox head supports -c
+                    `head -c ${limit + 1} "$p"`,
+                ].join('\n');
 
-                const res = await runDockerExec(container.id, ['cat', '--', p], {
-                    maxBytes: FILES_LIMIT.maxReadBytes,
+                const res = await runDockerExec(container.id, ['sh', '-c', readScript, 'sh', p], {
+                    maxBytes: limit + 1,
                     maxErrBytes: 64 * 1024,
                 });
+
+                if (res.code === 3) return filesReply(browserWs, requestId, false, 'Not a regular file');
+                if (res.code === 4) return filesReply(browserWs, requestId, false, 'File is not readable');
                 if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to read file');
+                if ((res.stdoutBytes || 0) > limit) {
+                    return filesReply(browserWs, requestId, false, `File too large to edit (>${limit} bytes)`);
+                }
                 return filesReply(browserWs, requestId, true, { content: res.stdout });
             }
 
@@ -537,6 +572,20 @@ function createLiveLogsWs(deps) {
             }
 
             if (action === 'delete') {
+                const pathsRaw = Array.isArray(payload.paths) ? payload.paths : null;
+                if (pathsRaw) {
+                    const paths = pathsRaw.map((x) => String(x || '')).filter(Boolean);
+                    if (!paths.length) return filesReply(browserWs, requestId, false, 'No paths provided');
+                    if (paths.length > 200) return filesReply(browserWs, requestId, false, 'Too many paths');
+                    for (const p of paths) {
+                        if (!isSafePathValue(p)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                        if (p === '/' || p === '.') return filesReply(browserWs, requestId, false, 'Refusing to delete root');
+                    }
+                    const res = await runDockerExec(container.id, ['sh', '-c', 'rm -rf -- "$@"', 'sh', ...paths], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to delete');
+                    return filesReply(browserWs, requestId, true, {});
+                }
+
                 const p = String(payload.path || '');
                 const type = String(payload.type || 'file');
                 if (!isSafePathValue(p)) return filesReply(browserWs, requestId, false, 'Invalid path');
@@ -575,18 +624,117 @@ function createLiveLogsWs(deps) {
             }
 
             if (action === 'move') {
-                const p = String(payload.path || '');
                 const destDir = String(payload.dest_dir || '');
-                if (!isSafePathValue(p) || !isSafePathValue(destDir)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                if (!isSafePathValue(destDir)) return filesReply(browserWs, requestId, false, 'Invalid path');
+
+                const pathsRaw = Array.isArray(payload.paths) ? payload.paths : null;
+                if (pathsRaw) {
+                    const paths = pathsRaw.map((x) => String(x || '')).filter(Boolean);
+                    if (!paths.length) return filesReply(browserWs, requestId, false, 'No paths provided');
+                    if (paths.length > 200) return filesReply(browserWs, requestId, false, 'Too many paths');
+                    for (const p of paths) {
+                        if (!isSafePathValue(p)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                    }
+                    const script = [
+                        'set -e',
+                        'dest="$1"',
+                        'shift',
+                        'for p in "$@"; do',
+                        '  base=$(basename "$p")',
+                        '  mv -- "$p" "$dest/$base"',
+                        'done',
+                    ].join('\n');
+                    const res = await runDockerExec(container.id, ['sh', '-c', script, 'sh', destDir, ...paths], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to move');
+                    return filesReply(browserWs, requestId, true, {});
+                }
+
+                const p = String(payload.path || '');
+                if (!isSafePathValue(p)) return filesReply(browserWs, requestId, false, 'Invalid path');
                 const res = await runDockerExec(container.id, ['sh', '-c', 'base=$(basename "$1"); mv -- "$1" "$2/$base"', 'sh', p, destDir], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
                 if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to move');
                 return filesReply(browserWs, requestId, true, {});
             }
 
-            if (action === 'archive') {
+            if (action === 'copy') {
+                const explicitDestPath = String(payload.dest_path || '');
+                if (explicitDestPath) {
+                    const p = String(payload.path || '');
+                    if (!isSafePathValue(p) || !isSafePathValue(explicitDestPath)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                    const script = [
+                        'set -e',
+                        'src="$1"',
+                        'dst="$2"',
+                        'if [ -e "$dst" ]; then',
+                        '  echo "Destination already exists" >&2',
+                        '  exit 17',
+                        'fi',
+                        'cp -a -- "$src" "$dst"',
+                    ].join('\n');
+                    const res = await runDockerExec(container.id, ['sh', '-c', script, 'sh', p, explicitDestPath], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to copy');
+                    return filesReply(browserWs, requestId, true, {});
+                }
+
+                const destDir = String(payload.dest_dir || '');
+                if (!isSafePathValue(destDir)) return filesReply(browserWs, requestId, false, 'Invalid path');
+
+                const pathsRaw = Array.isArray(payload.paths) ? payload.paths : null;
+                if (pathsRaw) {
+                    const paths = pathsRaw.map((x) => String(x || '')).filter(Boolean);
+                    if (!paths.length) return filesReply(browserWs, requestId, false, 'No paths provided');
+                    if (paths.length > 200) return filesReply(browserWs, requestId, false, 'Too many paths');
+                    for (const p of paths) {
+                        if (!isSafePathValue(p)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                    }
+                    const script = [
+                        'set -e',
+                        'dest="$1"',
+                        'shift',
+                        'for p in "$@"; do',
+                        '  base=$(basename "$p")',
+                        '  cp -a -- "$p" "$dest/$base"',
+                        'done',
+                    ].join('\n');
+                    const res = await runDockerExec(container.id, ['sh', '-c', script, 'sh', destDir, ...paths], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to copy');
+                    return filesReply(browserWs, requestId, true, {});
+                }
+
                 const p = String(payload.path || '');
+                if (!isSafePathValue(p)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                const res = await runDockerExec(container.id, ['sh', '-c', 'base=$(basename "$1"); cp -a -- "$1" "$2/$base"', 'sh', p, destDir], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to copy');
+                return filesReply(browserWs, requestId, true, {});
+            }
+
+            if (action === 'archive') {
+                const namesRaw = Array.isArray(payload.names) ? payload.names : null;
+                const dir = String(payload.dir || '');
                 const outDir = String(payload.out_dir || '/');
                 const outName = String(payload.out_name || 'archive.tar.gz');
+
+                if (namesRaw) {
+                    if (!isSafePathValue(dir) || !isSafePathValue(outDir) || !isSafeNameSegment(outName)) return filesReply(browserWs, requestId, false, 'Invalid path');
+                    const names = namesRaw.map((x) => String(x || '')).filter(Boolean);
+                    if (!names.length) return filesReply(browserWs, requestId, false, 'No items provided');
+                    if (names.length > 200) return filesReply(browserWs, requestId, false, 'Too many items');
+                    for (const n of names) {
+                        if (!isSafeNameSegment(n)) return filesReply(browserWs, requestId, false, 'Invalid name');
+                    }
+                    const script = [
+                        'set -e',
+                        'dir="$1"',
+                        'out="$2/$3"',
+                        'shift 3',
+                        'tar -czf "$out" -C "$dir" -- "$@"',
+                    ].join('\n');
+                    const res = await runDockerExec(container.id, ['sh', '-c', script, 'sh', dir, outDir, outName, ...names], { maxBytes: 1024, maxErrBytes: 128 * 1024 });
+                    if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to archive (tar required)');
+                    return filesReply(browserWs, requestId, true, {});
+                }
+
+                const p = String(payload.path || '');
                 if (!isSafePathValue(p) || !isSafePathValue(outDir) || !isSafeNameSegment(outName)) return filesReply(browserWs, requestId, false, 'Invalid path');
                 const res = await runDockerExec(container.id, ['sh', '-c', 'src="$1"; out="$2/$3"; tar -czf "$out" -C "$(dirname "$src")" "$(basename "$src")"', 'sh', p, outDir, outName], { maxBytes: 1024, maxErrBytes: 128 * 1024 });
                 if (res.code !== 0) return filesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to archive (tar required)');

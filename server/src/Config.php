@@ -7,6 +7,13 @@ namespace Chap;
  */
 class Config
 {
+    /**
+     * Chap server version (displayed in Settings)
+     *
+     * Update this value when you release a new server version.
+     */
+    public const SERVER_VERSION = '1.0.0';
+
     private static array $config = [];
     private static bool $loaded = false;
 

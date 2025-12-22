@@ -306,7 +306,9 @@ function togglePassword() {
 
 function copyToClipboard(text) {
     navigator.clipboard.writeText(text);
-    Toast.show('Copied to clipboard', 'success');
+    if (window.Toast && typeof window.Toast.success === 'function') {
+        window.Toast.success('Copied to clipboard');
+    }
 }
 
 document.getElementById('delete-btn').addEventListener('click', function() {
