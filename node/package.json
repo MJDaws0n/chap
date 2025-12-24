@@ -1,0 +1,17 @@
+{
+  "name": "chap-node",
+  "version": "1.0.0",
+  "description": "Chap node agent - handles deployments and container management",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": ["chap", "deployment", "docker", "self-hosted"],
+  "author": "Max <MJDawson>",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.14.2",
+    "yaml": "^2.3.4"
+  }
+}

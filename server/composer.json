@@ -1,0 +1,28 @@
+{
+    "name": "chap/server",
+    "description": "Chap - Self-hosted deployment platform server",
+    "type": "project",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Chap\\": "src/"
+        },
+        "files": [
+            "src/Helpers/functions.php"
+        ]
+    },
+    "require": {
+        "php": ">=8.1",
+        "cboden/ratchet": "^0.4.4",
+        "ramsey/uuid": "^4.7"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0"
+    },
+    "scripts": {
+        "test": "phpunit --configuration phpunit.xml",
+        "migrate": "php bin/migrate.php",
+        "seed": "php bin/seed.php",
+        "websocket": "php bin/websocket.php"
+    }
+}
