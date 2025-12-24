@@ -65,6 +65,13 @@
                 <span>Teams</span>
             </a>
 
+            <a href="/git-sources" class="sidebar-link <?= ($currentPage ?? '') === 'git-sources' ? 'active' : '' ?>">
+                <svg class="sidebar-link-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 18a4 4 0 00-8 0m8 0a4 4 0 01-8 0m8 0v-5a4 4 0 00-8 0v5m4-11V3m0 4h.01"/>
+                </svg>
+                <span>Git Sources</span>
+            </a>
+
             <a href="/activity" class="sidebar-link <?= ($currentPage ?? '') === 'activity' ? 'active' : '' ?>">
                 <svg class="sidebar-link-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>

@@ -2,10 +2,8 @@
 
 namespace Chap\Controllers;
 
-use Chap\Auth\AuthManager;
 use Chap\Models\Team;
 use Chap\Models\User;
-use Chap\View\View;
 
 /**
  * Team Controller
@@ -17,15 +15,12 @@ class TeamController extends BaseController
      */
     public function index(): void
     {
-        $user = AuthManager::user();
-        $teams = $user->teams();
-        
-        echo View::render('teams/index', [
+        $user = $this->user;
+        $teams = $user?->teams() ?? [];
+
+        $this->view('teams/index', [
             'title' => 'Teams',
-            'currentPage' => 'teams',
-            'user' => $user->toArray(),
             'teams' => $teams,
-            'currentTeam' => $user->currentTeam()?->toArray()
         ]);
     }
 
@@ -34,13 +29,8 @@ class TeamController extends BaseController
      */
     public function create(): void
     {
-        $user = AuthManager::user();
-        
-        echo View::render('teams/create', [
+        $this->view('teams/create', [
             'title' => 'Create Team',
-            'currentPage' => 'teams',
-            'user' => $user->toArray(),
-            'currentTeam' => $user->currentTeam()?->toArray()
         ]);
     }
 
@@ -49,6 +39,12 @@ class TeamController extends BaseController
      */
     public function store(): void
     {
+        if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/teams/create');
+            return;
+        }
+
         $name = trim($_POST['name'] ?? '');
         $description = trim($_POST['description'] ?? '');
 
@@ -58,16 +54,19 @@ class TeamController extends BaseController
             return;
         }
 
-        $user = AuthManager::user();
+        $user = $this->user;
         
         $team = Team::create([
             'name' => $name,
             'description' => $description,
-            'personal_team' => false
+            'personal_team' => 0
         ]);
 
         // Add user as owner
         $team->addMember($user->id, 'owner');
+
+        // Make the newly created team the current team
+        $user->switchTeam($team);
 
         flash('success', 'Team created successfully');
         redirect('/teams/' . $team->id);
@@ -85,7 +84,7 @@ class TeamController extends BaseController
             return;
         }
 
-        $user = AuthManager::user();
+        $user = $this->user;
         
         // Check if user is member
         if (!$team->hasMember($user->id)) {
@@ -95,15 +94,13 @@ class TeamController extends BaseController
         }
 
         $members = $team->members();
-        
-        echo View::render('teams/show', [
+
+        $this->view('teams/show', [
             'title' => $team->name,
-            'currentPage' => 'teams',
-            'user' => $user->toArray(),
-            'currentTeam' => $user->currentTeam()?->toArray(),
-            'team' => $team->toArray(),
+            'team' => $team,
             'members' => $members,
-            'isOwner' => $team->isOwner($user->id)
+            'isOwner' => $team->isOwner($user->id),
+            'isAdmin' => $team->isAdmin($user->id),
         ]);
     }
 
@@ -119,7 +116,7 @@ class TeamController extends BaseController
             return;
         }
 
-        $user = AuthManager::user();
+        $user = $this->user;
         
         if (!$team->isOwner($user->id) && !$team->isAdmin($user->id)) {
             flash('error', 'You do not have permission to edit this team');
@@ -127,12 +124,9 @@ class TeamController extends BaseController
             return;
         }
 
-        echo View::render('teams/edit', [
+        $this->view('teams/edit', [
             'title' => 'Edit Team',
-            'currentPage' => 'teams',
-            'user' => $user->toArray(),
-            'currentTeam' => $user->currentTeam()?->toArray(),
-            'team' => $team->toArray()
+            'team' => $team,
         ]);
     }
 
@@ -148,7 +142,13 @@ class TeamController extends BaseController
             return;
         }
 
-        $user = AuthManager::user();
+        $user = $this->user;
+
+        if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/teams/' . $id . '/edit');
+            return;
+        }
         
         if (!$team->isOwner($user->id) && !$team->isAdmin($user->id)) {
             flash('error', 'You do not have permission to edit this team');
@@ -186,7 +186,13 @@ class TeamController extends BaseController
             return;
         }
 
-        $user = AuthManager::user();
+        $user = $this->user;
+
+        if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/teams/' . $id);
+            return;
+        }
         
         if (!$team->isOwner($user->id)) {
             flash('error', 'Only the team owner can delete this team');
@@ -218,7 +224,13 @@ class TeamController extends BaseController
             return;
         }
 
-        $user = AuthManager::user();
+        $user = $this->user;
+
+        if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/teams');
+            return;
+        }
         
         if (!$team->hasMember($user->id)) {
             flash('error', 'You are not a member of this team');
@@ -226,7 +238,9 @@ class TeamController extends BaseController
             return;
         }
 
+        // Persist (DB) and activate immediately (session)
         $user->update(['current_team_id' => $team->id]);
+        $user->switchTeam($team);
 
         flash('success', 'Switched to ' . $team->name);
         redirect('/dashboard');
@@ -240,21 +254,59 @@ class TeamController extends BaseController
         $team = Team::find($id);
         
         if (!$team) {
-            json(['error' => 'Team not found'], 404);
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Team not found'], 404);
+            }
+            flash('error', 'Team not found');
+            $this->redirect('/teams');
             return;
         }
 
-        $user = AuthManager::user();
+        $user = $this->user;
         
         if (!$team->isOwner($user->id) && !$team->isAdmin($user->id)) {
-            json(['error' => 'Permission denied'], 403);
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Permission denied'], 403);
+            }
+            flash('error', 'Permission denied');
+            $this->redirect('/teams/' . $id);
             return;
         }
 
-        $email = trim($_POST['email'] ?? '');
+        if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/teams/' . $id);
+            return;
+        }
+
+        $account = trim($_POST['account'] ?? ($_POST['email'] ?? ''));
         $role = $_POST['role'] ?? 'member';
 
-        $newUser = User::findByEmail($email);
+        $allowedRoles = ['owner', 'admin', 'member'];
+        if (!in_array($role, $allowedRoles, true)) {
+            flash('error', 'Invalid role');
+            $this->redirect('/teams/' . $id);
+            return;
+        }
+
+        if ($account === '') {
+            flash('error', 'Account is required');
+            $this->redirect('/teams/' . $id);
+            return;
+        }
+
+        // Find by email or username ("account")
+        $newUser = null;
+        if (str_contains($account, '@')) {
+            $newUser = User::findByEmail($account);
+        }
+        if (!$newUser) {
+            $newUser = User::findByUsername($account);
+        }
+        if (!$newUser && !str_contains($account, '@')) {
+            // last try: maybe user typed email without @ check? (unlikely, but harmless)
+            $newUser = User::findByEmail($account);
+        }
         
         if (!$newUser) {
             flash('error', 'User not found');
@@ -286,7 +338,13 @@ class TeamController extends BaseController
             return;
         }
 
-        $currentUser = AuthManager::user();
+        $currentUser = $this->user;
+
+        if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/teams/' . $id);
+            return;
+        }
         
         if (!$team->isOwner($currentUser->id) && !$team->isAdmin($currentUser->id)) {
             flash('error', 'Permission denied');
@@ -304,5 +362,53 @@ class TeamController extends BaseController
 
         flash('success', 'Member removed successfully');
         redirect('/teams/' . $id);
+    }
+
+    /**
+     * Update team member role/settings
+     */
+    public function updateMember(int $id, int $userId): void
+    {
+        $team = Team::find($id);
+
+        if (!$team) {
+            flash('error', 'Team not found');
+            $this->redirect('/teams');
+            return;
+        }
+
+        $currentUser = $this->user;
+        if (!$team->isOwner($currentUser->id) && !$team->isAdmin($currentUser->id)) {
+            flash('error', 'Permission denied');
+            $this->redirect('/teams/' . $id);
+            return;
+        }
+
+        if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/teams/' . $id);
+            return;
+        }
+
+        if ($team->isOwner($userId)) {
+            flash('error', 'Cannot change owner settings here');
+            $this->redirect('/teams/' . $id);
+            return;
+        }
+
+        $role = $_POST['role'] ?? null;
+
+        if ($role !== null) {
+            $allowedRoles = ['admin', 'member'];
+            if (!in_array($role, $allowedRoles, true)) {
+                flash('error', 'Invalid role');
+                $this->redirect('/teams/' . $id);
+                return;
+            }
+            $team->updateMemberRole($userId, $role);
+        }
+
+        flash('success', 'Member updated');
+        $this->redirect('/teams/' . $id);
     }
 }

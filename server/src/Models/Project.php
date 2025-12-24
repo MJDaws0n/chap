@@ -67,4 +67,68 @@ class Project extends BaseModel
         
         return $result['count'] ?? 0;
     }
+
+    /**
+     * Project members (explicit membership)
+     */
+    public function members(): array
+    {
+        $db = App::db();
+        $results = $db->fetchAll(
+            "SELECT u.*, pu.role FROM users u
+             JOIN project_user pu ON u.id = pu.user_id
+             WHERE pu.project_id = ?
+             ORDER BY pu.role, u.name",
+            [$this->id]
+        );
+
+        return array_map(function($data) {
+            $user = User::fromArray($data);
+            $user->project_role = $data['role'] ?? null;
+            return $user;
+        }, $results);
+    }
+
+    public function hasMember(User|int $user): bool
+    {
+        $db = App::db();
+        $userId = $user instanceof User ? $user->id : $user;
+        $result = $db->fetch(
+            "SELECT 1 FROM project_user WHERE project_id = ? AND user_id = ?",
+            [$this->id, $userId]
+        );
+        return $result !== null;
+    }
+
+    public function addMember(User|int $user, string $role = 'member'): bool
+    {
+        $db = App::db();
+        $userId = $user instanceof User ? $user->id : $user;
+
+        try {
+            $db->insert('project_user', [
+                'project_id' => $this->id,
+                'user_id' => $userId,
+                'role' => $role,
+            ]);
+            return true;
+        } catch (\PDOException $e) {
+            return false;
+        }
+    }
+
+    public function removeMember(User|int $user): bool
+    {
+        $db = App::db();
+        $userId = $user instanceof User ? $user->id : $user;
+        return $db->delete('project_user', 'project_id = ? AND user_id = ?', [$this->id, $userId]) > 0;
+    }
+
+    public function updateMemberRole(User|int $user, string $role): bool
+    {
+        $db = App::db();
+        $userId = $user instanceof User ? $user->id : $user;
+        return $db->update('project_user', ['role' => $role], 'project_id = ? AND user_id = ?', [$this->id, $userId]) > 0;
+    }
+
 }

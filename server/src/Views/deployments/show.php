@@ -167,7 +167,8 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
                         <?php endif; ?>
                         <div class="flex items-center justify-between gap-4 text-sm">
                             <dt class="text-tertiary">Triggered by</dt>
-                            <dd class="m-0 text-primary"><?= e($deployment->triggered_by ?? 'Manual') ?></dd>
+                            <?php $triggerLabel = $deployment->triggered_by_name ?: ($deployment->triggered_by ?: 'Manual'); ?>
+                            <dd class="m-0 text-primary"><?= e($triggerLabel) ?></dd>
                         </div>
                     </dl>
                 </div>
@@ -182,11 +183,11 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
                     <div class="flex flex-col gap-3">
                         <form method="POST" action="/applications/<?= e($application->uuid) ?>/deploy">
                             <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                            <button type="submit" class="btn btn-primary w-full">
+                            <button type="submit" class="btn btn-primary w-full" <?= $isInProgress ? 'disabled aria-disabled="true"' : '' ?>>
                                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                                 </svg>
-                                Redeploy
+                                <?= $isInProgress ? 'Redeploying…' : 'Redeploy' ?>
                             </button>
                         </form>
                         <?php if ($deployment->status === 'success' || $deployment->status === 'running'): ?>
@@ -243,10 +244,11 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
 }
 
 .log-entry {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-sm);
-    padding: var(--space-xs) 0;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    align-items: start;
+    column-gap: var(--space-4);
+    padding: var(--space-1) 0;
     min-width: 0;
 }
 
@@ -254,6 +256,8 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
     color: var(--text-tertiary);
     flex-shrink: 0;
     font-size: var(--text-xs);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
 .log-message {

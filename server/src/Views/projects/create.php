@@ -9,12 +9,12 @@
     <div class="page-header">
         <div>
             <nav class="breadcrumb">
-                <a href="/projects">Projects</a>
+                <span class="breadcrumb-item"><a href="/projects">Projects</a></span>
                 <span class="breadcrumb-separator">/</span>
                 <span class="breadcrumb-current">New Project</span>
             </nav>
             <h1 class="page-title">Create Project</h1>
-            <p class="text-muted">Projects help you organize related applications</p>
+            <p class="page-header-description">Projects help you organize related applications</p>
         </div>
     </div>
 

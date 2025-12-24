@@ -47,6 +47,7 @@ class WebhookController extends BaseController
                     'git_commit_sha' => $data['after'] ?? null,
                     'git_commit_message' => $data['head_commit']['message'] ?? null,
                     'triggered_by' => 'webhook:github',
+                    'triggered_by_name' => 'GitHub Webhook',
                 ]);
             }
         }
@@ -83,6 +84,7 @@ class WebhookController extends BaseController
                     'git_commit_sha' => $data['after'] ?? null,
                     'git_commit_message' => $data['commits'][0]['message'] ?? null,
                     'triggered_by' => 'webhook:gitlab',
+                    'triggered_by_name' => 'GitLab Webhook',
                 ]);
             }
         }
@@ -114,6 +116,7 @@ class WebhookController extends BaseController
                         'git_commit_sha' => $change['new']['target']['hash'] ?? null,
                         'git_commit_message' => $change['new']['target']['message'] ?? null,
                         'triggered_by' => 'webhook:bitbucket',
+                        'triggered_by_name' => 'Bitbucket Webhook',
                     ]);
                     break;
                 }
@@ -146,6 +149,7 @@ class WebhookController extends BaseController
             'git_commit_sha' => $data['commit'] ?? null,
             'git_commit_message' => $data['message'] ?? 'Manual trigger',
             'triggered_by' => 'webhook:custom',
+            'triggered_by_name' => 'Custom Webhook',
         ]);
 
         $this->json(['status' => 'ok']);
@@ -162,7 +166,10 @@ class WebhookController extends BaseController
                 $application->update(['git_commit_sha' => $options['git_commit_sha']]);
             }
             
-            DeploymentService::create($application, $options['git_commit_sha'] ?? null);
+            DeploymentService::create($application, $options['git_commit_sha'] ?? null, [
+                'triggered_by' => $options['triggered_by'] ?? 'webhook',
+                'triggered_by_name' => $options['triggered_by_name'] ?? null,
+            ]);
         } catch (\Exception $e) {
             error_log("Webhook deployment failed: " . $e->getMessage());
         }

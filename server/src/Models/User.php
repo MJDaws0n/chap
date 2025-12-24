@@ -13,7 +13,7 @@ class User extends BaseModel
     protected static array $fillable = [
         'email', 'username', 'password_hash', 'name', 'avatar_url',
         'github_id', 'github_token', 'is_admin', 'email_verified_at',
-        'two_factor_secret', 'two_factor_enabled'
+        'two_factor_secret', 'two_factor_enabled', 'current_team_id'
     ];
     protected static array $hidden = ['password_hash', 'github_token', 'two_factor_secret'];
 
@@ -25,9 +25,14 @@ class User extends BaseModel
     public ?string $github_id = null;
     public ?string $github_token = null;
     public bool $is_admin = false;
+    public ?int $current_team_id = null;
     public ?string $email_verified_at = null;
     public ?string $two_factor_secret = null;
     public bool $two_factor_enabled = false;
+
+    // Joined/derived fields
+    public ?string $role = null;
+    public ?string $project_role = null;
 
     /**
      * Find user by email
@@ -108,6 +113,14 @@ class User extends BaseModel
                 return $team;
             }
         }
+
+        if (!empty($this->current_team_id)) {
+            $team = Team::find((int)$this->current_team_id);
+            if ($team && $this->belongsToTeam($team)) {
+                $_SESSION['current_team_id'] = $team->id;
+                return $team;
+            }
+        }
         
         return $this->personalTeam();
     }
@@ -120,8 +133,10 @@ class User extends BaseModel
         if (!$this->belongsToTeam($team)) {
             return false;
         }
-        
+
         $_SESSION['current_team_id'] = $team->id;
+        // Best-effort persist so new sessions can restore
+        $this->update(['current_team_id' => $team->id]);
         return true;
     }
 
@@ -181,7 +196,7 @@ class User extends BaseModel
             'uuid' => uuid(),
             'name' => $this->username . "'s Team",
             'description' => 'Personal team',
-            'personal_team' => true,
+            'personal_team' => 1,
         ]);
         
         $db->insert('team_user', [

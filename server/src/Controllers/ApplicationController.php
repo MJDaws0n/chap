@@ -3,11 +3,13 @@
 namespace Chap\Controllers;
 
 use Chap\Models\Application;
+use Chap\Models\IncomingWebhook;
 use Chap\Models\Environment;
 use Chap\Models\Node;
 use Chap\Models\Deployment;
 use Chap\Models\ActivityLog;
 use Chap\Services\DeploymentService;
+use Chap\Services\GitCredentialResolver;
 
 /**
  * Application Controller
@@ -46,20 +48,50 @@ class ApplicationController extends BaseController
 
         [$owner, $repo] = $parsed;
 
-        // Try repo root first via GitHub contents API
-        $envFile = $this->findEnvFileViaGitHubContents($owner, $repo, $branch);
-        if (!$envFile) {
-            // Fallback: scan tree for any .env* file
-            $envFile = $this->findEnvFileViaGitHubTree($owner, $repo, $branch);
+        // Try public first, then GitHub App installation tokens for this team.
+        $tokensToTry = [null];
+        $authAttempts = [];
+        try {
+            $authAttempts = GitCredentialResolver::gitAuthAttemptsForRepo((int)$team->id, $repoUrl);
+            foreach ($authAttempts as $a) {
+                if (!empty($a['token'])) {
+                    $tokensToTry[] = (string)$a['token'];
+                }
+            }
+        } catch (\Throwable $e) {
+            // ignore
+        }
+
+        $envFile = null;
+        $content = null;
+        foreach ($tokensToTry as $token) {
+            $envFile = $this->findEnvFileViaGitHubContents($owner, $repo, $branch, $token);
+            if (!$envFile) {
+                $envFile = $this->findEnvFileViaGitHubTree($owner, $repo, $branch, $token);
+            }
+            if (!$envFile) {
+                continue;
+            }
+
+            $extraHeaders = $token ? ['Authorization: Bearer ' . $token] : null;
+            $content = $this->httpGetText($envFile['download_url'], false, $extraHeaders);
+            if ($content !== null) {
+                break;
+            }
+
+            // If download_url failed, keep trying other tokens.
+            $envFile = null;
         }
 
         if (!$envFile) {
+            if (!empty($authAttempts)) {
+                $this->json(['error' => 'Unable to access repository or no .env file found. Tried GitHub Apps configured for this team but none worked for this repo.'], 404);
+            }
             $this->json(['error' => 'No .env file found in repository (looked for .env*, e.g. .env.example).'], 404);
         }
 
-        $content = $this->httpGetText($envFile['download_url']);
         if ($content === null) {
-            $this->json(['error' => 'Failed to download env file from repository'], 502);
+            $this->json(['error' => 'Failed to download env file from repository (tried GitHub Apps if configured)'], 502);
         }
 
         $vars = $this->parseEnvFile($content);
@@ -137,10 +169,10 @@ class ApplicationController extends BaseController
         return [$owner, $repo];
     }
 
-    private function findEnvFileViaGitHubContents(string $owner, string $repo, string $branch): ?array
+    private function findEnvFileViaGitHubContents(string $owner, string $repo, string $branch, ?string $bearerToken = null): ?array
     {
         $url = 'https://api.github.com/repos/' . rawurlencode($owner) . '/' . rawurlencode($repo) . '/contents?ref=' . rawurlencode($branch);
-        $json = $this->httpGetJson($url);
+        $json = $this->httpGetJson($url, $bearerToken);
         if (!$json || !is_array($json)) {
             return null;
         }
@@ -186,10 +218,10 @@ class ApplicationController extends BaseController
         return null;
     }
 
-    private function findEnvFileViaGitHubTree(string $owner, string $repo, string $branch): ?array
+    private function findEnvFileViaGitHubTree(string $owner, string $repo, string $branch, ?string $bearerToken = null): ?array
     {
         $url = 'https://api.github.com/repos/' . rawurlencode($owner) . '/' . rawurlencode($repo) . '/git/trees/' . rawurlencode($branch) . '?recursive=1';
-        $json = $this->httpGetJson($url);
+        $json = $this->httpGetJson($url, $bearerToken);
         if (!$json || !is_array($json) || empty($json['tree']) || !is_array($json['tree'])) {
             return null;
         }
@@ -233,21 +265,28 @@ class ApplicationController extends BaseController
         return ['path' => $path, 'download_url' => $raw];
     }
 
-    private function httpGetJson(string $url): mixed
+    private function httpGetJson(string $url, ?string $bearerToken = null): mixed
     {
-        $body = $this->httpGetText($url, true);
+        $extra = $bearerToken ? ['Authorization: Bearer ' . $bearerToken] : null;
+        $body = $this->httpGetText($url, true, $extra);
         if ($body === null) {
             return null;
         }
         return json_decode($body, true);
     }
 
-    private function httpGetText(string $url, bool $githubApi = false): ?string
+    private function httpGetText(string $url, bool $githubApi = false, ?array $extraHeaders = null): ?string
     {
         $headers = [
             'User-Agent: Chap',
             'Accept: ' . ($githubApi ? 'application/vnd.github+json' : 'text/plain, */*'),
         ];
+
+        if ($extraHeaders) {
+            foreach ($extraHeaders as $h) {
+                $headers[] = $h;
+            }
+        }
 
         if (function_exists('curl_init')) {
             $ch = curl_init($url);
@@ -429,6 +468,10 @@ class ApplicationController extends BaseController
 
         $deployments = Deployment::forApplication($application->id, 10);
         $nodes = Node::onlineForTeam($team->id);
+    $incomingWebhooks = IncomingWebhook::forApplication($application->id);
+
+    $incomingWebhookReveals = $_SESSION['incoming_webhook_reveals'] ?? [];
+    unset($_SESSION['incoming_webhook_reveals']);
 
         if ($this->isApiRequest()) {
             $this->json([
@@ -443,6 +486,8 @@ class ApplicationController extends BaseController
                 'project' => $application->environment()->project(),
                 'deployments' => $deployments,
                 'nodes' => $nodes,
+                'incomingWebhooks' => $incomingWebhooks,
+                'incomingWebhookReveals' => $incomingWebhookReveals,
             ]);
         }
     }
@@ -590,7 +635,10 @@ class ApplicationController extends BaseController
         }
 
         // Create deployment
-        $deployment = DeploymentService::create($application);
+        $deployment = DeploymentService::create($application, null, [
+            'triggered_by' => $this->user ? 'user' : 'manual',
+            'triggered_by_name' => $this->user?->displayName(),
+        ]);
 
         ActivityLog::log('deployment.started', 'Deployment', $deployment->id, [
             'application' => $application->name

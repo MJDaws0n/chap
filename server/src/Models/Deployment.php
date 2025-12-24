@@ -13,7 +13,8 @@ class Deployment extends BaseModel
     protected static array $fillable = [
         'application_id', 'node_id', 'commit_sha', 'commit_message',
         'status', 'started_at', 'finished_at', 'logs', 'error_message',
-        'rollback_of_id'
+        'rollback_of_id',
+        'triggered_by', 'triggered_by_name'
     ];
 
     public int $application_id;
@@ -26,6 +27,8 @@ class Deployment extends BaseModel
     public ?string $logs = null;
     public ?string $error_message = null;
     public ?int $rollback_of_id = null;
+    public ?string $triggered_by = null;
+    public ?string $triggered_by_name = null;
 
     /**
      * Get application
@@ -88,8 +91,18 @@ class Deployment extends BaseModel
         if ($errorMessage) {
             $data['error_message'] = $errorMessage;
         }
-        
-        $db->update('deployments', $data, 'id = ?', [$this->id]);
+
+        try {
+            $db->update('deployments', $data, 'id = ?', [$this->id]);
+        } catch (\PDOException $e) {
+            // Backwards-compatibility: some schemas may not have an error_message column yet.
+            if (array_key_exists('error_message', $data)) {
+                unset($data['error_message']);
+                $db->update('deployments', $data, 'id = ?', [$this->id]);
+            } else {
+                throw $e;
+            }
+        }
         
         $this->status = $status;
         if (isset($data['started_at'])) $this->started_at = $data['started_at'];

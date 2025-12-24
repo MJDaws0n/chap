@@ -44,6 +44,7 @@ Route::middleware(['auth'], function() {
     Route::delete('/teams/{id}', 'TeamController@destroy');
     Route::post('/teams/{id}/switch', 'TeamController@switch');
     Route::post('/teams/{id}/members', 'TeamController@addMember');
+    Route::put('/teams/{id}/members/{userId}', 'TeamController@updateMember');
     Route::delete('/teams/{id}/members/{userId}', 'TeamController@removeMember');
     
     // Nodes
@@ -65,6 +66,11 @@ Route::middleware(['auth'], function() {
     Route::get('/projects/{id}/edit', 'ProjectController@edit');
     Route::put('/projects/{id}', 'ProjectController@update');
     Route::delete('/projects/{id}', 'ProjectController@destroy');
+
+    // Project members & per-user settings
+    Route::post('/projects/{id}/members', 'ProjectMemberController@add');
+    Route::put('/projects/{id}/members/{userId}', 'ProjectMemberController@update');
+    Route::delete('/projects/{id}/members/{userId}', 'ProjectMemberController@remove');
     
     // Environments
     Route::get('/projects/{projectId}/environments', 'EnvironmentController@index');
@@ -124,6 +130,14 @@ Route::middleware(['auth'], function() {
     
     // Git Sources
     Route::get('/git-sources', 'GitSourceController@index');
+    Route::get('/git-sources/github-apps/create', 'GitSourceController@createGithubApp');
+    Route::get('/git-sources/github-apps/manifest/create', 'GitSourceController@createGithubAppManifest');
+    Route::post('/git-sources/github-apps/manifest', 'GitSourceController@startGithubAppManifest');
+    Route::get('/git-sources/github-apps/manifest/callback', 'GitSourceController@handleGithubAppManifestCallback');
+    Route::post('/git-sources/github-apps', 'GitSourceController@storeGithubApp');
+    Route::get('/git-sources/github-apps/{id}/installations', 'GitSourceController@githubAppInstallations');
+    Route::post('/git-sources/github-apps/{id}/installations', 'GitSourceController@setGithubAppInstallation');
+    Route::delete('/git-sources/github-apps/{id}', 'GitSourceController@destroyGithubApp');
     Route::get('/git-sources/create', 'GitSourceController@create');
     Route::post('/git-sources', 'GitSourceController@store');
     Route::get('/git-sources/{id}', 'GitSourceController@show');
@@ -209,7 +223,14 @@ Route::prefix('/api/v1', function() {
 });
 
 // Webhook endpoints (public but signed)
-Route::post('/webhooks/github/{applicationId}', 'WebhookController@github');
+Route::post('/webhooks/github/{webhookUuid}', 'IncomingWebhookController@github');
 Route::post('/webhooks/gitlab/{applicationId}', 'WebhookController@gitlab');
 Route::post('/webhooks/bitbucket/{applicationId}', 'WebhookController@bitbucket');
 Route::post('/webhooks/custom/{applicationId}', 'WebhookController@custom');
+
+// Incoming Webhook management (authenticated)
+Route::middleware(['auth'], function() {
+    Route::post('/applications/{id}/incoming-webhooks', 'IncomingWebhookController@store');
+    Route::post('/incoming-webhooks/{id}/rotate', 'IncomingWebhookController@rotate');
+    Route::delete('/incoming-webhooks/{id}', 'IncomingWebhookController@destroy');
+});

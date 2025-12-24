@@ -50,6 +50,149 @@ function safeId(x) {
     return String(x || '').trim();
 }
 
+function redactSecrets(input, secrets = []) {
+    let out = String(input ?? '');
+    for (const secret of secrets || []) {
+        if (!secret) continue;
+        const s = String(secret);
+        if (!s) continue;
+        out = out.split(s).join('[REDACTED]');
+    }
+    return out;
+}
+
+function isLikelyGitAuthError(message) {
+    const m = String(message || '').toLowerCase();
+    return (
+        m.includes('authentication failed') ||
+        m.includes('could not read username') ||
+        m.includes('repository not found') ||
+        m.includes('permission denied') ||
+        m.includes('access denied') ||
+        m.includes('http basic: access denied') ||
+        m.includes('fatal: authentication')
+    );
+}
+
+function normalizeGitUrlForHttp(repoUrl) {
+    const url = String(repoUrl || '').trim();
+    if (!url) return url;
+
+    // Convert GitHub SSH format to HTTPS so we can use HTTP auth headers.
+    const sshMatch = url.match(/^git@github\.com:([^/\s]+)\/([^\s]+?)(?:\.git)?$/);
+    if (sshMatch) {
+        const owner = sshMatch[1];
+        const repo = sshMatch[2];
+        return `https://github.com/${owner}/${repo}.git`;
+    }
+
+    return url;
+}
+
+function gitAuthExtraHeaderFromToken(token) {
+    // GitHub supports HTTPS git via Basic auth with username x-access-token.
+    const raw = `x-access-token:${String(token || '').trim()}`;
+    const b64 = Buffer.from(raw, 'utf8').toString('base64');
+    return {
+        header: `Authorization: Basic ${b64}`,
+        redactions: [token, b64, raw],
+    };
+}
+
+async function gitClone({ repoUrl, branch, destDir, authToken }) {
+    const safeRepoUrl = authToken ? normalizeGitUrlForHttp(repoUrl) : String(repoUrl || '').trim();
+    if (!safeRepoUrl) {
+        throw new Error('Missing git repository URL');
+    }
+
+    if (authToken) {
+        const { header, redactions } = gitAuthExtraHeaderFromToken(authToken);
+        await execCommand(
+            `git -c http.extraHeader=\"${header}\" clone --branch ${branch} ${safeRepoUrl} ${destDir}`,
+            { redact: redactions }
+        );
+        return;
+    }
+
+    await execCommand(`git clone --branch ${branch} ${safeRepoUrl} ${destDir}`);
+}
+
+async function gitUpdate({ repoDir, repoUrl, branch, authToken }) {
+    // We prefer updating via origin for normal cases; for authenticated attempts we
+    // use explicit repoUrl so we don't need to rewrite remotes.
+    if (authToken) {
+        const safeRepoUrl = normalizeGitUrlForHttp(repoUrl);
+        const { header, redactions } = gitAuthExtraHeaderFromToken(authToken);
+
+        await execCommand(`git -c http.extraHeader=\"${header}\" fetch ${safeRepoUrl} ${branch}`, {
+            cwd: repoDir,
+            redact: redactions,
+        });
+
+        try {
+            await execCommand(`git checkout ${branch}`, { cwd: repoDir, redact: redactions });
+        } catch {
+            await execCommand(`git checkout -B ${branch}`, { cwd: repoDir, redact: redactions });
+        }
+
+        await execCommand(`git -c http.extraHeader=\"${header}\" pull ${safeRepoUrl} ${branch}`, {
+            cwd: repoDir,
+            redact: redactions,
+        });
+        return;
+    }
+
+    await execCommand(`git fetch origin`, { cwd: repoDir });
+    try {
+        await execCommand(`git checkout ${branch}`, { cwd: repoDir });
+    } catch {
+        await execCommand(`git checkout -B ${branch}`, { cwd: repoDir });
+    }
+    await execCommand(`git pull origin ${branch}`, { cwd: repoDir });
+}
+
+async function gitCloneOrUpdateWithAuthAttempts({ deploymentId, repoDir, repoUrl, branch, attempts, sendLogFn }) {
+    const gitAttempts = Array.isArray(attempts) ? attempts : [];
+    const hasRepo = fs.existsSync(path.join(repoDir, '.git'));
+
+    const tryUnauthed = async () => {
+        if (hasRepo) {
+            await gitUpdate({ repoDir, repoUrl, branch });
+        } else {
+            await gitClone({ repoUrl, branch, destDir: repoDir });
+        }
+    };
+
+    try {
+        await tryUnauthed();
+        return { usedAuth: false };
+    } catch (err) {
+        const msg = String(err?.message || err);
+        if (!gitAttempts.length || !isLikelyGitAuthError(msg)) {
+            throw err;
+        }
+    }
+
+    for (const attempt of gitAttempts) {
+        const token = attempt?.token;
+        const label = attempt?.label || attempt?.type || 'git auth';
+        if (!token) continue;
+
+        try {
+            sendLogFn?.(deploymentId, `🔐 Trying git auth: ${label}`, 'info');
+
+            // Always start from a clean slate for each attempt.
+            await execCommand(`rm -rf ${repoDir}`);
+            await gitClone({ repoUrl, branch, destDir: repoDir, authToken: token });
+            return { usedAuth: true, label };
+        } catch {
+            continue;
+        }
+    }
+
+    throw new Error('Git authentication failed with all configured GitHub Apps');
+}
+
 // State
 let ws = null;
 let heartbeatTimer = null;
@@ -323,30 +466,36 @@ async function buildFromGit(deploymentId, appConfig) {
     sendLog(deploymentId, `📥 Fetching repository: ${gitRepository}`, 'info');
     sendLog(deploymentId, `Branch: ${gitBranch}`, 'info');
     
-    // Check if repo exists and try to update it
+    // Clone or update repository; if private, try each GitHub App before failing.
+    const authAttempts = appConfig.git_auth_attempts || [];
+    sendLog(deploymentId, `Git auth attempts available: ${Array.isArray(authAttempts) ? authAttempts.length : 0}`, 'info');
     if (fs.existsSync(path.join(repoDir, '.git'))) {
-        try {
-            console.log(`[Agent] 🔄 Repository exists, updating...`);
-            sendLog(deploymentId, '🔄 Repository exists, updating...', 'info');
-            await execCommand(`git fetch origin`, { cwd: repoDir });
-            await execCommand(`git checkout ${gitBranch}`, { cwd: repoDir });
-            await execCommand(`git pull origin ${gitBranch}`, { cwd: repoDir });
-            console.log(`[Agent] ✓ Repository updated`);
-            sendLog(deploymentId, '✓ Repository updated', 'info');
-        } catch (err) {
-            // If update fails, remove and re-clone
-            console.log(`[Agent] ⚠ Update failed, re-cloning...`);
-            sendLog(deploymentId, 'Update failed, re-cloning...', 'info');
-            await execCommand(`rm -rf ${repoDir}`);
-            await execCommand(`git clone --branch ${gitBranch} ${gitRepository} ${repoDir}`);
-            console.log(`[Agent] ✓ Repository cloned`);
-            sendLog(deploymentId, '✓ Repository cloned', 'info');
-        }
+        console.log(`[Agent] 🔄 Repository exists, updating...`);
+        sendLog(deploymentId, '🔄 Repository exists, updating...', 'info');
     } else {
         console.log(`[Agent] 📥 Cloning repository...`);
-        await execCommand(`git clone --branch ${gitBranch} ${gitRepository} ${repoDir}`);
-        console.log(`[Agent] ✓ Repository cloned`);
-        sendLog(deploymentId, '✓ Repository cloned', 'info');
+    }
+
+    try {
+        const res = await gitCloneOrUpdateWithAuthAttempts({
+            deploymentId,
+            repoDir,
+            repoUrl: gitRepository,
+            branch: gitBranch,
+            attempts: authAttempts,
+            sendLogFn: sendLog,
+        });
+        if (res.usedAuth) {
+            console.log(`[Agent] ✓ Repository cloned with auth (${res.label})`);
+            sendLog(deploymentId, `✓ Repository cloned with auth (${res.label})`, 'info');
+        } else {
+            console.log(`[Agent] ✓ Repository ready`);
+            sendLog(deploymentId, '✓ Repository ready', 'info');
+        }
+    } catch (err) {
+        console.error(`[Agent] ❌ Git fetch/clone failed: ${err.message}`);
+        sendLog(deploymentId, `❌ Git fetch/clone failed: ${err.message}`, 'error');
+        throw err;
     }
     
     // Copy to build directory
@@ -491,24 +640,29 @@ async function deployCompose(deploymentId, appConfig) {
         console.log(`[Agent] 📥 Fetching repository for compose: ${gitRepository}`);
         sendLog(deploymentId, `📥 Fetching repository: ${gitRepository}`, 'info');
         
-        // Clone or update repository
-        if (fs.existsSync(path.join(repoDir, '.git'))) {
-            try {
-                await execCommand(`git fetch origin`, { cwd: repoDir });
-                await execCommand(`git checkout ${gitBranch}`, { cwd: repoDir });
-                await execCommand(`git pull origin ${gitBranch}`, { cwd: repoDir });
-                console.log(`[Agent] ✓ Repository updated`);
-                sendLog(deploymentId, '✓ Repository updated', 'info');
-            } catch (err) {
-                await execCommand(`rm -rf ${repoDir}`);
-                await execCommand(`git clone --branch ${gitBranch} ${gitRepository} ${repoDir}`);
-                console.log(`[Agent] ✓ Repository cloned`);
-                sendLog(deploymentId, '✓ Repository cloned', 'info');
+        // Clone or update repository; if private, try each GitHub App before failing.
+        const authAttempts = appConfig.git_auth_attempts || [];
+        sendLog(deploymentId, `Git auth attempts available: ${Array.isArray(authAttempts) ? authAttempts.length : 0}`, 'info');
+        try {
+            const res = await gitCloneOrUpdateWithAuthAttempts({
+                deploymentId,
+                repoDir,
+                repoUrl: gitRepository,
+                branch: gitBranch,
+                attempts: authAttempts,
+                sendLogFn: sendLog,
+            });
+            if (res.usedAuth) {
+                console.log(`[Agent] ✓ Repository cloned with auth (${res.label})`);
+                sendLog(deploymentId, `✓ Repository cloned with auth (${res.label})`, 'info');
+            } else {
+                console.log(`[Agent] ✓ Repository ready`);
+                sendLog(deploymentId, '✓ Repository ready', 'info');
             }
-        } else {
-            await execCommand(`git clone --branch ${gitBranch} ${gitRepository} ${repoDir}`);
-            console.log(`[Agent] ✓ Repository cloned`);
-            sendLog(deploymentId, '✓ Repository cloned', 'info');
+        } catch (err) {
+            console.error(`[Agent] ❌ Git fetch/clone failed: ${err.message}`);
+            sendLog(deploymentId, `❌ Git fetch/clone failed: ${err.message}`, 'error');
+            throw err;
         }
         
         // Copy repository files to compose directory
@@ -714,12 +868,70 @@ async function runContainer(deploymentId, applicationId, imageName, appConfig) {
 /**
  * Stop container
  */
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function dockerSafeName(name) {
+    // Container names/IDs should not contain whitespace or shell metacharacters.
+    return String(name || '').trim().replace(/[^a-zA-Z0-9_.-]/g, '');
+}
+
+async function isContainerRunning(containerNameOrId) {
+    const name = dockerSafeName(containerNameOrId);
+    if (!name) return false;
+
+    try {
+        // Exact-name match for containers we manage.
+        const out = await execCommand(`docker ps --filter "name=^/${name}$" --format "{{.ID}}"`, { timeout: 5000 });
+        if (String(out || '').trim()) return true;
+    } catch (err) {
+        // ignore
+    }
+
+    // Fallback: treat as ID and inspect
+    try {
+        const running = await execCommand(`docker inspect -f "{{.State.Running}}" ${name}`, { timeout: 5000 });
+        return String(running || '').trim() === 'true';
+    } catch (err) {
+        return false;
+    }
+}
+
+async function stopContainerWithTimeout(containerNameOrId, { timeoutMs = 30000, remove = false } = {}) {
+    const name = dockerSafeName(containerNameOrId);
+    if (!name) return;
+
+    const start = Date.now();
+    let running = await isContainerRunning(name);
+
+    while (running && (Date.now() - start) < timeoutMs) {
+        try {
+            // Short stop attempt; loop until overall timeout.
+            await execCommand(`docker stop -t 10 ${name}`, { timeout: 12000 });
+        } catch (err) {
+            // Keep trying until we hit the overall timeout.
+        }
+
+        await sleep(1000);
+        running = await isContainerRunning(name);
+    }
+
+    if (running) {
+        // Still running after timeout: force kill.
+        try { await execCommand(`docker kill ${name}`, { timeout: 5000 }); } catch (err) {}
+    }
+
+    if (remove) {
+        try { await execCommand(`docker rm -f ${name}`, { timeout: 5000 }); } catch (err) {}
+    }
+}
+
 async function stopContainer(containerName) {
     try {
-        await execCommand(`docker stop ${containerName}`);
-        await execCommand(`docker rm ${containerName}`);
+        await stopContainerWithTimeout(containerName, { timeoutMs: 30000, remove: true });
     } catch (err) {
-        // Container might not exist
+        // Container might not exist / docker might be unavailable
     }
 }
 
@@ -736,8 +948,7 @@ async function handleApplicationDelete(message) {
         // Stop and remove regular container
         const containerName = `chap-${safeId(applicationUuid)}`;
         try {
-            await execCommand(`docker stop ${containerName}`);
-            await execCommand(`docker rm ${containerName}`);
+            await stopContainerWithTimeout(containerName, { timeoutMs: 30000, remove: true });
             console.log(`[Agent] ✓ Removed container: ${containerName}`);
         } catch (err) {
             // Container might not exist
@@ -815,12 +1026,17 @@ async function handleStop(message) {
             // Stop compose services
             console.log(`[Agent] Stopping compose services...`);
             const safeAppId = String(applicationUuid).trim();
-            await execCommand(`docker compose -p chap-${safeAppId} stop`, { cwd: composeDir });
+            try {
+                await execCommand(`docker compose -p chap-${safeAppId} stop --timeout 30`, { cwd: composeDir, timeout: 35000 });
+            } catch (err) {
+                // If stop hangs or fails, force kill.
+                try { await execCommand(`docker compose -p chap-${safeAppId} kill`, { cwd: composeDir, timeout: 15000 }); } catch (e) {}
+            }
             console.log(`[Agent] ✓ Compose services stopped`);
         } else {
             // Stop regular container
             const containerName = `chap-${safeId(applicationUuid)}`;
-            await execCommand(`docker stop ${containerName}`);
+            await stopContainerWithTimeout(containerName, { timeoutMs: 30000, remove: false });
             console.log(`[Agent] ✓ Container ${containerName} stopped`);
         }
         
@@ -1129,9 +1345,11 @@ async function sendStatus() {
  */
 function execCommand(command, options = {}) {
     return new Promise((resolve, reject) => {
-        exec(command, options, (error, stdout, stderr) => {
+        const { redact, ...execOptions } = options || {};
+        exec(command, execOptions, (error, stdout, stderr) => {
             if (error) {
-                reject(new Error(stderr || error.message));
+                const msg = redactSecrets(stderr || error.message, redact || []);
+                reject(new Error(String(msg || 'Command failed').trim()));
             } else {
                 resolve(stdout);
             }

@@ -16,7 +16,7 @@ class DeploymentService
     /**
      * Create a new deployment
      */
-    public static function create(Application $application, ?string $commitSha = null): Deployment
+    public static function create(Application $application, ?string $commitSha = null, array $context = []): Deployment
     {
         $db = App::db();
 
@@ -39,6 +39,8 @@ class DeploymentService
             'node_id' => $application->node_id,
             'git_commit_sha' => $commitSha ?? $application->git_commit_sha,
             'status' => 'queued',
+            'triggered_by' => $context['triggered_by'] ?? null,
+            'triggered_by_name' => $context['triggered_by_name'] ?? null,
         ]);
 
         // Queue the deployment task
@@ -60,6 +62,22 @@ class DeploymentService
         }
 
         // Create the task message
+        $appPayload = $application->toDeployPayload();
+
+        // Add git auth attempts (GitHub Apps) so the node can try each before failing.
+        if (!empty($appPayload['git_repository'])) {
+            try {
+                $environment = $application->environment();
+                $project = $environment ? $environment->project() : null;
+                $teamId = $project ? (int)$project->team_id : null;
+                if ($teamId) {
+                    $appPayload['git_auth_attempts'] = GitCredentialResolver::gitAuthAttemptsForRepo($teamId, (string)$appPayload['git_repository']);
+                }
+            } catch (\Throwable $e) {
+                // Do not block deployments if auth resolution fails.
+            }
+        }
+
         $task = [
             'type' => 'task:deploy',
             'id' => uuid(),
@@ -67,7 +85,7 @@ class DeploymentService
             'payload' => [
                 'task_id' => uuid(),
                 'deployment_id' => $deployment->uuid,
-                'application' => $application->toDeployPayload(),
+                'application' => $appPayload,
             ],
         ];
 
@@ -215,7 +233,7 @@ class DeploymentService
     /**
      * Rollback to a previous deployment
      */
-    public static function rollback(Deployment $previousDeployment): Deployment
+    public static function rollback(Deployment $previousDeployment, array $context = []): Deployment
     {
         $application = $previousDeployment->application();
         
@@ -229,6 +247,8 @@ class DeploymentService
             'commit_sha' => $previousDeployment->commit_sha,
             'rollback_of_id' => $previousDeployment->id,
             'status' => 'queued',
+            'triggered_by' => $context['triggered_by'] ?? 'rollback',
+            'triggered_by_name' => $context['triggered_by_name'] ?? null,
         ]);
 
         $deployment->appendLog('Rolling back to deployment: ' . $previousDeployment->uuid, 'info');

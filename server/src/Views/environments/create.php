@@ -9,12 +9,15 @@
     <div class="page-header">
         <div>
             <nav class="breadcrumb">
-                <a href="/projects/<?= e($project->uuid) ?>"><?= e($project->name) ?></a>
+                <span class="breadcrumb-item"><a href="/projects">Projects</a></span>
+                <span class="breadcrumb-separator">/</span>
+                <span class="breadcrumb-item"><a href="/projects/<?= e($project->uuid) ?>"><?= e($project->name) ?></a></span>
+
                 <span class="breadcrumb-separator">/</span>
                 <span class="breadcrumb-current">New Environment</span>
             </nav>
             <h1 class="page-title">Create Environment</h1>
-            <p class="text-muted">Add a new environment to <?= e($project->name) ?></p>
+            <p class="page-header-description">Add a new environment to <?= e($project->name) ?></p>
         </div>
     </div>
 

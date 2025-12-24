@@ -118,9 +118,6 @@ $initialEnv = old('environment_variables', '');
                     <div class="form-group">
                         <label for="build_pack" class="form-label">Build Pack</label>
                         <select name="build_pack" id="build_pack" class="select">
-                            <option value="dockerfile" <?= old('build_pack') === 'dockerfile' ? 'selected' : '' ?>>Dockerfile</option>
-                            <option value="nixpacks" <?= old('build_pack') === 'nixpacks' ? 'selected' : '' ?>>Nixpacks (Auto-detect)</option>
-                            <option value="static" <?= old('build_pack') === 'static' ? 'selected' : '' ?>>Static Site</option>
                             <option value="docker-compose" <?= old('build_pack') === 'docker-compose' ? 'selected' : '' ?>>Docker Compose</option>
                         </select>
                     </div>
@@ -144,9 +141,9 @@ $initialEnv = old('environment_variables', '');
 
         <!-- Environment Variables -->
         <div class="card card-glass">
-            <div class="card-header">
+            <div class="card-header flex items-center justify-between gap-4 flex-wrap">
                 <h2 class="card-title">Environment Variables</h2>
-                <div class="card-actions">
+                <div class="flex items-center gap-2 flex-wrap">
                     <button type="button" class="btn btn-ghost btn-sm" id="pull-env-btn">Pull from repo</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="bulk-edit-btn">Bulk Edit</button>
                     <button type="button" class="btn btn-secondary btn-sm" id="add-env-btn">Add Variable</button>

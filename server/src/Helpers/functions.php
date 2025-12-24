@@ -153,6 +153,34 @@ if (!function_exists('url')) {
     }
 }
 
+if (!function_exists('request_base_url')) {
+    /**
+     * Best-effort base URL for the current request.
+     *
+     * Prefers APP_URL when configured, otherwise derives from request headers.
+     */
+    function request_base_url(): string
+    {
+        $configured = rtrim((string)env('APP_URL', ''), '/');
+        if ($configured !== '') {
+            return $configured;
+        }
+
+        $proto = $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? null;
+        if (!is_string($proto) || $proto === '') {
+            $https = $_SERVER['HTTPS'] ?? '';
+            $proto = (!empty($https) && $https !== 'off') ? 'https' : 'http';
+        }
+
+        $host = $_SERVER['HTTP_X_FORWARDED_HOST'] ?? ($_SERVER['HTTP_HOST'] ?? 'localhost');
+        if (!is_string($host) || $host === '') {
+            $host = 'localhost';
+        }
+
+        return $proto . '://' . $host;
+    }
+}
+
 if (!function_exists('old')) {
     /**
      * Get old input value

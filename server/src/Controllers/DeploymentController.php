@@ -66,8 +66,13 @@ class DeploymentController extends BaseController
         // Get optional commit SHA from request
         $commitSha = $_POST['commit_sha'] ?? null;
 
+        $triggeredByName = $this->user?->displayName();
+
         // Create deployment
-        $deployment = DeploymentService::create($application, $commitSha);
+        $deployment = DeploymentService::create($application, $commitSha, [
+            'triggered_by' => $this->user ? 'user' : 'manual',
+            'triggered_by_name' => $triggeredByName,
+        ]);
 
         if ($this->isApiRequest()) {
             $this->json(['deployment' => $deployment->toArray()], 201);
@@ -192,7 +197,10 @@ class DeploymentController extends BaseController
             }
         }
 
-        $newDeployment = DeploymentService::rollback($deployment);
+        $newDeployment = DeploymentService::rollback($deployment, [
+            'triggered_by' => $this->user ? 'rollback' : 'rollback',
+            'triggered_by_name' => $this->user?->displayName(),
+        ]);
 
         if ($this->isApiRequest()) {
             $this->json(['deployment' => $newDeployment->toArray()], 201);

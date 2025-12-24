@@ -97,6 +97,47 @@ class EnvironmentController extends BaseController
     }
 
     /**
+     * Show edit environment form
+     */
+    public function edit(string $uuid): void
+    {
+        $team = $this->currentTeam();
+        $environment = Environment::findByUuid($uuid);
+
+        if (!$environment) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Environment not found'], 404);
+            } else {
+                flash('error', 'Environment not found');
+                $this->redirect('/projects');
+            }
+        }
+
+        $project = $environment->project();
+        if (!$project || $project->team_id !== $team->id) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Environment not found'], 404);
+            } else {
+                flash('error', 'Environment not found');
+                $this->redirect('/projects');
+            }
+        }
+
+        if ($this->isApiRequest()) {
+            $this->json([
+                'environment' => $environment->toArray(),
+                'project' => $project->toArray(),
+            ]);
+        } else {
+            $this->view('environments/edit', [
+                'title' => 'Edit Environment',
+                'environment' => $environment,
+                'project' => $project,
+            ]);
+        }
+    }
+
+    /**
      * Update environment
      */
     public function update(string $uuid): void
@@ -121,6 +162,11 @@ class EnvironmentController extends BaseController
                 flash('error', 'Environment not found');
                 $this->redirect('/projects');
             }
+        }
+
+        if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/environments/' . $uuid . '/edit');
         }
 
         $data = $this->all();
@@ -163,6 +209,11 @@ class EnvironmentController extends BaseController
                 flash('error', 'Environment not found');
                 $this->redirect('/projects');
             }
+        }
+
+        if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/environments/' . $uuid);
         }
 
         $projectUuid = $project->uuid;

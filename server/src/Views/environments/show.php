@@ -60,7 +60,7 @@
                 <div class="card-body">
                     <div class="empty-state">
                         <div class="empty-state-icon">
-                            <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 100%;">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
                             </svg>
                         </div>

@@ -14,18 +14,29 @@ class GitSource extends BaseModel
     protected static string $table = 'git_sources';
     protected static array $fillable = [
         'team_id', 'name', 'type', 'base_url', 'api_url',
-        'is_oauth', 'oauth_token', 'deploy_key_public', 'deploy_key_private',
+        'auth_method',
+        'is_oauth', 'oauth_token',
+        'github_app_id', 'github_app_installation_id', 'github_app_private_key',
+        'deploy_key_public', 'deploy_key_private',
         'is_active'
     ];
-    protected static array $hidden = ['oauth_token', 'deploy_key_private'];
+    protected static array $hidden = ['oauth_token', 'deploy_key_private', 'github_app_private_key'];
 
     public int $team_id;
     public string $name = '';
     public string $type = 'github';
     public ?string $base_url = null;
     public ?string $api_url = null;
+
+    // oauth | deploy_key | github_app
+    public ?string $auth_method = null;
     public bool $is_oauth = false;
     public ?string $oauth_token = null;
+
+    public ?int $github_app_id = null;
+    public ?int $github_app_installation_id = null;
+    public ?string $github_app_private_key = null;
+
     public ?string $deploy_key_public = null;
     public ?string $deploy_key_private = null;
     public bool $is_active = true;
@@ -50,6 +61,44 @@ class GitSource extends BaseModel
         );
         
         return array_map(fn($data) => self::fromArray($data), $results);
+    }
+
+    /**
+     * Get GitHub App git sources for team
+     */
+    public static function githubAppsForTeam(int $teamId): array
+    {
+        $db = App::db();
+        $results = $db->fetchAll(
+            "SELECT * FROM git_sources WHERE team_id = ? AND is_active = 1 AND type = 'github' AND auth_method = 'github_app' ORDER BY name",
+            [$teamId]
+        );
+
+        return array_map(fn($data) => self::fromArray($data), $results);
+    }
+
+    /**
+     * Infer auth_method for older rows
+     */
+    public function inferredAuthMethod(): string
+    {
+        if ($this->auth_method) {
+            return $this->auth_method;
+        }
+
+        if ($this->github_app_id && $this->github_app_installation_id && $this->github_app_private_key) {
+            return 'github_app';
+        }
+
+        if ($this->is_oauth && $this->oauth_token) {
+            return 'oauth';
+        }
+
+        if ($this->deploy_key_private) {
+            return 'deploy_key';
+        }
+
+        return 'oauth';
     }
 
     /**

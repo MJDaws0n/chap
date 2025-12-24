@@ -12,6 +12,10 @@ $statusColors = [
 ];
 $statusColor = $statusColors[$application->status] ?? 'badge-default';
 
+$isDeploying = method_exists($application, 'isDeploying')
+    ? $application->isDeploying()
+    : (($application->status ?? null) === 'deploying');
+
 $envArr = $application->getEnvironmentVariables();
 $envVarsRaw = '';
 if (!empty($envArr)) {
@@ -20,6 +24,9 @@ if (!empty($envArr)) {
     }
     $envVarsRaw = rtrim($envVarsRaw, "\n");
 }
+
+$incomingWebhooks = $incomingWebhooks ?? [];
+$incomingWebhookReveals = $incomingWebhookReveals ?? [];
 ?>
 
 <div class="flex flex-col gap-6">
@@ -83,9 +90,11 @@ if (!empty($envArr)) {
                     </form>
                 <?php endif; ?>
 
-                <form method="POST" action="/applications/<?= e($application->uuid) ?>/deploy" class="inline-block">
+                <form method="POST" action="/applications/<?= e($application->uuid) ?>/deploy" class="inline-block" data-deploy-form>
                     <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                    <button type="submit" class="btn btn-primary">Deploy</button>
+                    <button type="submit" class="btn btn-primary" <?= $isDeploying ? 'disabled aria-disabled="true"' : '' ?>>
+                        <?= $isDeploying ? 'Deploying…' : 'Deploy' ?>
+                    </button>
                 </form>
             </div>
         </div>
@@ -182,9 +191,6 @@ if (!empty($envArr)) {
                             <div class="form-group">
                                 <label class="form-label" for="build_pack">Build Pack</label>
                                 <select name="build_pack" id="build_pack" class="select">
-                                    <option value="dockerfile" <?= $application->build_pack === 'dockerfile' ? 'selected' : '' ?>>Dockerfile</option>
-                                    <option value="nixpacks" <?= $application->build_pack === 'nixpacks' ? 'selected' : '' ?>>Nixpacks</option>
-                                    <option value="static" <?= $application->build_pack === 'static' ? 'selected' : '' ?>>Static Site</option>
                                     <option value="docker-compose" <?= $application->build_pack === 'docker-compose' ? 'selected' : '' ?>>Docker Compose</option>
                                 </select>
                             </div>
@@ -197,11 +203,119 @@ if (!empty($envArr)) {
                 </div>
             </div>
 
+            <!-- Incoming Webhooks -->
+            <div class="card">
+                <div class="card-header flex items-center justify-between gap-4 flex-wrap">
+                    <h2 class="card-title">Incoming Webhooks</h2>
+                </div>
+                <div class="card-body">
+                    <p class="text-sm text-secondary">
+                        Create a GitHub webhook that auto-deploys this application on push.
+                        GitHub should be configured to send <code>application/json</code> (recommended), but <code>application/x-www-form-urlencoded</code> is also supported.
+                    </p>
+
+                    <form method="POST" action="/applications/<?= e($application->uuid) ?>/incoming-webhooks" class="mt-4">
+                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                        <div class="grid grid-cols-1 md:grid-cols-3">
+                            <div class="form-group">
+                                <label class="form-label" for="ih-name">Name</label>
+                                <input type="text" name="name" id="ih-name" value="GitHub" class="input">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="ih-branch">Branch override (optional)</label>
+                                <input type="text" name="branch" id="ih-branch" placeholder="<?= e($application->git_branch) ?>" class="input">
+                            </div>
+                            <div class="form-group flex items-end">
+                                <button type="submit" class="btn btn-primary w-full">Create Webhook</button>
+                            </div>
+                        </div>
+                    </form>
+
+                    <?php if (empty($incomingWebhooks)): ?>
+                        <div class="empty-state mt-6">
+                            <p class="empty-state-title">No incoming webhooks</p>
+                            <p class="empty-state-description">Create one to enable auto-deploy on GitHub push.</p>
+                        </div>
+                    <?php else: ?>
+                        <div class="table-container mt-6">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Branch</th>
+                                        <th>Endpoint</th>
+                                        <th>Secret</th>
+                                        <th>Last</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($incomingWebhooks as $wh): ?>
+                                        <?php
+                                            $endpointUrl = url('/webhooks/github/' . $wh->uuid);
+                                            $revealed = ($incomingWebhookReveals[$wh->uuid] ?? null);
+                                            $branchLabel = $wh->branch ? $wh->branch : ($application->git_branch ?: '-');
+                                            $last = $wh->last_received_at ? time_ago($wh->last_received_at) : 'Never';
+                                            $secretLabel = $revealed ? $revealed : '••••••••';
+                                        ?>
+                                        <tr>
+                                            <td class="font-medium truncate">
+                                                <?= e($wh->name) ?>
+                                                <?php if (!($wh->is_active ?? true)): ?>
+                                                    <span class="badge badge-neutral ml-2">Inactive</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td><code><?= e($branchLabel) ?></code></td>
+                                            <td class="min-w-0">
+                                                <div class="flex items-center gap-2 min-w-0">
+                                                    <code class="truncate min-w-0 flex-1"><?= e($endpointUrl) ?></code>
+                                                    <button type="button" class="btn btn-ghost btn-sm flex-shrink-0" onclick="copyToClipboard('<?= e($endpointUrl) ?>')">Copy</button>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div class="flex items-center gap-2 min-w-0">
+                                                    <code class="truncate min-w-0 flex-1"><?= e($secretLabel) ?></code>
+                                                    <?php if ($revealed): ?>
+                                                        <button type="button" class="btn btn-ghost btn-sm flex-shrink-0" onclick="copyToClipboard('<?= e($revealed) ?>')">Copy</button>
+                                                    <?php endif; ?>
+                                                </div>
+                                                <?php if ($revealed): ?>
+                                                    <p class="text-xs text-secondary mt-1">Shown once — store it in GitHub now.</p>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="text-secondary">
+                                                <?= e($last) ?>
+                                                <?php if (!empty($wh->last_status)): ?>
+                                                    <span class="text-tertiary">• <?= e($wh->last_status) ?></span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="text-right">
+                                                <div class="flex items-center justify-end gap-2 whitespace-nowrap">
+                                                    <form method="POST" action="/incoming-webhooks/<?= e($wh->uuid) ?>/rotate" class="inline-block">
+                                                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                                                        <button type="submit" class="btn btn-secondary btn-sm">Rotate Secret</button>
+                                                    </form>
+                                                    <form method="POST" action="/incoming-webhooks/<?= e($wh->uuid) ?>" class="inline-block" data-delete-incoming-webhook>
+                                                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                                                        <input type="hidden" name="_method" value="DELETE">
+                                                        <button type="submit" class="btn btn-danger-ghost btn-sm">Delete</button>
+                                                    </form>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
             <!-- Environment Variables -->
             <div class="card">
-                <div class="card-header">
+                <div class="card-header flex items-center justify-between gap-4 flex-wrap">
                     <h2 class="card-title">Environment Variables</h2>
-                    <div class="flex items-center gap-3 flex-wrap">
+                    <div class="flex items-center gap-2 flex-wrap">
                         <button type="button" class="btn btn-ghost btn-sm" id="bulk-edit-btn">Bulk Edit</button>
                         <button type="button" class="btn btn-secondary btn-sm" id="add-env-btn">Add Variable</button>
                     </div>
@@ -257,29 +371,6 @@ if (!empty($envArr)) {
                 </div>
             </div>
 
-            <!-- URLs Card -->
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="card-title">URLs</h3>
-                </div>
-                <div class="card-body">
-                    <?php if (!empty($application->domains)): ?>
-                        <div class="flex flex-col gap-2">
-                            <?php foreach (explode(',', $application->domains) as $domain): ?>
-                                <a href="https://<?= e(trim($domain)) ?>" target="_blank" rel="noopener" class="flex items-center justify-between gap-3 px-4 py-3 bg-tertiary rounded-lg transition-opacity hover:opacity-75">
-                                    <span class="truncate min-w-0 flex-1"><?= e(trim($domain)) ?></span>
-                                    <svg class="icon text-muted flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
-                                    </svg>
-                                </a>
-                            <?php endforeach; ?>
-                        </div>
-                    <?php else: ?>
-                        <p class="text-muted text-sm">No custom domains configured.</p>
-                    <?php endif; ?>
-                </div>
-            </div>
-
             <!-- Danger Zone -->
             <div class="card border-red">
                 <div class="card-header">
@@ -311,6 +402,27 @@ if (!empty($envArr)) {
     }
 }
 </style>
+
+<script>
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text);
+    if (window.Toast && typeof window.Toast.success === 'function') {
+        window.Toast.success('Copied to clipboard');
+    }
+}
+
+document.querySelectorAll('[data-delete-incoming-webhook]').forEach(form => {
+    form.addEventListener('submit', (e) => {
+        if (window.Modal && typeof window.Modal.confirmDelete === 'function') {
+            e.preventDefault();
+            window.Modal.confirmDelete('This will permanently delete the webhook endpoint. GitHub will stop being able to deploy from it.')
+                .then(result => {
+                    if (result && result.confirmed) form.submit();
+                });
+        }
+    });
+});
+</script>
 
 <script>
 (function() {
@@ -362,8 +474,8 @@ if (!empty($envArr)) {
 
         elements.deleteAppBtn.addEventListener('click', () => {
             Modal.confirmDelete('Are you sure you want to delete this application? This action cannot be undone.')
-                .then(confirmed => {
-                    if (confirmed) {
+                .then(result => {
+                    if (result && result.confirmed) {
                         elements.deleteForm.submit();
                     }
                 });

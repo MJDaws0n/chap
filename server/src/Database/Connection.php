@@ -62,7 +62,31 @@ class Connection
     public function query(string $sql, array $params = []): \PDOStatement
     {
         $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($params);
+
+        if (empty($params)) {
+            $stmt->execute();
+            return $stmt;
+        }
+
+        $index = 1;
+        foreach ($params as $value) {
+            // Normalize booleans for MySQL strict mode (avoid '' for false)
+            if (is_bool($value)) {
+                $value = $value ? 1 : 0;
+            }
+
+            if ($value === null) {
+                $stmt->bindValue($index, null, PDO::PARAM_NULL);
+            } elseif (is_int($value)) {
+                $stmt->bindValue($index, $value, PDO::PARAM_INT);
+            } else {
+                $stmt->bindValue($index, (string)$value, PDO::PARAM_STR);
+            }
+
+            $index++;
+        }
+
+        $stmt->execute();
         return $stmt;
     }
 

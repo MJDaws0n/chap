@@ -97,6 +97,7 @@ class Team extends BaseModel
         return $db->update('team_user', ['role' => $role], 'team_id = ? AND user_id = ?', [$this->id, $userId]) > 0;
     }
 
+
     /**
      * Get nodes for team
      */
