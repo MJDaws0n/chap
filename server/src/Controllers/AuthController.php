@@ -6,6 +6,7 @@ use Chap\Auth\AuthManager;
 use Chap\Models\User;
 use Chap\Models\ActivityLog;
 use Chap\Auth\OAuth\GitHubProvider;
+use Chap\Services\Mailer;
 
 /**
  * Authentication Controller
@@ -201,9 +202,24 @@ class AuthController extends BaseController
 
         // In a real app, you would send an email here
         if ($token) {
-            // TODO: Send email with reset link
-            // For development, log the token
-            error_log("Password reset token for {$email}: {$token}");
+            $resetUrl = request_base_url() . '/reset-password/' . urlencode($token) . '?email=' . urlencode($email);
+
+            try {
+                if (Mailer::isConfigured()) {
+                    $subject = 'Reset your password';
+                    $html = '<p>You requested a password reset.</p>'
+                        . '<p><a href="' . htmlspecialchars($resetUrl, ENT_QUOTES) . '">Reset Password</a></p>'
+                        . '<p>If you did not request this, you can ignore this email.</p>';
+                    $text = "You requested a password reset.\n\nReset: {$resetUrl}\n\nIf you did not request this, ignore this email.";
+                    Mailer::send($email, $subject, $html, $text);
+                } else {
+                    // For development, log the token
+                    error_log("Password reset token for {$email}: {$token}");
+                }
+            } catch (\Throwable $e) {
+                // Don't reveal mail errors to the user.
+                error_log('Password reset email failed: ' . $e->getMessage());
+            }
         }
 
         $this->redirect('/login');

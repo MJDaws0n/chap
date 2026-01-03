@@ -139,6 +139,6 @@ class DatabaseController extends BaseController
     private function canAccessEnvironment(Environment $environment, $team): bool
     {
         $project = $environment->project();
-        return $project && $project->team_id === $team->id;
+        return $project && $this->canAccessTeamId((int)$project->team_id);
     }
 }

@@ -27,6 +27,8 @@ abstract class BaseController
         $data['user'] = $this->user?->toArray();
         $data['currentTeam'] = $this->user?->currentTeam()?->toArray();
         $data['flash'] = flash();
+        $data['isAdmin'] = (bool)($this->user?->is_admin ?? false);
+        $data['adminViewAll'] = admin_view_all();
         
         echo View::render($template, $data, $layout);
     }
@@ -177,7 +179,7 @@ abstract class BaseController
         }
 
         $team = \Chap\Models\Team::find($teamId);
-        if (!$team || !$this->user->belongsToTeam($team)) {
+        if (!$team || (!$this->user->belongsToTeam($team) && !admin_view_all())) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Forbidden'], 403);
             } else {
@@ -185,6 +187,23 @@ abstract class BaseController
                 $this->redirect('/dashboard');
             }
         }
+    }
+
+    /**
+     * Check if the current user can access the given team ID.
+     */
+    protected function canAccessTeamId(int $teamId): bool
+    {
+        if (admin_view_all()) {
+            return true;
+        }
+
+        if (!$this->user) {
+            return false;
+        }
+
+        $team = \Chap\Models\Team::find($teamId);
+        return $team ? $this->user->belongsToTeam($team) : false;
     }
 
     /**

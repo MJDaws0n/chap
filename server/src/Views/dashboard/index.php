@@ -140,17 +140,19 @@
                     </div>
                 </a>
 
-                <a href="/nodes/create" class="flex items-center gap-4 p-4 bg-tertiary rounded-lg hover:bg-secondary transition-colors">
-                    <div class="icon-box icon-box-purple">
-                        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/>
-                        </svg>
-                    </div>
-                    <div class="min-w-0 flex-1">
-                        <p class="font-medium">Add Node</p>
-                        <p class="text-sm text-secondary truncate">Connect a new server to deploy applications</p>
-                    </div>
-                </a>
+                <?php if (!empty($isAdmin)): ?>
+                    <a href="/nodes/create" class="flex items-center gap-4 p-4 bg-tertiary rounded-lg hover:bg-secondary transition-colors">
+                        <div class="icon-box icon-box-purple">
+                            <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/>
+                            </svg>
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <p class="font-medium">Add Node</p>
+                            <p class="text-sm text-secondary truncate">Connect a new server to deploy applications</p>
+                        </div>
+                    </a>
+                <?php endif; ?>
 
                 <a href="/templates" class="flex items-center gap-4 p-4 bg-tertiary rounded-lg hover:bg-secondary transition-colors">
                     <div class="icon-box icon-box-green">

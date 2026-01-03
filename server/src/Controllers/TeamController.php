@@ -16,7 +16,7 @@ class TeamController extends BaseController
     public function index(): void
     {
         $user = $this->user;
-        $teams = $user?->teams() ?? [];
+        $teams = admin_view_all() ? Team::all() : ($user?->teams() ?? []);
 
         $this->view('teams/index', [
             'title' => 'Teams',
@@ -87,7 +87,7 @@ class TeamController extends BaseController
         $user = $this->user;
         
         // Check if user is member
-        if (!$team->hasMember($user->id)) {
+        if (!$team->hasMember($user->id) && !admin_view_all()) {
             flash('error', 'You are not a member of this team');
             redirect('/teams');
             return;

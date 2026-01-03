@@ -12,14 +12,16 @@
                 <h1 class="page-header-title">Nodes</h1>
                 <p class="page-header-description">Servers where your applications run</p>
             </div>
-            <div class="page-header-actions">
-                <a href="/nodes/create" class="btn btn-primary">
-                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
-                    </svg>
-                    Add Node
-                </a>
-            </div>
+            <?php if (!empty($isAdmin)): ?>
+                <div class="page-header-actions">
+                    <a href="/nodes/create" class="btn btn-primary">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+                        </svg>
+                        Add Node
+                    </a>
+                </div>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -34,12 +36,14 @@
                     </div>
                     <p class="empty-state-title">No nodes connected</p>
                     <p class="empty-state-description">Add your first server to start deploying applications</p>
-                    <a href="/nodes/create" class="btn btn-primary btn-sm">
-                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
-                        </svg>
-                        Add Node
-                    </a>
+                    <?php if (!empty($isAdmin)): ?>
+                        <a href="/nodes/create" class="btn btn-primary btn-sm">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+                            </svg>
+                            Add Node
+                        </a>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
@@ -74,7 +78,7 @@
                                             </svg>
                                         </div>
                                         <div class="min-w-0">
-                                            <p style="color: white;" class="text-lg font-semibold truncate"><?= e($node->name) ?></p>
+                                            <p class="text-lg font-semibold text-primary truncate"><?= e($node->name) ?></p>
                                             <?php if (!empty($node->description)): ?>
                                                 <p class="text-secondary text-sm truncate"><?= e($node->description) ?></p>
                                             <?php endif; ?>

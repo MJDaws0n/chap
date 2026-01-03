@@ -49,7 +49,15 @@
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                                 </svg>
                             </div>
-                            <span class="badge badge-info"><?= count($project->environments()) ?> environments</span>
+                            <div class="flex items-center gap-2">
+                                <?php if (!empty($adminViewAll)): ?>
+                                    <?php $team = $project->team(); ?>
+                                    <?php if ($team): ?>
+                                        <span class="badge badge-neutral"><?= e($team->name) ?></span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                                <span class="badge badge-info"><?= count($project->environments()) ?> environments</span>
+                            </div>
                         </div>
 
                         <div class="min-w-0">

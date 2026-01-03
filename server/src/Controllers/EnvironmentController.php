@@ -15,10 +15,10 @@ class EnvironmentController extends BaseController
      */
     public function store(string $projectUuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $project = Project::findByUuid($projectUuid);
 
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Project not found'], 404);
             } else {
@@ -57,7 +57,7 @@ class EnvironmentController extends BaseController
      */
     public function show(string $uuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $environment = Environment::findByUuid($uuid);
 
         if (!$environment) {
@@ -70,7 +70,7 @@ class EnvironmentController extends BaseController
         }
 
         $project = $environment->project();
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Environment not found'], 404);
             } else {
@@ -101,7 +101,7 @@ class EnvironmentController extends BaseController
      */
     public function edit(string $uuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $environment = Environment::findByUuid($uuid);
 
         if (!$environment) {
@@ -114,7 +114,7 @@ class EnvironmentController extends BaseController
         }
 
         $project = $environment->project();
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Environment not found'], 404);
             } else {
@@ -142,7 +142,7 @@ class EnvironmentController extends BaseController
      */
     public function update(string $uuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $environment = Environment::findByUuid($uuid);
 
         if (!$environment) {
@@ -155,7 +155,7 @@ class EnvironmentController extends BaseController
         }
 
         $project = $environment->project();
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Environment not found'], 404);
             } else {
@@ -189,7 +189,7 @@ class EnvironmentController extends BaseController
      */
     public function destroy(string $uuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $environment = Environment::findByUuid($uuid);
 
         if (!$environment) {
@@ -202,7 +202,7 @@ class EnvironmentController extends BaseController
         }
 
         $project = $environment->project();
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Environment not found'], 404);
             } else {
@@ -232,10 +232,10 @@ class EnvironmentController extends BaseController
      */
     public function create(string $projectUuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $project = Project::findByUuid($projectUuid);
 
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Project not found'], 404);
             } else {

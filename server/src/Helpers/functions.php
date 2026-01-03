@@ -127,7 +127,13 @@ if (!function_exists('uuid')) {
      */
     function uuid(): string
     {
-        return \Ramsey\Uuid\Uuid::uuid4()->toString();
+        $data = random_bytes(16);
+        // Set version to 0100
+        $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
+        // Set variant to 10xx
+        $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
+
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
 }
 
@@ -221,6 +227,29 @@ if (!function_exists('auth')) {
     function auth(): ?\Chap\Models\User
     {
         return \Chap\Auth\AuthManager::user();
+    }
+}
+
+if (!function_exists('is_admin')) {
+    /**
+     * Check if the current user is a site admin.
+     */
+    function is_admin(): bool
+    {
+        return (bool)(auth()?->is_admin ?? false);
+    }
+}
+
+if (!function_exists('admin_view_all')) {
+    /**
+     * Whether the current admin has enabled "view all" mode.
+     */
+    function admin_view_all(): bool
+    {
+        if (!is_admin()) {
+            return false;
+        }
+        return ($_SESSION['admin_view_mode'] ?? 'personal') === 'all';
     }
 }
 

@@ -7,6 +7,7 @@
 
 // Autoload
 require_once __DIR__ . '/../vendor/autoload.php';
+require_once __DIR__ . '/TestCase.php';
 
 // Load test environment
 $_ENV['APP_ENV'] = 'testing';

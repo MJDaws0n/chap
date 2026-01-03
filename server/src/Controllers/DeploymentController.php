@@ -16,7 +16,7 @@ class DeploymentController extends BaseController
      */
     public function deploy(string $appId): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $application = Application::findByUuid($appId) ?? Application::find((int)$appId);
 
         if (!$application) {
@@ -42,7 +42,7 @@ class DeploymentController extends BaseController
         }
 
         $project = $environment->project();
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId((int)$project->team_id)) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Access denied'], 403);
             } else {
@@ -230,7 +230,7 @@ class DeploymentController extends BaseController
         }
 
         $project = $environment->project();
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId((int)$project->team_id)) {
             return false;
         }
 

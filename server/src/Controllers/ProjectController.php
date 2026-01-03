@@ -15,8 +15,12 @@ class ProjectController extends BaseController
      */
     public function index(): void
     {
-        $team = $this->currentTeam();
-        $projects = Project::forTeam($team->id);
+        if (admin_view_all()) {
+            $projects = Project::all();
+        } else {
+            $team = $this->currentTeam();
+            $projects = Project::forTeam($team->id);
+        }
 
         if ($this->isApiRequest()) {
             $this->json([
@@ -88,10 +92,9 @@ class ProjectController extends BaseController
      */
     public function show(string $uuid): void
     {
-        $team = $this->currentTeam();
         $project = Project::findByUuid($uuid);
 
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Project not found'], 404);
             } else {
@@ -121,10 +124,9 @@ class ProjectController extends BaseController
      */
     public function edit(string $uuid): void
     {
-        $team = $this->currentTeam();
         $project = Project::findByUuid($uuid);
 
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             flash('error', 'Project not found');
             $this->redirect('/projects');
         }
@@ -140,10 +142,9 @@ class ProjectController extends BaseController
      */
     public function update(string $uuid): void
     {
-        $team = $this->currentTeam();
         $project = Project::findByUuid($uuid);
 
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Project not found'], 404);
             } else {
@@ -177,10 +178,9 @@ class ProjectController extends BaseController
      */
     public function destroy(string $uuid): void
     {
-        $team = $this->currentTeam();
         $project = Project::findByUuid($uuid);
 
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Project not found'], 404);
             } else {

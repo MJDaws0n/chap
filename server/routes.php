@@ -47,16 +47,18 @@ Route::middleware(['auth'], function() {
     Route::put('/teams/{id}/members/{userId}', 'TeamController@updateMember');
     Route::delete('/teams/{id}/members/{userId}', 'TeamController@removeMember');
     
-    // Nodes
-    Route::get('/nodes', 'NodeController@index');
-    Route::get('/nodes/create', 'NodeController@create');
-    Route::post('/nodes', 'NodeController@store');
-    Route::get('/nodes/{id}', 'NodeController@show');
-    Route::get('/nodes/{id}/edit', 'NodeController@edit');
-    Route::put('/nodes/{id}', 'NodeController@update');
-    Route::delete('/nodes/{id}', 'NodeController@destroy');
-    Route::post('/nodes/{id}/validate', 'NodeController@validate');
-    Route::get('/nodes/{id}/containers', 'NodeController@containers');
+    // Nodes (admin-only)
+    Route::middleware(['admin'], function() {
+        Route::get('/nodes', 'NodeController@index');
+        Route::get('/nodes/create', 'NodeController@create');
+        Route::post('/nodes', 'NodeController@store');
+        Route::get('/nodes/{id}', 'NodeController@show');
+        Route::get('/nodes/{id}/containers', 'NodeController@containers');
+        Route::get('/nodes/{id}/edit', 'NodeController@edit');
+        Route::put('/nodes/{id}', 'NodeController@update');
+        Route::delete('/nodes/{id}', 'NodeController@destroy');
+        Route::post('/nodes/{id}/validate', 'NodeController@validate');
+    });
     
     // Projects
     Route::get('/projects', 'ProjectController@index');
@@ -151,6 +153,29 @@ Route::middleware(['auth'], function() {
     Route::get('/activity', 'ActivityController@index');
 });
 
+// Admin routes
+Route::middleware(['auth', 'admin'], function() {
+    Route::get('/admin', 'Admin\\AdminController@index');
+
+    // Admin view mode toggle (personal vs all)
+    Route::post('/admin/view-mode', 'Admin\\ViewModeController@update');
+
+    // User management
+    Route::get('/admin/users', 'Admin\\UserController@index');
+    Route::get('/admin/users/create', 'Admin\\UserController@create');
+    Route::post('/admin/users', 'Admin\\UserController@store');
+    Route::get('/admin/users/{id}/edit', 'Admin\\UserController@edit');
+    Route::put('/admin/users/{id}', 'Admin\\UserController@update');
+    Route::delete('/admin/users/{id}', 'Admin\\UserController@destroy');
+
+    // Admin settings (email)
+    Route::get('/admin/settings/email', 'Admin\\SettingsController@email');
+    Route::post('/admin/settings/email', 'Admin\\SettingsController@updateEmail');
+
+    // Admin activity logs
+    Route::get('/admin/activity', 'Admin\\ActivityController@index');
+});
+
 // API routes
 Route::prefix('/api/v1', function() {
     // Public API
@@ -170,10 +195,12 @@ Route::prefix('/api/v1', function() {
         
         // Nodes
         Route::get('/nodes', 'Api\NodeController@index');
-        Route::post('/nodes', 'Api\NodeController@store');
         Route::get('/nodes/{id}', 'Api\NodeController@show');
-        Route::put('/nodes/{id}', 'Api\NodeController@update');
-        Route::delete('/nodes/{id}', 'Api\NodeController@destroy');
+        Route::middleware(['admin'], function() {
+            Route::post('/nodes', 'Api\NodeController@store');
+            Route::put('/nodes/{id}', 'Api\NodeController@update');
+            Route::delete('/nodes/{id}', 'Api\NodeController@destroy');
+        });
         
         // Projects
         Route::get('/projects', 'Api\ProjectController@index');

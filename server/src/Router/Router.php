@@ -3,6 +3,7 @@
 namespace Chap\Router;
 
 use Chap\Middleware\AuthMiddleware;
+use Chap\Middleware\AdminMiddleware;
 use Chap\Middleware\CsrfMiddleware;
 use Chap\Middleware\GuestMiddleware;
 
@@ -17,6 +18,7 @@ class Router
     private array $namedRoutes = [];
     private static array $middlewareMap = [
         'auth' => AuthMiddleware::class,
+        'admin' => AdminMiddleware::class,
         'csrf' => CsrfMiddleware::class,
         'guest' => GuestMiddleware::class,
         'api.auth' => AuthMiddleware::class, // API uses same auth for now
@@ -210,8 +212,10 @@ class Router
         // Handle string format "Controller@method"
         if (is_string($handler) && str_contains($handler, '@')) {
             [$class, $method] = explode('@', $handler);
-            // Add controller namespace if not present
-            if (!str_contains($class, '\\')) {
+            // Add controller namespace unless already fully qualified
+            // Supports routes like "DashboardController@index" as well as "Admin\\UserController@index".
+            $class = ltrim($class, '\\');
+            if (!str_starts_with($class, 'Chap\\')) {
                 $class = 'Chap\\Controllers\\' . $class;
             }
             $instance = new $class();

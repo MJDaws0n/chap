@@ -39,13 +39,6 @@
                 <span>Projects</span>
             </a>
 
-            <a href="/nodes" class="sidebar-link <?= ($currentPage ?? '') === 'nodes' ? 'active' : '' ?>">
-                <svg class="sidebar-link-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/>
-                </svg>
-                <span>Nodes</span>
-            </a>
-
             <a href="/templates" class="sidebar-link <?= ($currentPage ?? '') === 'templates' ? 'active' : '' ?>">
                 <svg class="sidebar-link-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/>
@@ -87,6 +80,40 @@
                 <span>Settings</span>
             </a>
         </div>
+
+        <?php if (!empty($user['is_admin'])): ?>
+            <div class="sidebar-section">
+                <p class="sidebar-section-title">Admin</p>
+
+                <a href="/nodes" class="sidebar-link <?= ($currentPage ?? '') === 'nodes' ? 'active' : '' ?>">
+                    <svg class="sidebar-link-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/>
+                    </svg>
+                    <span>Nodes</span>
+                </a>
+
+                <a href="/admin/users" class="sidebar-link <?= str_starts_with(($currentPage ?? ''), 'admin-users') ? 'active' : '' ?>">
+                    <svg class="sidebar-link-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                    </svg>
+                    <span>Users</span>
+                </a>
+
+                <a href="/admin/settings/email" class="sidebar-link <?= str_starts_with(($currentPage ?? ''), 'admin-settings') ? 'active' : '' ?>">
+                    <svg class="sidebar-link-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8m-18 8h18a2 2 0 002-2V8a2 2 0 00-2-2H3a2 2 0 00-2 2v6a2 2 0 002 2z"/>
+                    </svg>
+                    <span>Email</span>
+                </a>
+
+                <a href="/admin/activity" class="sidebar-link <?= str_starts_with(($currentPage ?? ''), 'admin-activity') ? 'active' : '' ?>">
+                    <svg class="sidebar-link-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <span>Logs</span>
+                </a>
+            </div>
+        <?php endif; ?>
     </nav>
 
     <!-- Team Selector -->

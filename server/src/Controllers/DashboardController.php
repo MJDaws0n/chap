@@ -22,8 +22,8 @@ class DashboardController extends BaseController
         $team = $this->currentTeam();
 
         // Get stats
-        $projects = Project::forTeam($team->id);
-        $nodes = Node::forTeam($team->id);
+        $projects = admin_view_all() ? Project::all() : Project::forTeam($team->id);
+        $nodes = admin_view_all() ? Node::all() : Node::forTeam($team->id);
         $onlineNodes = array_filter($nodes, fn($n) => $n->isOnline());
 
         // Count applications and deployments
@@ -38,13 +38,13 @@ class DashboardController extends BaseController
         }
 
         // Get deployment count
-        $deploymentCount = $this->getDeploymentCount($team->id);
+        $deploymentCount = $this->getDeploymentCount(admin_view_all() ? null : $team->id);
 
         // Get recent deployments
-        $recentDeployments = $this->getRecentDeployments($team->id);
+        $recentDeployments = $this->getRecentDeployments(admin_view_all() ? null : $team->id);
 
         // Get recent activity
-        $activity = ActivityLog::forTeam($team->id, 10);
+        $activity = admin_view_all() ? $this->getRecentActivityAll(10) : ActivityLog::forTeam($team->id, 10);
 
         $this->view('dashboard/index', [
             'title' => 'Dashboard',
@@ -56,43 +56,71 @@ class DashboardController extends BaseController
             ],
             'recentDeployments' => $recentDeployments,
             'activity' => $activity,
+            'nodes' => $nodes,
         ]);
     }
 
     /**
      * Get deployment count for team
      */
-    private function getDeploymentCount(int $teamId): int
+    private function getDeploymentCount(?int $teamId): int
     {
         $db = App::db();
-        $result = $db->fetch(
-            "SELECT COUNT(*) as count FROM deployments d
-             JOIN applications a ON d.application_id = a.id
-             JOIN environments e ON a.environment_id = e.id
-             JOIN projects p ON e.project_id = p.id
-             WHERE p.team_id = ?",
-            [$teamId]
-        );
+        if ($teamId === null) {
+            $result = $db->fetch(
+                "SELECT COUNT(*) as count FROM deployments",
+                []
+            );
+        } else {
+            $result = $db->fetch(
+                "SELECT COUNT(*) as count FROM deployments d
+                 JOIN applications a ON d.application_id = a.id
+                 JOIN environments e ON a.environment_id = e.id
+                 JOIN projects p ON e.project_id = p.id
+                 WHERE p.team_id = ?",
+                [$teamId]
+            );
+        }
         return $result['count'] ?? 0;
     }
 
     /**
      * Get recent deployments for team
      */
-    private function getRecentDeployments(int $teamId, int $limit = 5): array
+    private function getRecentDeployments(?int $teamId, int $limit = 5): array
     {
         $db = App::db();
-        $results = $db->fetchAll(
-            "SELECT d.*, a.name as application_name FROM deployments d
-             JOIN applications a ON d.application_id = a.id
-             JOIN environments e ON a.environment_id = e.id
-             JOIN projects p ON e.project_id = p.id
-             WHERE p.team_id = ?
-             ORDER BY d.created_at DESC
-             LIMIT ?",
-            [$teamId, $limit]
-        );
+        if ($teamId === null) {
+            $results = $db->fetchAll(
+                "SELECT d.*, a.name as application_name FROM deployments d
+                 JOIN applications a ON d.application_id = a.id
+                 ORDER BY d.created_at DESC
+                 LIMIT ?",
+                [$limit]
+            );
+        } else {
+            $results = $db->fetchAll(
+                "SELECT d.*, a.name as application_name FROM deployments d
+                 JOIN applications a ON d.application_id = a.id
+                 JOIN environments e ON a.environment_id = e.id
+                 JOIN projects p ON e.project_id = p.id
+                 WHERE p.team_id = ?
+                 ORDER BY d.created_at DESC
+                 LIMIT ?",
+                [$teamId, $limit]
+            );
+        }
         return $results;
+    }
+
+    private function getRecentActivityAll(int $limit = 10): array
+    {
+        $db = App::db();
+        $rows = $db->fetchAll(
+            "SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT ?",
+            [$limit]
+        );
+        return array_map(fn($data) => ActivityLog::fromArray($data), $rows);
     }
 
     /**

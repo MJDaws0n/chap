@@ -64,7 +64,36 @@
             </button>
 
             <div id="user-dropdown" class="dropdown-menu">
-                <div class="dropdown-header">Account</div>
+                <?php if (!empty($user['is_admin'])): ?>
+                    <div class="dropdown-header">View Mode</div>
+                    <form action="/admin/view-mode" method="POST">
+                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                        <input type="hidden" name="mode" value="personal">
+                        <button type="submit" class="dropdown-item">
+                            <svg class="dropdown-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                            </svg>
+                            Personal
+                            <?php if (isset($adminViewAll) && $adminViewAll === false): ?>
+                                <span class="badge badge-success" style="margin-left: auto;">Active</span>
+                            <?php endif; ?>
+                        </button>
+                    </form>
+                    <form action="/admin/view-mode" method="POST">
+                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                        <input type="hidden" name="mode" value="all">
+                        <button type="submit" class="dropdown-item">
+                            <svg class="dropdown-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                            </svg>
+                            View All
+                            <?php if (isset($adminViewAll) && $adminViewAll === true): ?>
+                                <span class="badge badge-success" style="margin-left: auto;">Active</span>
+                            <?php endif; ?>
+                        </button>
+                    </form>
+                    <div class="dropdown-divider"></div>
+                <?php endif; ?>
                 <a href="/profile" class="dropdown-item">
                     <svg class="dropdown-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>

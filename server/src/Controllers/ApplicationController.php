@@ -22,7 +22,7 @@ class ApplicationController extends BaseController
      */
     public function repoEnv(string $envUuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $environment = Environment::findByUuid($envUuid);
 
         if (!$environment) {
@@ -30,7 +30,7 @@ class ApplicationController extends BaseController
         }
 
         $project = $environment->project();
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             $this->json(['error' => 'Environment not found'], 404);
         }
 
@@ -52,7 +52,7 @@ class ApplicationController extends BaseController
         $tokensToTry = [null];
         $authAttempts = [];
         try {
-            $authAttempts = GitCredentialResolver::gitAuthAttemptsForRepo((int)$team->id, $repoUrl);
+            $authAttempts = GitCredentialResolver::gitAuthAttemptsForRepo((int)$project->team_id, $repoUrl);
             foreach ($authAttempts as $a) {
                 if (!empty($a['token'])) {
                     $tokensToTry[] = (string)$a['token'];
@@ -110,7 +110,7 @@ class ApplicationController extends BaseController
      */
     public function create(string $envUuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $environment = Environment::findByUuid($envUuid);
 
         if (!$environment) {
@@ -119,12 +119,12 @@ class ApplicationController extends BaseController
         }
 
         $project = $environment->project();
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             flash('error', 'Environment not found');
             $this->redirect('/projects');
         }
 
-        $nodes = Node::onlineForTeam($team->id);
+        $nodes = Node::onlineForTeam((int)$project->team_id);
 
         $this->view('applications/create', [
             'title' => 'New Application',
@@ -358,7 +358,7 @@ class ApplicationController extends BaseController
      */
     public function store(string $envUuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $environment = Environment::findByUuid($envUuid);
 
         if (!$environment) {
@@ -371,7 +371,7 @@ class ApplicationController extends BaseController
         }
 
         $project = $environment->project();
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Environment not found'], 404);
             } else {
@@ -391,7 +391,7 @@ class ApplicationController extends BaseController
             $errors['node_uuid'] = 'Node selection is required';
         } else {
             $node = Node::findByUuid($data['node_uuid']);
-            if (!$node || $node->team_id !== $team->id) {
+            if (!$node || (int)$node->team_id !== (int)$project->team_id) {
                 $errors['node_uuid'] = 'Invalid node';
             }
         }
@@ -467,7 +467,8 @@ class ApplicationController extends BaseController
         }
 
         $deployments = Deployment::forApplication($application->id, 10);
-        $nodes = Node::onlineForTeam($team->id);
+        $project = $application->environment()?->project();
+        $nodes = $project ? Node::onlineForTeam((int)$project->team_id) : [];
     $incomingWebhooks = IncomingWebhook::forApplication($application->id);
 
     $incomingWebhookReveals = $_SESSION['incoming_webhook_reveals'] ?? [];
@@ -518,7 +519,8 @@ class ApplicationController extends BaseController
                 $nodeId = null;
             } else {
                 $node = Node::findByUuid($data['node_uuid']);
-                if ($node && $node->team_id === $team->id) {
+                $project = $application->environment()?->project();
+                if ($node && $project && (int)$node->team_id === (int)$project->team_id) {
                     $nodeId = $node->id;
                 }
             }
@@ -934,7 +936,7 @@ class ApplicationController extends BaseController
         }
 
         $project = $environment->project();
-        if (!$project || $project->team_id !== $team->id) {
+        if (!$project || !$this->canAccessTeamId((int)$project->team_id)) {
             return false;
         }
 
