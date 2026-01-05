@@ -35,7 +35,7 @@
             const result = await response.json();
             
             if (!response.ok) {
-                throw new Error(result.message || 'Request failed');
+                throw new Error(result.error || result.message || 'Request failed');
             }
             
             return result;

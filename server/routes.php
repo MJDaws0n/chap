@@ -94,6 +94,7 @@ Route::middleware(['auth'], function() {
     Route::put('/applications/{id}', 'ApplicationController@update');
     Route::delete('/applications/{id}', 'ApplicationController@destroy');
     Route::post('/applications/{id}/ports', 'ApplicationPortController@allocate');
+    Route::delete('/applications/{id}/ports/{port}', 'ApplicationPortController@unallocate');
     Route::get('/applications/{id}/logs', 'ApplicationController@logs');
     Route::get('/applications/{id}/files', 'ApplicationController@files');
     Route::get('/applications/{id}/files/edit', 'ApplicationController@fileEditor');

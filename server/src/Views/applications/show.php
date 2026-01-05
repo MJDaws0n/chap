@@ -489,7 +489,18 @@ document.querySelectorAll('[data-delete-incoming-webhook]').forEach(form => {
                     <div class="font-medium text-primary">${escapeHtml(String(p))}</div>
                     <div class="text-xs text-tertiary">Use {port[${idx}]}</div>
                 </div>
-                <button type="button" class="btn btn-ghost btn-sm" data-copy="${escapeAttr(String(p))}">Copy</button>
+                <div class="flex items-center gap-2">
+                    <button type="button" class="btn btn-ghost btn-sm" data-copy="${escapeAttr(String(p))}" ${state.busy ? 'disabled' : ''}>Copy</button>
+                    <button type="button" class="btn btn-danger btn-sm" title="Unallocate" aria-label="Unallocate" data-unallocate="${escapeAttr(String(p))}" ${state.busy ? 'disabled' : ''}>
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M8 6V4h8v2"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 6l-1 16H6L5 6"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M10 11v6"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M14 11v6"/>
+                        </svg>
+                    </button>
+                </div>
             </div>
         `).join('');
 
@@ -504,6 +515,25 @@ document.querySelectorAll('[data-delete-incoming-webhook]').forEach(form => {
                 } catch {
                     // ignore
                 }
+            });
+        });
+
+        els.list.querySelectorAll('[data-unallocate]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                if (state.busy) return;
+                const val = btn.getAttribute('data-unallocate') || '';
+                const port = parseInt(val, 10);
+                if (!Number.isInteger(port)) return;
+
+                if (window.Modal && typeof window.Modal.confirmDelete === 'function') {
+                    const res = await window.Modal.confirmDelete(
+                        `Unallocate port ${port}?`,
+                        'This will remove the port allocation and re-deploy the application so the port stops being published.'
+                    );
+                    if (!res || !res.confirmed) return;
+                }
+
+                await unallocatePort(port);
             });
         });
     }
@@ -566,6 +596,88 @@ document.querySelectorAll('[data-delete-incoming-webhook]').forEach(form => {
             state.busy = false;
             els.addBtn.disabled = false;
             els.addBtn.removeAttribute('aria-disabled');
+            render();
+        }
+    }
+
+    async function redeploy() {
+        const csrf = window.csrfToken || document.querySelector('input[name="_csrf_token"]')?.value || '';
+        const url = `/applications/${encodeURIComponent(config.applicationUuid)}/deploy`;
+
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+            },
+            body: JSON.stringify({}),
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            throw new Error((data && (data.error || data.message)) ? (data.error || data.message) : 'Failed to start redeploy');
+        }
+
+        if (window.Toast && typeof window.Toast.success === 'function') {
+            window.Toast.success('Redeploy started');
+        }
+
+        return data;
+    }
+
+    async function unallocatePort(port) {
+        if (state.busy) return;
+        state.busy = true;
+        setError('');
+        els.addBtn.disabled = true;
+        els.addBtn.setAttribute('aria-disabled', 'true');
+        render();
+
+        try {
+            const url = `/applications/${encodeURIComponent(config.applicationUuid)}/ports/${encodeURIComponent(String(port))}`;
+
+            let data;
+            if (window.Chap && typeof window.Chap.api === 'function') {
+                data = await window.Chap.api(url, 'DELETE');
+            } else {
+                const csrf = window.csrfToken || document.querySelector('input[name="_csrf_token"]')?.value || '';
+                const res = await fetch(url, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+                    },
+                });
+                data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    throw new Error((data && (data.error || data.message)) ? (data.error || data.message) : 'Failed to unallocate port');
+                }
+            }
+
+            if (Array.isArray(data?.ports)) {
+                state.ports = data.ports.map((x) => parseInt(x, 10)).filter((x) => Number.isInteger(x));
+            } else {
+                state.ports = (state.ports || []).filter((p) => p !== port);
+            }
+            render();
+
+            try {
+                await redeploy();
+            } catch (e) {
+                const msg = e && e.message ? e.message : String(e);
+                setError(msg);
+            }
+        } catch (e) {
+            const msg = e && e.message ? e.message : String(e);
+            setError(msg);
+        } finally {
+            state.busy = false;
+            els.addBtn.disabled = false;
+            els.addBtn.removeAttribute('aria-disabled');
+            render();
         }
     }
 

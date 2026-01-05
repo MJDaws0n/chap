@@ -217,6 +217,13 @@ final class PortAllocator
         $db->query('DELETE FROM port_allocations WHERE application_id = ?', [$applicationId]);
     }
 
+    public static function releasePortForApplication(int $applicationId, int $nodeId, int $port): bool
+    {
+        $db = App::db();
+        $affected = $db->delete('port_allocations', 'application_id = ? AND node_id = ? AND port = ?', [$applicationId, $nodeId, $port]);
+        return $affected > 0;
+    }
+
     public static function releaseReservation(string $reservationUuid, int $nodeId): void
     {
         $db = App::db();

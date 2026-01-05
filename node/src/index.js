@@ -425,7 +425,9 @@ function enforceComposePortsAreAllocated(composeContent, allocatedPorts) {
         //  - "8080:80/tcp"
         // Disallow:
         //  - "80" (random host port)
-        const raw = String(s).trim();
+        // Some compose sources may accidentally include the YAML list dash as part of the scalar ("- 8080:80").
+        // Normalize that so we don't treat published ports as negative.
+        const raw = String(s).trim().replace(/^\-\s*/, '');
         const parts = raw.split(':');
         if (parts.length === 1) {
             return { published: null, target: parts[0] };
@@ -433,11 +435,11 @@ function enforceComposePortsAreAllocated(composeContent, allocatedPorts) {
 
         const right = parts[parts.length - 1];
         const host = parts[parts.length - 2];
-        const hostPort = parseInt(String(host).split('/')[0], 10);
+        const hostPort = parseInt(String(host).split('/')[0].trim().replace(/^\-\s*/, ''), 10);
         const targetPort = parseInt(String(right).split('/')[0], 10);
 
         return {
-            published: Number.isInteger(hostPort) ? hostPort : null,
+            published: Number.isInteger(hostPort) && hostPort > 0 ? hostPort : null,
             target: Number.isInteger(targetPort) ? targetPort : null,
         };
     };
@@ -464,10 +466,10 @@ function enforceComposePortsAreAllocated(composeContent, allocatedPorts) {
             } else if (entry && typeof entry === 'object') {
                 // Compose v3 long syntax: { target, published, protocol, mode }
                 if (entry.published !== undefined && entry.published !== null) {
-                    published = parseInt(entry.published, 10);
+                    published = parseInt(String(entry.published).trim().replace(/^\-\s*/, ''), 10);
                 }
 
-                if (!Number.isInteger(published)) {
+                if (!Number.isInteger(published) || published <= 0) {
                     throw new Error(`Service "${serviceName}" uses a port mapping without an explicit published host port`);
                 }
             } else {
@@ -858,26 +860,34 @@ async function deployCompose(deploymentId, appConfig) {
         }
     }
 
+    // Write .env file with sanitized environment variables (used by docker compose interpolation)
+    console.log(`[Agent] 🔐 Writing environment variables (${Object.keys(safeEnvVars).length} vars)`);
+    const envContent = Object.entries(safeEnvVars)
+        .map(([k, v]) => `${k}=${v}`)
+        .join('\n');
+    fs.writeFileSync(path.join(composeDir, '.env'), envContent);
+
     // Runtime enforcement: compose may only publish allocated host ports.
+    // Important: resolve ${VARS} using the just-written .env so defaults like ${PORT:-8080}
+    // don't cause false failures when PORT is set to an allocated port.
     const allocatedPorts = appConfig.allocated_ports || appConfig.allocatedPorts || [];
+    const allocatedInts = Array.isArray(allocatedPorts) ? allocatedPorts.map(p => parseInt(p, 10)).filter(p => Number.isInteger(p)) : [];
     try {
-        enforceComposePortsAreAllocated(
-            fs.readFileSync(path.join(composeDir, 'docker-compose.yml'), 'utf8'),
-            Array.isArray(allocatedPorts) ? allocatedPorts.map(p => parseInt(p, 10)).filter(p => Number.isInteger(p)) : []
-        );
+        let resolvedCompose = '';
+        try {
+            resolvedCompose = await execCommand('docker compose --env-file .env config', { cwd: composeDir });
+        } catch {
+            // Fall back to raw file if compose config is unavailable.
+            resolvedCompose = fs.readFileSync(path.join(composeDir, 'docker-compose.yml'), 'utf8');
+        }
+
+        enforceComposePortsAreAllocated(resolvedCompose, allocatedInts);
     } catch (err) {
         const msg = err && err.message ? err.message : String(err);
         console.error(`[Agent] ❌ Port enforcement failed: ${msg}`);
         sendLog(deploymentId, `❌ Port enforcement failed: ${msg}`, 'error');
         throw err;
     }
-    
-    // Write .env file with sanitized environment variables
-    console.log(`[Agent] 🔐 Writing environment variables (${Object.keys(safeEnvVars).length} vars)`);
-    const envContent = Object.entries(safeEnvVars)
-        .map(([k, v]) => `${k}=${v}`)
-        .join('\n');
-    fs.writeFileSync(path.join(composeDir, '.env'), envContent);
     
     // Log the .env contents (without sensitive values)
     console.log(`[Agent] Environment variables:`, Object.keys(safeEnvVars).join(', '));

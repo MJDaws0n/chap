@@ -52,6 +52,42 @@ class ApplicationPortController extends BaseController
     }
 
     /**
+     * Unallocate a previously allocated port from an application.
+     */
+    public function unallocate(string $appUuid, string $port): void
+    {
+        $team = $this->currentTeam();
+        $application = Application::findByUuid($appUuid);
+
+        if (!$application || !$this->canAccessApplication($application, $team)) {
+            $this->json(['error' => 'Application not found'], 404);
+            return;
+        }
+
+        if (!$application->node_id) {
+            $this->json(['error' => 'Application has no node assigned'], 422);
+            return;
+        }
+
+        $portNum = (int)$port;
+        if ($portNum < 1 || $portNum > 65535) {
+            $this->json(['error' => 'Invalid port'], 422);
+            return;
+        }
+
+        $deleted = PortAllocator::releasePortForApplication((int)$application->id, (int)$application->node_id, $portNum);
+        if (!$deleted) {
+            $this->json(['error' => 'Port not allocated to this application'], 404);
+            return;
+        }
+
+        $this->json([
+            'ok' => true,
+            'ports' => PortAllocation::portsForApplication((int)$application->id),
+        ]);
+    }
+
+    /**
      * Allocate a new port during application creation (reservation-based).
      */
     public function allocateForReservation(string $envUuid, string $nodeUuid): void
