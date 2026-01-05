@@ -24,19 +24,18 @@
 
     <div class="card">
         <div class="table-container">
-            <table class="table">
+            <table class="table table-clickable">
                 <thead>
                     <tr>
                         <th>User</th>
                         <th>Email</th>
                         <th>Admin</th>
                         <th>Created</th>
-                        <th></th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php foreach (($users ?? []) as $u): ?>
-                        <tr>
+                        <tr onclick="window.location='/admin/users/<?= (int)$u->id ?>/edit'">
                             <td>
                                 <div class="min-w-0">
                                     <p class="font-medium text-primary truncate"><?= e($u->displayName()) ?></p>
@@ -52,9 +51,6 @@
                                 <?php endif; ?>
                             </td>
                             <td class="text-secondary"><?= !empty($u->created_at) ? e(time_ago($u->created_at)) : '-' ?></td>
-                            <td class="text-right">
-                                <a class="btn btn-secondary btn-sm" href="/admin/users/<?= (int)$u->id ?>/edit">Edit</a>
-                            </td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>

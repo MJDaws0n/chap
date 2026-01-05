@@ -4,6 +4,10 @@ namespace Chap\Controllers;
 
 use Chap\Models\Project;
 use Chap\Models\ActivityLog;
+use Chap\Models\Node;
+use Chap\Services\NodeAccess;
+use Chap\Services\ResourceAllocator;
+use Chap\Services\ResourceHierarchy;
 
 /**
  * Project Controller
@@ -131,9 +135,21 @@ class ProjectController extends BaseController
             $this->redirect('/projects');
         }
 
+        $team = $project->team();
+        $availableNodes = [];
+        $parentEffective = null;
+        if ($team && $this->user) {
+            $allowedNodeIds = NodeAccess::allowedNodeIds($this->user, $team);
+            $teamNodes = Node::forTeam((int)$team->id);
+            $availableNodes = array_values(array_filter($teamNodes, fn($n) => in_array((int)$n->id, $allowedNodeIds, true)));
+            $parentEffective = ResourceHierarchy::effectiveTeamLimits($team);
+        }
+
         $this->view('projects/edit', [
             'title' => 'Edit Project',
             'project' => $project,
+            'availableNodes' => $availableNodes,
+            'parentEffective' => $parentEffective,
         ]);
     }
 
@@ -160,9 +176,88 @@ class ProjectController extends BaseController
 
         $data = $this->all();
 
+        $cpuMillicoresLimit = ResourceHierarchy::parseCpuMillicores((string)($data['cpu_limit_cores'] ?? '-1'));
+        $ramMbLimit = ResourceHierarchy::parseMb((string)($data['ram_mb_limit'] ?? '-1'));
+        $storageMbLimit = ResourceHierarchy::parseMb((string)($data['storage_mb_limit'] ?? '-1'));
+        $portLimit = ResourceHierarchy::parseIntOrAuto((string)($data['port_limit'] ?? '-1'));
+        $bandwidthLimit = ResourceHierarchy::parseIntOrAuto((string)($data['bandwidth_mbps_limit'] ?? '-1'));
+        $pidsLimit = ResourceHierarchy::parseIntOrAuto((string)($data['pids_limit'] ?? '-1'));
+
+        $restrictNodes = !empty($data['restrict_nodes']);
+        $nodeIds = $data['allowed_node_ids'] ?? [];
+        if (!is_array($nodeIds)) {
+            $nodeIds = [];
+        }
+        $nodeIds = array_values(array_unique(array_map('intval', $nodeIds)));
+
+        $errors = [];
+        $team = $project->team();
+        if ($team) {
+            $parent = ResourceHierarchy::effectiveTeamLimits($team);
+            $siblings = Project::forTeam((int)$team->id);
+
+            $maps = [
+                'cpu_millicores' => [],
+                'ram_mb' => [],
+                'storage_mb' => [],
+                'ports' => [],
+                'bandwidth_mbps' => [],
+                'pids' => [],
+            ];
+            foreach ($siblings as $p) {
+                $isCurrent = (int)$p->id === (int)$project->id;
+                $maps['cpu_millicores'][(int)$p->id] = $isCurrent ? $cpuMillicoresLimit : (int)$p->cpu_millicores_limit;
+                $maps['ram_mb'][(int)$p->id] = $isCurrent ? $ramMbLimit : (int)$p->ram_mb_limit;
+                $maps['storage_mb'][(int)$p->id] = $isCurrent ? $storageMbLimit : (int)$p->storage_mb_limit;
+                $maps['ports'][(int)$p->id] = $isCurrent ? $portLimit : (int)$p->port_limit;
+                $maps['bandwidth_mbps'][(int)$p->id] = $isCurrent ? $bandwidthLimit : (int)$p->bandwidth_mbps_limit;
+                $maps['pids'][(int)$p->id] = $isCurrent ? $pidsLimit : (int)$p->pids_limit;
+            }
+
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['cpu_millicores'], $maps['cpu_millicores'])) {
+                $errors['cpu_limit_cores'] = 'CPU allocations exceed the team\'s remaining limit';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['ram_mb'], $maps['ram_mb'])) {
+                $errors['ram_mb_limit'] = 'RAM allocations exceed the team\'s remaining limit';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['storage_mb'], $maps['storage_mb'])) {
+                $errors['storage_mb_limit'] = 'Storage allocations exceed the team\'s remaining limit';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['ports'], $maps['ports'])) {
+                $errors['port_limit'] = 'Port allocations exceed the team\'s remaining limit';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['bandwidth_mbps'], $maps['bandwidth_mbps'])) {
+                $errors['bandwidth_mbps_limit'] = 'Bandwidth allocations exceed the team\'s remaining limit';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['pids'], $maps['pids'])) {
+                $errors['pids_limit'] = 'PID allocations exceed the team\'s remaining limit';
+            }
+
+            if ($restrictNodes && $this->user) {
+                $allowedForEditor = NodeAccess::allowedNodeIds($this->user, $team);
+                $bad = array_diff($nodeIds, $allowedForEditor);
+                if (!empty($bad)) {
+                    $errors['allowed_node_ids'] = 'You cannot grant access to nodes you do not have access to';
+                }
+            }
+        }
+
+        if (!empty($errors)) {
+            $_SESSION['_errors'] = $errors;
+            $_SESSION['_old_input'] = $data;
+            $this->redirect('/projects/' . $uuid . '/edit');
+        }
+
         $project->update([
             'name' => $data['name'] ?? $project->name,
             'description' => $data['description'] ?? $project->description,
+            'cpu_millicores_limit' => $cpuMillicoresLimit,
+            'ram_mb_limit' => $ramMbLimit,
+            'storage_mb_limit' => $storageMbLimit,
+            'port_limit' => $portLimit,
+            'bandwidth_mbps_limit' => $bandwidthLimit,
+            'pids_limit' => $pidsLimit,
+            'allowed_node_ids' => $restrictNodes ? NodeAccess::encodeNodeIds($nodeIds) : null,
         ]);
 
         if ($this->isApiRequest()) {

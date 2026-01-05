@@ -14,7 +14,7 @@
             </div>
             <?php if (!empty($isAdmin)): ?>
                 <div class="page-header-actions">
-                    <a href="/nodes/create" class="btn btn-primary">
+                    <a href="/admin/nodes/create" class="btn btn-primary">
                         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
                         </svg>
@@ -37,7 +37,7 @@
                     <p class="empty-state-title">No nodes connected</p>
                     <p class="empty-state-description">Add your first server to start deploying applications</p>
                     <?php if (!empty($isAdmin)): ?>
-                        <a href="/nodes/create" class="btn btn-primary btn-sm">
+                        <a href="/admin/nodes/create" class="btn btn-primary btn-sm">
                             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
                             </svg>
@@ -69,7 +69,7 @@
                                 'error' => 'badge-danger',
                             ][$node->status ?? 'pending'] ?? 'badge-default';
                             ?>
-                            <tr onclick="window.location='/nodes/<?= e($node->uuid) ?>'">
+                            <tr onclick="window.location='/admin/nodes/<?= e($node->uuid) ?>'">
                                 <td>
                                     <div class="flex items-center gap-4">
                                         <div class="icon-box icon-box-purple">

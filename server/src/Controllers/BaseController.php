@@ -3,6 +3,7 @@
 namespace Chap\Controllers;
 
 use Chap\Auth\AuthManager;
+use Chap\Models\Application;
 use Chap\Models\User;
 use Chap\View\View;
 
@@ -231,6 +232,10 @@ abstract class BaseController
      */
     protected function requireTeamAdmin(): void
     {
+        if (admin_view_all()) {
+            return;
+        }
+
         $team = $this->currentTeam();
         
         if (!$this->user->isTeamAdmin($team)) {
@@ -241,5 +246,28 @@ abstract class BaseController
                 $this->redirect('/dashboard');
             }
         }
+    }
+
+    /**
+     * Check if the current user can access the given application.
+     * Controllers historically implemented this ad-hoc; keep it centralized.
+     */
+    protected function canAccessApplication(?Application $application, $team = null): bool
+    {
+        if (!$application) {
+            return false;
+        }
+
+        $environment = $application->environment();
+        if (!$environment) {
+            return false;
+        }
+
+        $project = $environment->project();
+        if (!$project || !$this->canAccessTeamId((int)$project->team_id)) {
+            return false;
+        }
+
+        return true;
     }
 }

@@ -175,7 +175,7 @@ class AuthController extends BaseController
     {
         $this->view('auth/forgot-password', [
             'title' => 'Forgot Password'
-        ]);
+        ], 'auth');
     }
 
     /**
@@ -195,34 +195,41 @@ class AuthController extends BaseController
             $this->redirect('/forgot-password');
         }
 
+        // If SMTP isn't configured, we can't send anything.
+        if (!Mailer::isConfigured()) {
+            flash('error', 'Email is not configured. Please ask an admin to configure SMTP in Admin Settings.');
+            $this->redirect('/forgot-password');
+        }
+
         $token = AuthManager::createPasswordResetToken($email);
 
         // Always show success message to prevent email enumeration
-        flash('success', 'If an account exists with that email, you will receive a password reset link.');
+        flash('success', 'If an account exists with that email, a password reset email has been sent.');
 
-        // In a real app, you would send an email here
         if ($token) {
             $resetUrl = request_base_url() . '/reset-password/' . urlencode($token) . '?email=' . urlencode($email);
 
             try {
-                if (Mailer::isConfigured()) {
-                    $subject = 'Reset your password';
-                    $html = '<p>You requested a password reset.</p>'
-                        . '<p><a href="' . htmlspecialchars($resetUrl, ENT_QUOTES) . '">Reset Password</a></p>'
-                        . '<p>If you did not request this, you can ignore this email.</p>';
-                    $text = "You requested a password reset.\n\nReset: {$resetUrl}\n\nIf you did not request this, ignore this email.";
-                    Mailer::send($email, $subject, $html, $text);
-                } else {
-                    // For development, log the token
-                    error_log("Password reset token for {$email}: {$token}");
-                }
+                $user = User::findByEmail($email);
+                $greetingName = $user?->name ?: ($user?->username ?: 'there');
+
+                $subject = 'Reset your Chap password';
+                $html = '<p>Hi ' . htmlspecialchars((string)$greetingName, ENT_QUOTES) . ',</p>'
+                    . '<p>We received a request to reset your password.</p>'
+                    . '<p><a href="' . htmlspecialchars($resetUrl, ENT_QUOTES) . '">Reset Password</a></p>'
+                    . '<p>This link will expire in 1 hour.</p>'
+                    . '<p>If you did not request this, you can ignore this email.</p>';
+                $text = "Hi {$greetingName},\n\nWe received a request to reset your password.\n\nReset Password: {$resetUrl}\n\nThis link will expire in 1 hour.\n\nIf you did not request this, you can ignore this email.";
+
+                Mailer::send($email, $subject, $html, $text);
             } catch (\Throwable $e) {
-                // Don't reveal mail errors to the user.
+                // Don't reveal user existence; but do surface a real delivery/system failure.
                 error_log('Password reset email failed: ' . $e->getMessage());
+                flash('error', 'Failed to send password reset email. Please try again later.');
             }
         }
 
-        $this->redirect('/login');
+        $this->redirect('/forgot-password');
     }
 
     /**
@@ -232,8 +239,9 @@ class AuthController extends BaseController
     {
         $this->view('auth/reset-password', [
             'title' => 'Reset Password',
-            'token' => $token
-        ]);
+            'token' => $token,
+            'email' => trim((string)$this->input('email', '')),
+        ], 'auth');
     }
 
     /**

@@ -4,6 +4,8 @@ namespace Chap\Controllers;
 
 use Chap\Models\Node;
 use Chap\Models\ActivityLog;
+use Chap\Models\PortAllocation;
+use Chap\Services\PortAllocator;
 
 /**
  * Node Controller
@@ -15,8 +17,8 @@ class NodeController extends BaseController
      */
     public function index(): void
     {
-        $team = $this->currentTeam();
-        $nodes = Node::forTeam($team->id);
+        $this->currentTeam();
+        $nodes = Node::all();
 
         if ($this->isApiRequest()) {
             $this->json([
@@ -45,14 +47,14 @@ class NodeController extends BaseController
      */
     public function store(): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
 
         if ($this->isApiRequest()) {
             $data = $this->all();
         } else {
             if (!verify_csrf($this->input('_csrf_token', ''))) {
                 flash('error', 'Invalid request');
-                $this->redirect('/nodes/create');
+                $this->redirect('/admin/nodes/create');
             }
             $data = $this->all();
         }
@@ -68,13 +70,25 @@ class NodeController extends BaseController
             }
         }
 
+        $portRangeEntries = $data['port_ranges'] ?? [];
+        if (!is_array($portRangeEntries)) {
+            $portRangeEntries = [$portRangeEntries];
+        }
+        $parsed = PortAllocator::parseRanges($portRangeEntries);
+        if (!empty($parsed['errors'])) {
+            $errors['port_ranges'] = implode(' | ', $parsed['errors']);
+        }
+        if (empty($parsed['ranges'])) {
+            $errors['port_ranges'] = $errors['port_ranges'] ?? 'At least one port range is required';
+        }
+
         if (!empty($errors)) {
             if ($this->isApiRequest()) {
                 $this->json(['errors' => $errors], 422);
             } else {
                 $_SESSION['_errors'] = $errors;
                 $_SESSION['_old_input'] = $data;
-                $this->redirect('/nodes/create');
+                $this->redirect('/admin/nodes/create');
             }
         }
 
@@ -82,13 +96,16 @@ class NodeController extends BaseController
         $token = generate_token(32);
         
         $node = Node::create([
-            'team_id' => $team->id,
+            'team_id' => null,
             'name' => $data['name'],
             'description' => $data['description'] ?? null,
             'logs_websocket_url' => $data['logs_websocket_url'] ?? null,
             'token' => $token,
             'status' => 'pending',
         ]);
+
+        // Save allowed port ranges
+        PortAllocator::saveRangesForNode((int)$node->id, $parsed['ranges']);
 
         ActivityLog::log('node.created', 'Node', $node->id, ['name' => $node->name]);
 
@@ -100,7 +117,7 @@ class NodeController extends BaseController
         } else {
             flash('success', 'Node created successfully');
             $_SESSION['node_token'] = $token; // Show token once
-            $this->redirect('/nodes/' . $node->uuid);
+            $this->redirect('/admin/nodes/' . $node->uuid);
         }
     }
 
@@ -109,15 +126,15 @@ class NodeController extends BaseController
      */
     public function show(string $uuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $node = Node::findByUuid($uuid);
 
-        if (!$node || $node->team_id !== $team->id) {
+        if (!$node) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Node not found'], 404);
             } else {
                 flash('error', 'Node not found');
-                $this->redirect('/nodes');
+                $this->redirect('/admin/nodes');
             }
         }
 
@@ -133,6 +150,7 @@ class NodeController extends BaseController
                 'node' => $node,
                 'showToken' => $showToken,
                 'containers' => $node->containers(),
+                'portRanges' => $node->portRanges(),
             ]);
         }
     }
@@ -142,19 +160,51 @@ class NodeController extends BaseController
      */
     public function update(string $uuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $node = Node::findByUuid($uuid);
 
-        if (!$node || $node->team_id !== $team->id) {
+        if (!$node) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Node not found'], 404);
             } else {
                 flash('error', 'Node not found');
-                $this->redirect('/nodes');
+                $this->redirect('/admin/nodes');
             }
         }
 
         $data = $this->all();
+
+        $errors = [];
+        $portRangeEntries = $data['port_ranges'] ?? [];
+        if (!is_array($portRangeEntries)) {
+            $portRangeEntries = [$portRangeEntries];
+        }
+        $parsed = PortAllocator::parseRanges($portRangeEntries);
+        if (!empty($parsed['errors'])) {
+            $errors['port_ranges'] = implode(' | ', $parsed['errors']);
+        }
+        if (empty($parsed['ranges'])) {
+            $errors['port_ranges'] = $errors['port_ranges'] ?? 'At least one port range is required';
+        }
+
+        // Prevent saving ranges that exclude existing allocations.
+        $db = \Chap\App::db();
+        $rows = $db->fetchAll('SELECT port FROM port_allocations WHERE node_id = ? AND application_id IS NOT NULL ORDER BY port ASC', [$node->id]);
+        $existingPorts = array_map(fn($r) => (int)$r['port'], $rows);
+        if (!empty($existingPorts) && !PortAllocator::validatePortsWithinRanges($existingPorts, $parsed['ranges'])) {
+            $errors['port_ranges'] = 'Existing application port allocations would fall outside these ranges. Move/delete applications or expand ranges first.';
+        }
+
+        if (!empty($errors)) {
+            if ($this->isApiRequest()) {
+                $this->json(['errors' => $errors], 422);
+            } else {
+                $_SESSION['_errors'] = $errors;
+                $_SESSION['_old_input'] = $data;
+                $this->redirect('/admin/nodes/' . $uuid);
+            }
+            return;
+        }
 
         $node->update([
             'name' => $data['name'] ?? $node->name,
@@ -162,11 +212,13 @@ class NodeController extends BaseController
             'logs_websocket_url' => $data['logs_websocket_url'] ?? $node->logs_websocket_url,
         ]);
 
+        PortAllocator::saveRangesForNode((int)$node->id, $parsed['ranges']);
+
         if ($this->isApiRequest()) {
             $this->json(['node' => $node->toArray()]);
         } else {
             flash('success', 'Node updated');
-            $this->redirect('/nodes/' . $uuid);
+            $this->redirect('/admin/nodes/' . $uuid);
         }
     }
 
@@ -175,15 +227,15 @@ class NodeController extends BaseController
      */
     public function destroy(string $uuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $node = Node::findByUuid($uuid);
 
-        if (!$node || $node->team_id !== $team->id) {
+        if (!$node) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Node not found'], 404);
             } else {
                 flash('error', 'Node not found');
-                $this->redirect('/nodes');
+                $this->redirect('/admin/nodes');
             }
         }
 
@@ -196,7 +248,7 @@ class NodeController extends BaseController
             $this->json(['message' => 'Node deleted']);
         } else {
             flash('success', 'Node deleted');
-            $this->redirect('/nodes');
+            $this->redirect('/admin/nodes');
         }
     }
 
@@ -205,15 +257,15 @@ class NodeController extends BaseController
      */
     public function regenerateToken(string $uuid): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $node = Node::findByUuid($uuid);
 
-        if (!$node || $node->team_id !== $team->id) {
+        if (!$node) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Node not found'], 404);
             } else {
                 flash('error', 'Node not found');
-                $this->redirect('/nodes');
+                $this->redirect('/admin/nodes');
             }
         }
 
@@ -224,7 +276,7 @@ class NodeController extends BaseController
         } else {
             flash('success', 'Token regenerated');
             $_SESSION['node_token'] = $token;
-            $this->redirect('/nodes/' . $uuid);
+            $this->redirect('/admin/nodes/' . $uuid);
         }
     }
 }

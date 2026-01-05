@@ -8,8 +8,14 @@ use Chap\Models\Environment;
 use Chap\Models\Node;
 use Chap\Models\Deployment;
 use Chap\Models\ActivityLog;
+use Chap\Models\PortAllocation;
 use Chap\Services\DeploymentService;
 use Chap\Services\GitCredentialResolver;
+use Chap\Services\NodeAccess;
+use Chap\Services\DynamicEnv;
+use Chap\Services\ResourceAllocator;
+use Chap\Services\ResourceHierarchy;
+use Chap\Services\PortAllocator;
 
 /**
  * Application Controller
@@ -110,7 +116,7 @@ class ApplicationController extends BaseController
      */
     public function create(string $envUuid): void
     {
-        $this->currentTeam();
+        $team = $this->currentTeam();
         $environment = Environment::findByUuid($envUuid);
 
         if (!$environment) {
@@ -124,7 +130,8 @@ class ApplicationController extends BaseController
             $this->redirect('/projects');
         }
 
-        $nodes = Node::onlineForTeam((int)$project->team_id);
+        $allowedNodeIds = $this->user ? NodeAccess::allowedNodeIds($this->user, $team, $project, $environment) : [];
+        $nodes = Node::onlineForTeamAllowed((int)$project->team_id, $allowedNodeIds);
 
         $this->view('applications/create', [
             'title' => 'New Application',
@@ -358,7 +365,7 @@ class ApplicationController extends BaseController
      */
     public function store(string $envUuid): void
     {
-        $this->currentTeam();
+        $team = $this->currentTeam();
         $environment = Environment::findByUuid($envUuid);
 
         if (!$environment) {
@@ -382,6 +389,14 @@ class ApplicationController extends BaseController
 
         $data = $this->all();
 
+        // Parse legacy UI fields into configured hierarchy limits.
+        $cpuMillicoresLimit = ResourceHierarchy::parseCpuMillicores((string)($data['cpu_limit'] ?? '-1'));
+        $ramMbLimit = ResourceHierarchy::parseDockerMemoryToMb((string)($data['memory_limit'] ?? '-1'));
+        $storageMbLimit = ResourceHierarchy::parseMb((string)($data['storage_mb_limit'] ?? '-1'));
+        $portLimit = ResourceHierarchy::parseIntOrAuto((string)($data['port_limit'] ?? '-1'));
+        $bandwidthLimit = ResourceHierarchy::parseIntOrAuto((string)($data['bandwidth_mbps_limit'] ?? '-1'));
+        $pidsLimit = ResourceHierarchy::parseIntOrAuto((string)($data['pids_limit'] ?? '-1'));
+
         // Validate
         $errors = [];
         if (empty($data['name'])) {
@@ -391,9 +406,62 @@ class ApplicationController extends BaseController
             $errors['node_uuid'] = 'Node selection is required';
         } else {
             $node = Node::findByUuid($data['node_uuid']);
-            if (!$node || (int)$node->team_id !== (int)$project->team_id) {
+            if (!$node) {
                 $errors['node_uuid'] = 'Invalid node';
+            } else {
+                $allowedNodeIds = $this->user ? NodeAccess::allowedNodeIds($this->user, $team, $project, $environment) : [];
+                if (!in_array((int)$node->id, $allowedNodeIds, true)) {
+                    $errors['node_uuid'] = 'You do not have access to this node';
+                }
             }
+        }
+
+        // Validate configured resource limits against parent environment effective totals (fixed allocations only).
+        $parent = ResourceHierarchy::effectiveEnvironmentLimits($environment);
+        $siblings = Application::forEnvironment((int)$environment->id);
+
+        $maps = [
+            'cpu_millicores' => [],
+            'ram_mb' => [],
+            'storage_mb' => [],
+            'ports' => [],
+            'bandwidth_mbps' => [],
+            'pids' => [],
+        ];
+        foreach ($siblings as $a) {
+            $maps['cpu_millicores'][(int)$a->id] = (int)$a->cpu_millicores_limit;
+            $maps['ram_mb'][(int)$a->id] = (int)$a->ram_mb_limit;
+            $maps['storage_mb'][(int)$a->id] = (int)$a->storage_mb_limit;
+            $maps['ports'][(int)$a->id] = (int)$a->port_limit;
+            $maps['bandwidth_mbps'][(int)$a->id] = (int)$a->bandwidth_mbps_limit;
+            $maps['pids'][(int)$a->id] = (int)$a->pids_limit;
+        }
+
+        // Synthetic child id 0 for the new (unsaved) application.
+        $maps['cpu_millicores'][0] = $cpuMillicoresLimit;
+        $maps['ram_mb'][0] = $ramMbLimit;
+        $maps['storage_mb'][0] = $storageMbLimit;
+        $maps['ports'][0] = $portLimit;
+        $maps['bandwidth_mbps'][0] = $bandwidthLimit;
+        $maps['pids'][0] = $pidsLimit;
+
+        if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['cpu_millicores'], $maps['cpu_millicores'])) {
+            $errors['cpu_limit'] = 'CPU allocations exceed the environment\'s remaining limit';
+        }
+        if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['ram_mb'], $maps['ram_mb'])) {
+            $errors['memory_limit'] = 'RAM allocations exceed the environment\'s remaining limit';
+        }
+        if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['storage_mb'], $maps['storage_mb'])) {
+            $errors['storage_mb_limit'] = 'Storage allocations exceed the environment\'s remaining limit';
+        }
+        if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['ports'], $maps['ports'])) {
+            $errors['port_limit'] = 'Port allocations exceed the environment\'s remaining limit';
+        }
+        if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['bandwidth_mbps'], $maps['bandwidth_mbps'])) {
+            $errors['bandwidth_mbps_limit'] = 'Bandwidth allocations exceed the environment\'s remaining limit';
+        }
+        if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['pids'], $maps['pids'])) {
+            $errors['pids_limit'] = 'PID allocations exceed the environment\'s remaining limit';
         }
 
         if (!empty($errors)) {
@@ -419,6 +487,27 @@ class ApplicationController extends BaseController
             }
         }
 
+        // Validate dynamic port variables against any reserved ports (create flow).
+        $reservationUuid = (string)($data['port_reservation_uuid'] ?? '');
+        $reservedPorts = [];
+        if ($reservationUuid !== '' && isset($node) && $node) {
+            $reservedPorts = PortAllocation::portsForReservation($reservationUuid, (int)$node->id);
+        }
+        $dynErrors = DynamicEnv::validate($envVars, $reservedPorts);
+        if (!empty($dynErrors)) {
+            $errors['environment_variables'] = 'One or more variables reference missing allocated ports. Allocate ports first or fix {port[i]} indices.';
+        }
+
+        if (!empty($errors)) {
+            if ($this->isApiRequest()) {
+                $this->json(['errors' => $errors], 422);
+            } else {
+                $_SESSION['_errors'] = $errors;
+                $_SESSION['_old_input'] = $data;
+                $this->redirect('/environments/' . $envUuid . '/applications/create');
+            }
+        }
+
         $application = Application::create([
             'environment_id' => $environment->id,
             'node_id' => isset($node) ? $node->id : null,
@@ -434,10 +523,21 @@ class ApplicationController extends BaseController
             'environment_variables' => !empty($envVars) ? json_encode($envVars) : null,
             'memory_limit' => $data['memory_limit'] ?? '512m',
             'cpu_limit' => $data['cpu_limit'] ?? '1',
+            'cpu_millicores_limit' => $cpuMillicoresLimit,
+            'ram_mb_limit' => $ramMbLimit,
+            'storage_mb_limit' => $storageMbLimit,
+            'port_limit' => $portLimit,
+            'bandwidth_mbps_limit' => $bandwidthLimit,
+            'pids_limit' => $pidsLimit,
             // When the UI doesn't post health-check fields, keep defaults enabled.
             'health_check_enabled' => array_key_exists('health_check_enabled', $data) ? (!empty($data['health_check_enabled']) ? 1 : 0) : 1,
             'health_check_path' => $data['health_check_path'] ?? '/',
         ]);
+
+        // Attach any reserved ports from the create flow to the new application.
+        if ($reservationUuid !== '' && $application->node_id) {
+            PortAllocator::attachReservationToApplication($reservationUuid, (int)$application->node_id, (int)$application->id);
+        }
 
         ActivityLog::log('application.created', 'Application', $application->id, ['name' => $application->name]);
 
@@ -468,11 +568,17 @@ class ApplicationController extends BaseController
 
         $deployments = Deployment::forApplication($application->id, 10);
         $project = $application->environment()?->project();
-        $nodes = $project ? Node::onlineForTeam((int)$project->team_id) : [];
-    $incomingWebhooks = IncomingWebhook::forApplication($application->id);
+        $nodes = [];
+        if ($project && $this->user) {
+            $allowedNodeIds = NodeAccess::allowedNodeIds($this->user, $team, $project, $application->environment(), $application);
+            $nodes = Node::onlineForTeamAllowed((int)$project->team_id, $allowedNodeIds);
+        }
+        $incomingWebhooks = IncomingWebhook::forApplication($application->id);
 
-    $incomingWebhookReveals = $_SESSION['incoming_webhook_reveals'] ?? [];
-    unset($_SESSION['incoming_webhook_reveals']);
+        $incomingWebhookReveals = $_SESSION['incoming_webhook_reveals'] ?? [];
+        unset($_SESSION['incoming_webhook_reveals']);
+
+        $allocatedPorts = $application ? $application->allocatedPorts() : [];
 
         if ($this->isApiRequest()) {
             $this->json([
@@ -489,6 +595,7 @@ class ApplicationController extends BaseController
                 'nodes' => $nodes,
                 'incomingWebhooks' => $incomingWebhooks,
                 'incomingWebhookReveals' => $incomingWebhookReveals,
+                'allocatedPorts' => $allocatedPorts,
             ]);
         }
     }
@@ -501,6 +608,8 @@ class ApplicationController extends BaseController
         $team = $this->currentTeam();
         $application = Application::findByUuid($uuid);
 
+        $oldNodeId = $application ? $application->node_id : null;
+
         if (!$this->canAccessApplication($application, $team)) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Application not found'], 404);
@@ -512,6 +621,16 @@ class ApplicationController extends BaseController
 
         $data = $this->all();
 
+    $errors = [];
+
+        // Parse legacy UI fields into configured hierarchy limits.
+        $cpuMillicoresLimit = ResourceHierarchy::parseCpuMillicores((string)($data['cpu_limit'] ?? (string)$application->cpu_limit));
+        $ramMbLimit = ResourceHierarchy::parseDockerMemoryToMb((string)($data['memory_limit'] ?? (string)$application->memory_limit));
+        $storageMbLimit = ResourceHierarchy::parseMb((string)($data['storage_mb_limit'] ?? (string)$application->storage_mb_limit));
+        $portLimit = ResourceHierarchy::parseIntOrAuto((string)($data['port_limit'] ?? (string)$application->port_limit));
+        $bandwidthLimit = ResourceHierarchy::parseIntOrAuto((string)($data['bandwidth_mbps_limit'] ?? (string)$application->bandwidth_mbps_limit));
+        $pidsLimit = ResourceHierarchy::parseIntOrAuto((string)($data['pids_limit'] ?? (string)$application->pids_limit));
+
         // Handle node update
         $nodeId = $application->node_id;
         if (isset($data['node_uuid'])) {
@@ -520,8 +639,15 @@ class ApplicationController extends BaseController
             } else {
                 $node = Node::findByUuid($data['node_uuid']);
                 $project = $application->environment()?->project();
-                if ($node && $project && (int)$node->team_id === (int)$project->team_id) {
-                    $nodeId = $node->id;
+                if (!$node || !$project) {
+                    $errors['node_uuid'] = 'Invalid node';
+                } else {
+                    $allowedNodeIds = $this->user ? NodeAccess::allowedNodeIds($this->user, $team, $project, $application->environment(), $application) : [];
+                    if (!in_array((int)$node->id, $allowedNodeIds, true)) {
+                        $errors['node_uuid'] = 'You do not have access to this node';
+                    } else {
+                        $nodeId = $node->id;
+                    }
                 }
             }
         }
@@ -540,6 +666,72 @@ class ApplicationController extends BaseController
             }
         }
 
+        // Validate dynamic port variables against currently allocated ports.
+        // If moving nodes, existing allocations will be released and ports must be re-allocated on the new node.
+        $isMovingNodes = ((string)$oldNodeId !== (string)$nodeId);
+        $portsForValidation = $isMovingNodes ? [] : PortAllocation::portsForApplication((int)$application->id);
+        $dynErrors = DynamicEnv::validate($envVars, $portsForValidation);
+        if (!empty($dynErrors)) {
+            $errors['environment_variables'] = $isMovingNodes
+                ? 'Your environment variables reference {port[i]} but the application is changing nodes. Move the app first, then allocate new ports, then update {port[i]} indices.'
+                : 'One or more variables reference missing allocated ports. Allocate ports first or fix {port[i]} indices.';
+        }
+
+        // Validate configured resource limits against parent environment effective totals (fixed allocations only).
+        $environment = $application->environment();
+        if ($environment) {
+            $parent = ResourceHierarchy::effectiveEnvironmentLimits($environment);
+            $siblings = Application::forEnvironment((int)$environment->id);
+
+            $maps = [
+                'cpu_millicores' => [],
+                'ram_mb' => [],
+                'storage_mb' => [],
+                'ports' => [],
+                'bandwidth_mbps' => [],
+                'pids' => [],
+            ];
+
+            foreach ($siblings as $a) {
+                $isCurrent = (int)$a->id === (int)$application->id;
+                $maps['cpu_millicores'][(int)$a->id] = $isCurrent ? $cpuMillicoresLimit : (int)$a->cpu_millicores_limit;
+                $maps['ram_mb'][(int)$a->id] = $isCurrent ? $ramMbLimit : (int)$a->ram_mb_limit;
+                $maps['storage_mb'][(int)$a->id] = $isCurrent ? $storageMbLimit : (int)$a->storage_mb_limit;
+                $maps['ports'][(int)$a->id] = $isCurrent ? $portLimit : (int)$a->port_limit;
+                $maps['bandwidth_mbps'][(int)$a->id] = $isCurrent ? $bandwidthLimit : (int)$a->bandwidth_mbps_limit;
+                $maps['pids'][(int)$a->id] = $isCurrent ? $pidsLimit : (int)$a->pids_limit;
+            }
+
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['cpu_millicores'], $maps['cpu_millicores'])) {
+                $errors['cpu_limit'] = 'CPU allocations exceed the environment\'s remaining limit';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['ram_mb'], $maps['ram_mb'])) {
+                $errors['memory_limit'] = 'RAM allocations exceed the environment\'s remaining limit';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['storage_mb'], $maps['storage_mb'])) {
+                $errors['storage_mb_limit'] = 'Storage allocations exceed the environment\'s remaining limit';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['ports'], $maps['ports'])) {
+                $errors['port_limit'] = 'Port allocations exceed the environment\'s remaining limit';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['bandwidth_mbps'], $maps['bandwidth_mbps'])) {
+                $errors['bandwidth_mbps_limit'] = 'Bandwidth allocations exceed the environment\'s remaining limit';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['pids'], $maps['pids'])) {
+                $errors['pids_limit'] = 'PID allocations exceed the environment\'s remaining limit';
+            }
+        }
+
+        if (!empty($errors)) {
+            if ($this->isApiRequest()) {
+                $this->json(['errors' => $errors], 422);
+            } else {
+                $_SESSION['_errors'] = $errors;
+                $_SESSION['_old_input'] = $data;
+                $this->redirect('/applications/' . $uuid);
+            }
+        }
+
         $application->update([
             'node_id' => $nodeId,
             'name' => $data['name'] ?? $application->name,
@@ -554,12 +746,22 @@ class ApplicationController extends BaseController
             'environment_variables' => !empty($envVars) ? json_encode($envVars) : null,
             'memory_limit' => $data['memory_limit'] ?? $application->memory_limit,
             'cpu_limit' => $data['cpu_limit'] ?? $application->cpu_limit,
+            'cpu_millicores_limit' => $cpuMillicoresLimit,
+            'ram_mb_limit' => $ramMbLimit,
+            'storage_mb_limit' => $storageMbLimit,
+            'port_limit' => $portLimit,
+            'bandwidth_mbps_limit' => $bandwidthLimit,
+            'pids_limit' => $pidsLimit,
             // Preserve existing health-check config if the UI doesn't post these fields.
             'health_check_enabled' => array_key_exists('health_check_enabled', $data)
                 ? (!empty($data['health_check_enabled']) ? 1 : 0)
                 : ($application->health_check_enabled ? 1 : 0),
             'health_check_path' => $data['health_check_path'] ?? $application->health_check_path,
         ]);
+
+        if ((string)$oldNodeId !== (string)$nodeId) {
+            PortAllocator::releaseForApplication((int)$application->id);
+        }
 
         if ($this->isApiRequest()) {
             $this->json(['application' => $application->toArray()]);
@@ -588,6 +790,8 @@ class ApplicationController extends BaseController
 
         $envUuid = $application->environment()->uuid;
         $appName = $application->name;
+
+        PortAllocator::releaseForApplication((int)$application->id);
         $application->delete();
 
         ActivityLog::log('application.deleted', 'Application', null, ['name' => $appName]);
@@ -637,10 +841,20 @@ class ApplicationController extends BaseController
         }
 
         // Create deployment
-        $deployment = DeploymentService::create($application, null, [
-            'triggered_by' => $this->user ? 'user' : 'manual',
-            'triggered_by_name' => $this->user?->displayName(),
-        ]);
+        try {
+            $deployment = DeploymentService::create($application, null, [
+                'triggered_by' => $this->user ? 'user' : 'manual',
+                'triggered_by_name' => $this->user?->displayName(),
+            ]);
+        } catch (\Throwable $e) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => $e->getMessage()], 422);
+            } else {
+                flash('error', $e->getMessage());
+                $this->redirect('/applications/' . $uuid);
+            }
+            return;
+        }
 
         ActivityLog::log('deployment.started', 'Deployment', $deployment->id, [
             'application' => $application->name
@@ -921,25 +1135,4 @@ class ApplicationController extends BaseController
         }
     }
 
-    /**
-     * Check if user can access application
-     */
-    private function canAccessApplication(?Application $application, $team): bool
-    {
-        if (!$application) {
-            return false;
-        }
-
-        $environment = $application->environment();
-        if (!$environment) {
-            return false;
-        }
-
-        $project = $environment->project();
-        if (!$project || !$this->canAccessTeamId((int)$project->team_id)) {
-            return false;
-        }
-
-        return true;
-    }
 }

@@ -49,15 +49,15 @@ Route::middleware(['auth'], function() {
     
     // Nodes (admin-only)
     Route::middleware(['admin'], function() {
-        Route::get('/nodes', 'NodeController@index');
-        Route::get('/nodes/create', 'NodeController@create');
-        Route::post('/nodes', 'NodeController@store');
-        Route::get('/nodes/{id}', 'NodeController@show');
-        Route::get('/nodes/{id}/containers', 'NodeController@containers');
-        Route::get('/nodes/{id}/edit', 'NodeController@edit');
-        Route::put('/nodes/{id}', 'NodeController@update');
-        Route::delete('/nodes/{id}', 'NodeController@destroy');
-        Route::post('/nodes/{id}/validate', 'NodeController@validate');
+        Route::get('/admin/nodes', 'NodeController@index');
+        Route::get('/admin/nodes/create', 'NodeController@create');
+        Route::post('/admin/nodes', 'NodeController@store');
+        Route::get('/admin/nodes/{id}', 'NodeController@show');
+        Route::get('/admin/nodes/{id}/containers', 'NodeController@containers');
+        Route::get('/admin/nodes/{id}/edit', 'NodeController@edit');
+        Route::put('/admin/nodes/{id}', 'NodeController@update');
+        Route::delete('/admin/nodes/{id}', 'NodeController@destroy');
+        Route::post('/admin/nodes/{id}/validate', 'NodeController@validate');
     });
     
     // Projects
@@ -87,10 +87,13 @@ Route::middleware(['auth'], function() {
     Route::get('/environments/{envId}/applications/create', 'ApplicationController@create');
     Route::get('/environments/{envId}/applications/repo-env', 'ApplicationController@repoEnv');
     Route::post('/environments/{envId}/applications', 'ApplicationController@store');
+    Route::post('/environments/{envId}/nodes/{nodeId}/ports/reserve', 'ApplicationPortController@allocateForReservation');
+    Route::post('/environments/{envId}/nodes/{nodeId}/ports/release', 'ApplicationPortController@releaseReservation');
     Route::get('/applications/{id}', 'ApplicationController@show');
     Route::get('/applications/{id}/edit', 'ApplicationController@edit');
     Route::put('/applications/{id}', 'ApplicationController@update');
     Route::delete('/applications/{id}', 'ApplicationController@destroy');
+    Route::post('/applications/{id}/ports', 'ApplicationPortController@allocate');
     Route::get('/applications/{id}/logs', 'ApplicationController@logs');
     Route::get('/applications/{id}/files', 'ApplicationController@files');
     Route::get('/applications/{id}/files/edit', 'ApplicationController@fileEditor');
@@ -171,6 +174,7 @@ Route::middleware(['auth', 'admin'], function() {
     // Admin settings (email)
     Route::get('/admin/settings/email', 'Admin\\SettingsController@email');
     Route::post('/admin/settings/email', 'Admin\\SettingsController@updateEmail');
+    Route::post('/admin/settings/email/test', 'Admin\\SettingsController@sendTestEmail');
 
     // Admin activity logs
     Route::get('/admin/activity', 'Admin\\ActivityController@index');

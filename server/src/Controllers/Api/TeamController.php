@@ -56,7 +56,7 @@ class TeamController extends BaseApiController
     {
         $team = Team::findByUuid($id);
 
-        if (!$team || !$this->user->belongsToTeam($team)) {
+        if (!$team || (!$this->user->belongsToTeam($team) && !admin_view_all())) {
             $this->notFound('Team not found');
             return;
         }
@@ -71,12 +71,12 @@ class TeamController extends BaseApiController
     {
         $team = Team::findByUuid($id);
 
-        if (!$team || !$this->user->belongsToTeam($team)) {
+        if (!$team || (!$this->user->belongsToTeam($team) && !admin_view_all())) {
             $this->notFound('Team not found');
             return;
         }
 
-        if (!$this->user->isTeamAdmin($team)) {
+        if (!$this->user->isTeamAdmin($team) && !admin_view_all()) {
             $this->forbidden('You do not have permission to update this team');
             return;
         }
@@ -98,12 +98,12 @@ class TeamController extends BaseApiController
     {
         $team = Team::findByUuid($id);
 
-        if (!$team || !$this->user->belongsToTeam($team)) {
+        if (!$team || (!$this->user->belongsToTeam($team) && !admin_view_all())) {
             $this->notFound('Team not found');
             return;
         }
 
-        if (!$this->user->isTeamOwner($team)) {
+        if (!$this->user->isTeamOwner($team) && !admin_view_all()) {
             $this->forbidden('Only the team owner can delete the team');
             return;
         }

@@ -4,6 +4,9 @@ namespace Chap\Controllers;
 
 use Chap\Models\Team;
 use Chap\Models\User;
+use Chap\Services\ResourceHierarchy;
+use Chap\Services\NodeAccess;
+use Chap\Services\ResourceAllocator;
 
 /**
  * Team Controller
@@ -118,15 +121,24 @@ class TeamController extends BaseController
 
         $user = $this->user;
         
-        if (!$team->isOwner($user->id) && !$team->isAdmin($user->id)) {
+        if (!$team->isOwner($user->id) && !$team->isAdmin($user->id) && !admin_view_all()) {
             flash('error', 'You do not have permission to edit this team');
             redirect('/teams/' . $id);
             return;
         }
 
+        $allowedNodeIds = $user->allowedNodeIdsForTeam((int)$team->id);
+        $teamNodes = $team->nodes();
+        $availableNodes = array_values(array_filter($teamNodes, fn($n) => in_array((int)$n->id, $allowedNodeIds, true)));
+
+        $owner = $team->owner();
+        $ownerMax = $owner ? ResourceHierarchy::userMax($owner) : null;
+
         $this->view('teams/edit', [
             'title' => 'Edit Team',
             'team' => $team,
+            'availableNodes' => $availableNodes,
+            'ownerMax' => $ownerMax,
         ]);
     }
 
@@ -150,7 +162,7 @@ class TeamController extends BaseController
             return;
         }
         
-        if (!$team->isOwner($user->id) && !$team->isAdmin($user->id)) {
+        if (!$team->isOwner($user->id) && !$team->isAdmin($user->id) && !admin_view_all()) {
             flash('error', 'You do not have permission to edit this team');
             redirect('/teams/' . $id);
             return;
@@ -159,15 +171,97 @@ class TeamController extends BaseController
         $name = trim($_POST['name'] ?? '');
         $description = trim($_POST['description'] ?? '');
 
+        $cpuMillicoresLimit = ResourceHierarchy::parseCpuMillicores((string)($_POST['cpu_limit_cores'] ?? '-1'));
+        $ramMbLimit = ResourceHierarchy::parseMb((string)($_POST['ram_mb_limit'] ?? '-1'));
+        $storageMbLimit = ResourceHierarchy::parseMb((string)($_POST['storage_mb_limit'] ?? '-1'));
+        $portLimit = ResourceHierarchy::parseIntOrAuto((string)($_POST['port_limit'] ?? '-1'));
+        $bandwidthLimit = ResourceHierarchy::parseIntOrAuto((string)($_POST['bandwidth_mbps_limit'] ?? '-1'));
+        $pidsLimit = ResourceHierarchy::parseIntOrAuto((string)($_POST['pids_limit'] ?? '-1'));
+
+        $restrictNodes = !empty($_POST['restrict_nodes']);
+        $nodeIds = $_POST['allowed_node_ids'] ?? [];
+        if (!is_array($nodeIds)) {
+            $nodeIds = [];
+        }
+        $nodeIds = array_values(array_unique(array_map('intval', $nodeIds)));
+
         if (empty($name)) {
             flash('error', 'Team name is required');
             redirect('/teams/' . $id . '/edit');
             return;
         }
 
+        // Validate team limits against owner max (teams are allocated from the team owner's user max).
+        $owner = $team->owner();
+        $errors = [];
+        if ($owner) {
+            $parent = ResourceHierarchy::userMax($owner);
+            $ownedTeams = ResourceHierarchy::teamsOwnedByUser((int)$owner->id);
+
+            $maps = [
+                'cpu_millicores' => [],
+                'ram_mb' => [],
+                'storage_mb' => [],
+                'ports' => [],
+                'bandwidth_mbps' => [],
+                'pids' => [],
+            ];
+
+            foreach ($ownedTeams as $t) {
+                $isCurrent = (int)$t->id === (int)$team->id;
+                $maps['cpu_millicores'][(int)$t->id] = $isCurrent ? $cpuMillicoresLimit : (int)$t->cpu_millicores_limit;
+                $maps['ram_mb'][(int)$t->id] = $isCurrent ? $ramMbLimit : (int)$t->ram_mb_limit;
+                $maps['storage_mb'][(int)$t->id] = $isCurrent ? $storageMbLimit : (int)$t->storage_mb_limit;
+                $maps['ports'][(int)$t->id] = $isCurrent ? $portLimit : (int)$t->port_limit;
+                $maps['bandwidth_mbps'][(int)$t->id] = $isCurrent ? $bandwidthLimit : (int)$t->bandwidth_mbps_limit;
+                $maps['pids'][(int)$t->id] = $isCurrent ? $pidsLimit : (int)$t->pids_limit;
+            }
+
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['cpu_millicores'], $maps['cpu_millicores'])) {
+                $errors['cpu_limit_cores'] = 'CPU allocations exceed the team owner\'s user maximum';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['ram_mb'], $maps['ram_mb'])) {
+                $errors['ram_mb_limit'] = 'RAM allocations exceed the team owner\'s user maximum';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['storage_mb'], $maps['storage_mb'])) {
+                $errors['storage_mb_limit'] = 'Storage allocations exceed the team owner\'s user maximum';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['ports'], $maps['ports'])) {
+                $errors['port_limit'] = 'Port allocations exceed the team owner\'s user maximum';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['bandwidth_mbps'], $maps['bandwidth_mbps'])) {
+                $errors['bandwidth_mbps_limit'] = 'Bandwidth allocations exceed the team owner\'s user maximum';
+            }
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['pids'], $maps['pids'])) {
+                $errors['pids_limit'] = 'PID allocations exceed the team owner\'s user maximum';
+            }
+        }
+
+        if ($restrictNodes) {
+            $allowedForEditor = $user->allowedNodeIdsForTeam((int)$team->id);
+            $bad = array_diff($nodeIds, $allowedForEditor);
+            if (!empty($bad)) {
+                $errors['allowed_node_ids'] = 'You cannot grant access to nodes you do not have access to';
+            }
+        }
+
+        if (!empty($errors)) {
+            $_SESSION['_errors'] = $errors;
+            $_SESSION['_old_input'] = $_POST;
+            redirect('/teams/' . $id . '/edit');
+            return;
+        }
+
         $team->update([
             'name' => $name,
-            'description' => $description
+            'description' => $description,
+            'cpu_millicores_limit' => $cpuMillicoresLimit,
+            'ram_mb_limit' => $ramMbLimit,
+            'storage_mb_limit' => $storageMbLimit,
+            'port_limit' => $portLimit,
+            'bandwidth_mbps_limit' => $bandwidthLimit,
+            'pids_limit' => $pidsLimit,
+            'allowed_node_ids' => $restrictNodes ? NodeAccess::encodeNodeIds($nodeIds) : null,
         ]);
 
         flash('success', 'Team updated successfully');
@@ -194,7 +288,7 @@ class TeamController extends BaseController
             return;
         }
         
-        if (!$team->isOwner($user->id)) {
+        if (!$team->isOwner($user->id) && !admin_view_all()) {
             flash('error', 'Only the team owner can delete this team');
             redirect('/teams/' . $id);
             return;
@@ -232,15 +326,20 @@ class TeamController extends BaseController
             return;
         }
         
-        if (!$team->hasMember($user->id)) {
+        if (!$team->hasMember($user->id) && !admin_view_all()) {
             flash('error', 'You are not a member of this team');
             redirect('/teams');
             return;
         }
 
-        // Persist (DB) and activate immediately (session)
-        $user->update(['current_team_id' => $team->id]);
-        $user->switchTeam($team);
+        // Persist (DB) and/or activate immediately (session)
+        // - Regular users: persists to DB + session.
+        // - Admin "view all" mode: session-only when not a member.
+        if (!$user->switchTeam($team)) {
+            flash('error', 'Unable to switch team');
+            redirect('/teams');
+            return;
+        }
 
         flash('success', 'Switched to ' . $team->name);
         redirect('/dashboard');
@@ -264,7 +363,7 @@ class TeamController extends BaseController
 
         $user = $this->user;
         
-        if (!$team->isOwner($user->id) && !$team->isAdmin($user->id)) {
+        if (!$team->isOwner($user->id) && !$team->isAdmin($user->id) && !admin_view_all()) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Permission denied'], 403);
             }
@@ -346,7 +445,7 @@ class TeamController extends BaseController
             return;
         }
         
-        if (!$team->isOwner($currentUser->id) && !$team->isAdmin($currentUser->id)) {
+        if (!$team->isOwner($currentUser->id) && !$team->isAdmin($currentUser->id) && !admin_view_all()) {
             flash('error', 'Permission denied');
             redirect('/teams/' . $id);
             return;
@@ -378,7 +477,7 @@ class TeamController extends BaseController
         }
 
         $currentUser = $this->user;
-        if (!$team->isOwner($currentUser->id) && !$team->isAdmin($currentUser->id)) {
+        if (!$team->isOwner($currentUser->id) && !$team->isAdmin($currentUser->id) && !admin_view_all()) {
             flash('error', 'Permission denied');
             $this->redirect('/teams/' . $id);
             return;

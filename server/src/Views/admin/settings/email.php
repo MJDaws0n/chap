@@ -96,6 +96,7 @@ $authChecked = ($old['auth'] ?? null) !== null
 
                 <div class="flex items-center gap-3 mt-4">
                     <button type="submit" class="btn btn-primary">Save</button>
+                    <button type="submit" class="btn btn-secondary" formaction="/admin/settings/email/test">Send test email</button>
                 </div>
             </form>
         </div>

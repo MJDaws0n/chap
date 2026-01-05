@@ -5,6 +5,9 @@ namespace Chap\Models;
 use Chap\App;
 use Chap\WebSocket\Server as WebSocketServer;
 use Chap\Services\DeploymentService;
+use Chap\Services\DynamicEnv;
+use Chap\Services\ResourceHierarchy;
+use Chap\Models\PortAllocation;
 
 /**
  * Application Model
@@ -18,6 +21,9 @@ class Application extends BaseModel
         'build_pack', 'dockerfile_path', 'docker_compose_path', 'build_context',
         'port', 'domains', 'environment_variables', 'build_args',
         'memory_limit', 'cpu_limit',
+        'cpu_millicores_limit', 'ram_mb_limit', 'storage_mb_limit',
+        'port_limit', 'bandwidth_mbps_limit', 'pids_limit',
+        'allowed_node_ids',
         'health_check_enabled', 'health_check_path', 'health_check_interval',
         'status'
     ];
@@ -47,6 +53,15 @@ class Application extends BaseModel
     // Resource limits
     public string $memory_limit = '512m';
     public string $cpu_limit = '1';
+
+    // Configured limits used by resource hierarchy (-1 auto-split)
+    public int $cpu_millicores_limit = -1;
+    public int $ram_mb_limit = -1;
+    public int $storage_mb_limit = -1;
+    public int $port_limit = -1;
+    public int $bandwidth_mbps_limit = -1;
+    public int $pids_limit = -1;
+    public ?string $allowed_node_ids = null;
 
     // Health check
     public bool $health_check_enabled = true;
@@ -155,6 +170,12 @@ class Application extends BaseModel
         return array_filter(array_map('trim', explode(',', $this->domains)));
     }
 
+    /** @return int[] */
+    public function allocatedPorts(): array
+    {
+        return PortAllocation::portsForApplication((int)$this->id);
+    }
+
     /**
      * Check if application is running
      */
@@ -202,9 +223,11 @@ class Application extends BaseModel
         if ($this->node_id) {
             $node = Node::find($this->node_id);
             if ($node) {
+                $taskId = bin2hex(random_bytes(16));
                 $task = [
                     'type' => 'application:delete',
                     'payload' => [
+                        'task_id' => $taskId,
                         'application_uuid' => $this->uuid,
                         'application_id' => $this->uuid,
                         'build_pack' => $this->build_pack,
@@ -236,7 +259,22 @@ class Application extends BaseModel
      */
     public function toDeployPayload(): array
     {
-        return [
+        // Resolve effective limits (including -1 auto-split) at deploy time.
+        $effective = ResourceHierarchy::effectiveApplicationLimits($this);
+
+        $allocatedPorts = $this->allocatedPorts();
+
+        $envVars = $this->getEnvironmentVariables();
+        $resolved = DynamicEnv::resolve($envVars, $allocatedPorts);
+        if (!empty($resolved['errors'])) {
+            $details = [];
+            foreach ($resolved['errors'] as $k => $msg) {
+                $details[] = $k . ': ' . $msg;
+            }
+            throw new \RuntimeException('Environment variable validation failed: ' . implode(' | ', $details));
+        }
+
+        $payload = [
             'uuid' => $this->uuid,
             'name' => $this->name,
             'git_repository' => $this->git_repository,
@@ -245,14 +283,23 @@ class Application extends BaseModel
             'dockerfile_path' => $this->dockerfile_path,
             'docker_compose_path' => $this->docker_compose_path,
             'build_context' => $this->build_context,
-            'environment_variables' => $this->getEnvironmentVariables(),
+            'environment_variables' => $resolved['resolved'],
             'build_args' => $this->getBuildArgs(),
             'port' => $this->port,
-            'memory_limit' => $this->memory_limit,
-            'cpu_limit' => $this->cpu_limit,
+            'allocated_ports' => $allocatedPorts,
             'health_check_enabled' => $this->health_check_enabled,
             'health_check_path' => $this->health_check_path,
             'health_check_interval' => $this->health_check_interval,
         ];
+
+        // If limits are unlimited, omit them so the node falls back to CHAP_MAX_* defaults.
+        if ((int)$effective['ram_mb'] !== -1) {
+            $payload['memory_limit'] = ResourceHierarchy::ramMbToDockerString((int)$effective['ram_mb']);
+        }
+        if ((int)$effective['cpu_millicores'] !== -1) {
+            $payload['cpu_limit'] = ResourceHierarchy::cpuToCoresString((int)$effective['cpu_millicores']);
+        }
+
+        return $payload;
     }
 }

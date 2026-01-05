@@ -345,22 +345,4 @@ class IncomingWebhookController extends BaseController
         return is_array($decoded) ? $decoded : [];
     }
 
-    private function canAccessApplication(?Application $application, $team): bool
-    {
-        if (!$application) {
-            return false;
-        }
-
-        $environment = $application->environment();
-        if (!$environment) {
-            return false;
-        }
-
-        $project = $environment->project();
-        if (!$project || $project->team_id !== $team->id) {
-            return false;
-        }
-
-        return true;
-    }
 }

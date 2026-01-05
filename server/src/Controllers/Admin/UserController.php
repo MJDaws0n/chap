@@ -6,6 +6,8 @@ use Chap\Controllers\BaseController;
 use Chap\Auth\AuthManager;
 use Chap\Models\User;
 use Chap\Models\ActivityLog;
+use Chap\Models\Node;
+use Chap\App;
 
 class UserController extends BaseController
 {
@@ -113,10 +115,24 @@ class UserController extends BaseController
             $this->redirect('/admin/users');
         }
 
+        $db = App::db();
+        $selectedRows = $db->fetchAll(
+            'SELECT node_id FROM user_node_access WHERE user_id = ?',
+            [$user->id]
+        );
+        $selectedNodeIds = array_values(array_map(fn($r) => (int)$r['node_id'], $selectedRows));
+
+        $nodes = Node::all();
+
+        $nodeAccessMode = $user->node_access_mode ?? 'allow_selected';
+
         $this->view('admin/users/edit', [
             'title' => 'Edit User',
             'currentPage' => 'admin-users',
             'editUser' => $user,
+            'nodes' => $nodes,
+            'selectedNodeIds' => $selectedNodeIds,
+            'nodeAccessMode' => $nodeAccessMode,
         ]);
     }
 
@@ -138,6 +154,18 @@ class UserController extends BaseController
         $email = trim((string)$this->input('email', ''));
         $newPassword = (string)$this->input('password', '');
         $isAdmin = $this->input('is_admin') === 'on';
+
+        $nodeAccessMode = (string)$this->input('node_access_mode', (string)($user->node_access_mode ?? 'allow_selected'));
+        if (!in_array($nodeAccessMode, ['allow_selected', 'allow_all_except'], true)) {
+            $nodeAccessMode = 'allow_selected';
+        }
+
+        $maxCpuMillicores = (int)$this->input('max_cpu_millicores', (string)$user->max_cpu_millicores);
+        $maxRamMb = (int)$this->input('max_ram_mb', (string)$user->max_ram_mb);
+        $maxStorageMb = (int)$this->input('max_storage_mb', (string)$user->max_storage_mb);
+        $maxPorts = (int)$this->input('max_ports', (string)$user->max_ports);
+        $maxBandwidth = (int)$this->input('max_bandwidth_mbps', (string)$user->max_bandwidth_mbps);
+        $maxPids = (int)$this->input('max_pids', (string)$user->max_pids);
 
         $errors = [];
 
@@ -171,6 +199,26 @@ class UserController extends BaseController
             $errors['password'] = 'Password must be at least 8 characters';
         }
 
+        // Validate max limits (-1 means unlimited)
+        if ($maxCpuMillicores !== -1 && $maxCpuMillicores <= 0) {
+            $errors['max_cpu_millicores'] = 'CPU max must be greater than 0, or -1 for unlimited';
+        }
+        if ($maxRamMb !== -1 && $maxRamMb <= 0) {
+            $errors['max_ram_mb'] = 'RAM max must be greater than 0, or -1 for unlimited';
+        }
+        if ($maxStorageMb !== -1 && $maxStorageMb <= 0) {
+            $errors['max_storage_mb'] = 'Storage max must be greater than 0, or -1 for unlimited';
+        }
+        if ($maxPorts !== -1 && $maxPorts <= 0) {
+            $errors['max_ports'] = 'Port max must be greater than 0, or -1 for unlimited';
+        }
+        if ($maxBandwidth !== -1 && $maxBandwidth <= 0) {
+            $errors['max_bandwidth_mbps'] = 'Bandwidth max must be greater than 0, or -1 for unlimited';
+        }
+        if ($maxPids !== -1 && $maxPids <= 0) {
+            $errors['max_pids'] = 'PIDs max must be greater than 0, or -1 for unlimited';
+        }
+
         // Prevent removing the last admin.
         if (!$isAdmin && $user->is_admin) {
             $adminCount = User::count('is_admin = 1');
@@ -186,6 +234,12 @@ class UserController extends BaseController
                 'username' => $username,
                 'email' => $email,
                 'is_admin' => $isAdmin ? 'on' : 'off',
+                'max_cpu_millicores' => (string)$maxCpuMillicores,
+                'max_ram_mb' => (string)$maxRamMb,
+                'max_storage_mb' => (string)$maxStorageMb,
+                'max_ports' => (string)$maxPorts,
+                'max_bandwidth_mbps' => (string)$maxBandwidth,
+                'max_pids' => (string)$maxPids,
             ];
             $this->redirect('/admin/users/' . $user->id . '/edit');
         }
@@ -195,6 +249,13 @@ class UserController extends BaseController
             'username' => $username,
             'email' => $email,
             'is_admin' => $isAdmin,
+            'max_cpu_millicores' => $maxCpuMillicores,
+            'max_ram_mb' => $maxRamMb,
+            'max_storage_mb' => $maxStorageMb,
+            'max_ports' => $maxPorts,
+            'max_bandwidth_mbps' => $maxBandwidth,
+            'max_pids' => $maxPids,
+            'node_access_mode' => $nodeAccessMode,
         ];
 
         if ($newPassword !== '') {
@@ -202,6 +263,33 @@ class UserController extends BaseController
         }
 
         $user->update($update);
+
+        // Node access assignments
+        $nodeIds = $this->input('node_access', []);
+        if (!is_array($nodeIds)) {
+            $nodeIds = [];
+        }
+        $nodeIds = array_values(array_unique(array_map('intval', $nodeIds)));
+
+        $db = App::db();
+        $db->delete('user_node_access', 'user_id = ?', [$user->id]);
+        foreach ($nodeIds as $nodeId) {
+            if ($nodeId <= 0) {
+                continue;
+            }
+            // Ignore invalid nodes silently.
+            if (!Node::find($nodeId)) {
+                continue;
+            }
+            try {
+                $db->insert('user_node_access', [
+                    'user_id' => $user->id,
+                    'node_id' => $nodeId,
+                ]);
+            } catch (\Throwable) {
+                // ignore duplicates
+            }
+        }
 
         ActivityLog::log('admin.user.updated', 'User', $user->id, [
             'email' => $user->email,

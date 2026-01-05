@@ -1,3 +1,10 @@
+<?php
+$errors = $_SESSION['_errors'] ?? [];
+unset($_SESSION['_errors']);
+$old = $_SESSION['_old_input'] ?? [];
+unset($_SESSION['_old_input']);
+?>
+
 <h2 class="auth-title">Sign In</h2>
 
 <form action="/login" method="POST">

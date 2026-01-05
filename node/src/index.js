@@ -9,6 +9,7 @@ const { spawn, exec, execSync } = require('child_process');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const yaml = require('yaml');
 const StorageManager = require('./storage');
 const security = require('./security');
 const { createLiveLogsWs } = require('./liveLogsWs');
@@ -40,6 +41,13 @@ const config = {
     browserWsSslCert: process.env.BROWSER_WS_SSL_CERT || null,
     browserWsSslKey: process.env.BROWSER_WS_SSL_KEY || null
 };
+
+// Images to use for port bind checks (first successful start wins)
+const PORTCHECK_IMAGES = [
+    process.env.CHAP_PORTCHECK_IMAGE,
+    'ghcr.io/mjdaws0n/chap-node:latest',
+    'node:20-alpine',
+].filter(Boolean);
 
 // Initialize storage manager
 const storage = new StorageManager(config.dataDir);
@@ -310,6 +318,10 @@ function handleMessage(message) {
         case 'application:delete':
             handleApplicationDelete(message);
             break;
+
+        case 'port:check':
+            handlePortCheck(message);
+            break;
             
         case 'container:logs':
             //handleLogs(message);
@@ -338,6 +350,141 @@ function handleMessage(message) {
             
         default:
             console.warn(`[Agent] Unknown message type: ${message.type}`);
+    }
+}
+
+async function handlePortCheck(message) {
+    const payload = message.payload || {};
+    const requestId = payload.request_id || payload.requestId;
+    const port = parseInt(payload.port, 10);
+
+    if (!requestId || !Number.isInteger(port) || port < 1 || port > 65535) {
+        send('port:check:response', {
+            payload: { request_id: requestId || '', port: payload.port || null, free: false, error: 'Invalid request' }
+        });
+        return;
+    }
+
+    let free = false;
+    let lastError = null;
+
+    for (const image of PORTCHECK_IMAGES) {
+        try {
+            // This tests OS-level port availability by asking Docker to bind the host port.
+            // If the port is already in use (by any process), Docker will fail to start.
+            await execCommand(`docker run --rm -p ${port}:1 ${image} node -e "process.exit(0)"`, { timeout: 15000 });
+            free = true;
+            lastError = null;
+            break;
+        } catch (e) {
+            lastError = e;
+            const msg = String(e && e.message ? e.message : e);
+            // Try next image if this one isn't available.
+            if (msg.includes('Unable to find image') || msg.includes('pull access denied') || msg.includes('not found')) {
+                continue;
+            }
+            // Any other error likely means the port is not available.
+            break;
+        }
+    }
+
+    send('port:check:response', {
+        payload: {
+            request_id: requestId,
+            port,
+            free,
+            error: free ? null : (lastError ? String(lastError.message || lastError) : null),
+        }
+    });
+}
+
+function enforceComposePortsAreAllocated(composeContent, allocatedPorts) {
+    if (!composeContent || typeof composeContent !== 'string') {
+        return;
+    }
+
+    let compose;
+    try {
+        compose = yaml.parse(composeContent);
+    } catch (e) {
+        throw new Error(`Invalid docker-compose.yml (cannot validate ports): ${e.message}`);
+    }
+
+    const services = compose && compose.services ? compose.services : null;
+    if (!services || typeof services !== 'object') {
+        return;
+    }
+
+    const allocatedSet = new Set((allocatedPorts || []).map(p => parseInt(p, 10)).filter(p => Number.isInteger(p)));
+    const usedHostPorts = new Set();
+
+    const parsePortString = (s) => {
+        // Supported:
+        //  - "8080:80"
+        //  - "127.0.0.1:8080:80"
+        //  - "8080:80/tcp"
+        // Disallow:
+        //  - "80" (random host port)
+        const raw = String(s).trim();
+        const parts = raw.split(':');
+        if (parts.length === 1) {
+            return { published: null, target: parts[0] };
+        }
+
+        const right = parts[parts.length - 1];
+        const host = parts[parts.length - 2];
+        const hostPort = parseInt(String(host).split('/')[0], 10);
+        const targetPort = parseInt(String(right).split('/')[0], 10);
+
+        return {
+            published: Number.isInteger(hostPort) ? hostPort : null,
+            target: Number.isInteger(targetPort) ? targetPort : null,
+        };
+    };
+
+    for (const [serviceName, service] of Object.entries(services)) {
+        if (!service || typeof service !== 'object') continue;
+
+        const ports = service.ports;
+        if (!ports) continue;
+
+        if (!Array.isArray(ports)) {
+            throw new Error(`Service "${serviceName}" has invalid ports format`);
+        }
+
+        for (const entry of ports) {
+            let published = null;
+
+            if (typeof entry === 'string') {
+                const parsed = parsePortString(entry);
+                published = parsed.published;
+                if (!published) {
+                    throw new Error(`Service "${serviceName}" uses a port mapping without an explicit host port (random host ports are not allowed)`);
+                }
+            } else if (entry && typeof entry === 'object') {
+                // Compose v3 long syntax: { target, published, protocol, mode }
+                if (entry.published !== undefined && entry.published !== null) {
+                    published = parseInt(entry.published, 10);
+                }
+
+                if (!Number.isInteger(published)) {
+                    throw new Error(`Service "${serviceName}" uses a port mapping without an explicit published host port`);
+                }
+            } else {
+                throw new Error(`Service "${serviceName}" has invalid ports entry`);
+            }
+
+            if (allocatedSet.size === 0) {
+                throw new Error(`Service "${serviceName}" publishes host port ${published}, but this application has no allocated ports`);
+            }
+            if (!allocatedSet.has(published)) {
+                throw new Error(`Service "${serviceName}" publishes host port ${published}, which is not allocated to this application`);
+            }
+            if (usedHostPorts.has(published)) {
+                throw new Error(`Host port ${published} is published more than once in docker-compose.yml`);
+            }
+            usedHostPorts.add(published);
+        }
     }
 }
 
@@ -710,6 +857,20 @@ async function deployCompose(deploymentId, appConfig) {
             }
         }
     }
+
+    // Runtime enforcement: compose may only publish allocated host ports.
+    const allocatedPorts = appConfig.allocated_ports || appConfig.allocatedPorts || [];
+    try {
+        enforceComposePortsAreAllocated(
+            fs.readFileSync(path.join(composeDir, 'docker-compose.yml'), 'utf8'),
+            Array.isArray(allocatedPorts) ? allocatedPorts.map(p => parseInt(p, 10)).filter(p => Number.isInteger(p)) : []
+        );
+    } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        console.error(`[Agent] ❌ Port enforcement failed: ${msg}`);
+        sendLog(deploymentId, `❌ Port enforcement failed: ${msg}`, 'error');
+        throw err;
+    }
     
     // Write .env file with sanitized environment variables
     console.log(`[Agent] 🔐 Writing environment variables (${Object.keys(safeEnvVars).length} vars)`);
@@ -809,10 +970,21 @@ async function runContainer(deploymentId, applicationId, imageName, appConfig) {
     // Build docker run command with security args
     let cmd = `docker run ${secureArgs.join(' ')}`;
     
-    // Security: Sanitize and add ports
+    // Security + runtime enforcement: Sanitize and add ports (host ports must be pre-allocated)
+    const allocatedPorts = appConfig.allocated_ports || appConfig.allocatedPorts || [];
+    const allowedHostPorts = Array.isArray(allocatedPorts)
+        ? allocatedPorts.map(p => parseInt(p, 10)).filter(p => Number.isInteger(p))
+        : [];
+
     const ports = appConfig.ports || (appConfig.port ? [{ containerPort: appConfig.port }] : []);
     const safePorts = security.sanitizePorts(ports);
     for (const port of safePorts) {
+        if (!port.hostPort) {
+            throw new Error('Port publishing requires an allocated host port (dynamic/random ports are not allowed)');
+        }
+        if (allowedHostPorts.length > 0 && !allowedHostPorts.includes(port.hostPort)) {
+            throw new Error(`Host port ${port.hostPort} is not allocated to this application`);
+        }
         if (port.hostPort) {
             cmd += ` -p ${port.hostPort}:${port.containerPort}`;
         } else {
@@ -941,8 +1113,20 @@ async function stopContainer(containerName) {
 async function handleApplicationDelete(message) {
     const payload = message.payload || {};
     const applicationUuid = payload.application_uuid || payload.applicationId;
+    const taskId = payload.task_id || payload.taskId;
     
     console.log(`[Agent] 🗑️  Deleting application: ${applicationUuid}`);
+
+    // Acknowledge receipt so the server won't keep retrying this delete task.
+    if (taskId) {
+        send('task:ack', {
+            payload: {
+                task_id: taskId,
+                status: 'received',
+                application_uuid: applicationUuid,
+            }
+        });
+    }
     
     try {
         // Stop and remove regular container
@@ -995,7 +1179,8 @@ async function handleApplicationDelete(message) {
         console.log(`[Agent] ✅ Application deleted: ${applicationUuid}`);
         send('application:deleted', { 
             payload: {
-                application_uuid: applicationUuid
+                application_uuid: applicationUuid,
+                task_id: taskId,
             }
         });
     } catch (err) {
@@ -1003,6 +1188,7 @@ async function handleApplicationDelete(message) {
         send('application:delete:failed', { 
             payload: {
                 application_uuid: applicationUuid,
+                task_id: taskId,
                 error: err.message
             }
         });

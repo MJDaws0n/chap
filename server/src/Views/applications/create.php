@@ -35,6 +35,7 @@ $initialEnv = old('environment_variables', '');
 
     <form method="POST" action="/environments/<?= $environment->uuid ?>/applications" id="create-app-form" class="flex flex-col gap-6">
         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+        <input type="hidden" name="port_reservation_uuid" id="port_reservation_uuid" value="<?= e(old('port_reservation_uuid')) ?>">
 
         <!-- Basic Info -->
         <div class="card card-glass">
@@ -78,6 +79,19 @@ $initialEnv = old('environment_variables', '');
                         <textarea name="description" id="description" rows="2" class="textarea" placeholder="Optional description"><?= e(old('description')) ?></textarea>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Ports -->
+        <div class="card card-glass">
+            <div class="card-header flex items-center justify-between gap-4 flex-wrap">
+                <h2 class="card-title">Ports</h2>
+                <button type="button" class="btn btn-secondary btn-sm" id="add-port-btn">New Port</button>
+            </div>
+            <div class="card-body">
+                <div id="ports-list" class="flex flex-col gap-2"></div>
+                <div id="ports-empty" class="text-muted text-sm">No ports allocated.</div>
+                <p class="form-hint mt-md">Use <code>{port[0]}</code>, <code>{port[1]}</code>, … in environment variables.</p>
             </div>
         </div>
 
@@ -151,6 +165,10 @@ $initialEnv = old('environment_variables', '');
             </div>
             <div class="card-body">
                 <input type="hidden" name="environment_variables" id="env-serialized" value="">
+
+                <?php if (!empty($_SESSION['_errors']['environment_variables'])): ?>
+                    <p class="form-error mb-3"><?= e($_SESSION['_errors']['environment_variables']) ?></p>
+                <?php endif; ?>
 
                 <div id="env-rows" class="flex flex-col gap-3">
                     <!-- Rows rendered by JS -->
@@ -270,14 +288,17 @@ $initialEnv = old('environment_variables', '');
         nodes: <?= $nodesJson ?>,
         defaultNode: '<?= $defaultNode ?>',
         initialEnvB64: '<?= base64_encode($initialEnv) ?>',
-        repoEnvUrl: '/environments/<?= $environment->uuid ?>/applications/repo-env'
+        repoEnvUrl: '/environments/<?= $environment->uuid ?>/applications/repo-env',
+        envUuid: '<?= $environment->uuid ?>'
     };
 
     // State
     const state = {
         selectedNode: config.defaultNode,
         nodeSearch: '',
-        envRows: []
+        envRows: [],
+        reservationUuid: '',
+        ports: []
     };
 
     // DOM Elements
@@ -286,9 +307,11 @@ $initialEnv = old('environment_variables', '');
     function init() {
         cacheElements();
         bindEvents();
+        ensureReservationUuid();
         renderNodeList();
         parseInitialEnv();
         renderEnvRows();
+        renderPorts();
     }
 
     function cacheElements() {
@@ -308,6 +331,11 @@ $initialEnv = old('environment_variables', '');
         elements.repoEnvError = document.getElementById('repo-env-error');
         elements.gitRepository = document.getElementById('git_repository');
         elements.gitBranch = document.getElementById('git_branch');
+
+        elements.reservationUuid = document.getElementById('port_reservation_uuid');
+        elements.portsList = document.getElementById('ports-list');
+        elements.portsEmpty = document.getElementById('ports-empty');
+        elements.addPortBtn = document.getElementById('add-port-btn');
     }
 
     function bindEvents() {
@@ -324,6 +352,8 @@ $initialEnv = old('environment_variables', '');
 
         elements.bulkEditBtn.addEventListener('click', openBulkEditor);
         elements.pullEnvBtn.addEventListener('click', pullFromRepo);
+
+        elements.addPortBtn.addEventListener('click', allocateReservedPort);
 
         // Update serialized on form submit
         document.getElementById('create-app-form').addEventListener('submit', updateEnvSerialized);
@@ -357,6 +387,7 @@ $initialEnv = old('environment_variables', '');
     }
 
     function selectNode(uuid) {
+        const prevNode = state.selectedNode;
         state.selectedNode = uuid;
         elements.nodeUuid.value = uuid;
         const node = config.nodes.find(n => n.uuid === uuid);
@@ -364,7 +395,89 @@ $initialEnv = old('environment_variables', '');
         if (window.Chap && window.Chap.dropdown) {
             window.Chap.dropdown.close(elements.nodeDropdownMenu);
         }
+
+        if (prevNode && prevNode !== uuid && state.ports.length > 0) {
+            releaseReservation(prevNode);
+            state.ports = [];
+            renderPorts();
+        }
         renderNodeList();
+    }
+
+    function ensureReservationUuid() {
+        const existing = (elements.reservationUuid.value || '').trim();
+        if (existing) {
+            state.reservationUuid = existing;
+            return existing;
+        }
+
+        const generated = (window.crypto && typeof window.crypto.randomUUID === 'function')
+            ? window.crypto.randomUUID()
+            : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+
+        elements.reservationUuid.value = generated;
+        state.reservationUuid = generated;
+        return generated;
+    }
+
+    function reserveUrl(nodeUuid) {
+        return `/environments/${encodeURIComponent(config.envUuid)}/nodes/${encodeURIComponent(nodeUuid)}/ports/reserve`;
+    }
+
+    function releaseUrl(nodeUuid) {
+        return `/environments/${encodeURIComponent(config.envUuid)}/nodes/${encodeURIComponent(nodeUuid)}/ports/release`;
+    }
+
+    function renderPorts() {
+        const ports = state.ports || [];
+        if (!ports.length) {
+            elements.portsEmpty.classList.remove('hidden');
+            elements.portsList.innerHTML = '';
+            return;
+        }
+
+        elements.portsEmpty.classList.add('hidden');
+        elements.portsList.innerHTML = ports.map((p, idx) => `
+            <div class="flex items-center justify-between gap-3 p-2 rounded-md border border-primary">
+                <div class="min-w-0">
+                    <div class="font-medium">${escapeHtml(String(p))}</div>
+                    <div class="text-xs text-tertiary">Use {port[${idx}]}</div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    async function allocateReservedPort() {
+        if (!state.selectedNode) {
+            if (window.Toast) window.Toast.error('Select a node first');
+            return;
+        }
+
+        const reservationUuid = ensureReservationUuid();
+        try {
+            const res = await window.Chap.api(reserveUrl(state.selectedNode), 'POST', {
+                reservation_uuid: reservationUuid
+            });
+            state.ports = res.ports || [];
+            renderPorts();
+        } catch (e) {
+            if (window.Toast) window.Toast.error(e.message || 'Failed to allocate port');
+        }
+    }
+
+    async function releaseReservation(nodeUuid) {
+        const reservationUuid = ensureReservationUuid();
+        try {
+            await window.Chap.api(releaseUrl(nodeUuid), 'POST', {
+                reservation_uuid: reservationUuid
+            });
+        } catch (e) {
+            // best-effort
+        }
     }
 
     // Environment Variables

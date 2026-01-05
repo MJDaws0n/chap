@@ -5,6 +5,7 @@ namespace Chap\Controllers\Admin;
 use Chap\Controllers\BaseController;
 use Chap\Models\Setting;
 use Chap\Models\ActivityLog;
+use Chap\Services\Mailer;
 
 class SettingsController extends BaseController
 {
@@ -87,6 +88,50 @@ class SettingsController extends BaseController
         ActivityLog::log('admin.settings.email.updated');
 
         flash('success', 'Email settings updated');
+        $this->redirect('/admin/settings/email');
+    }
+
+    public function sendTestEmail(): void
+    {
+        if (!verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/admin/settings/email');
+        }
+
+        $to = (string)($this->user?->email ?? '');
+        if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
+            flash('error', 'Your account does not have a valid email address to send a test email to.');
+            $this->redirect('/admin/settings/email');
+        }
+
+        if (!Mailer::isConfigured()) {
+            flash('error', 'Email is not configured. Please save SMTP settings first.');
+            $this->redirect('/admin/settings/email');
+        }
+
+        $fromName = (string)Setting::get('mail.from_name', 'Chap');
+        $host = (string)Setting::get('mail.host', '');
+        $port = (string)Setting::get('mail.port', '');
+        $encryption = (string)Setting::get('mail.encryption', 'tls');
+
+        $subject = 'Chap test email';
+        $html = '<p>This is a test email from Chap.</p>'
+            . '<p><strong>From:</strong> ' . htmlspecialchars($fromName, ENT_QUOTES) . '</p>'
+            . '<p><strong>SMTP:</strong> ' . htmlspecialchars($host, ENT_QUOTES) . ':' . htmlspecialchars($port, ENT_QUOTES)
+            . ' (' . htmlspecialchars($encryption, ENT_QUOTES) . ')</p>'
+            . '<p><strong>Sent to:</strong> ' . htmlspecialchars($to, ENT_QUOTES) . '</p>'
+            . '<p><em>If you received this, your SMTP settings are working.</em></p>';
+        $text = "This is a test email from Chap.\n\nFrom: {$fromName}\nSMTP: {$host}:{$port} ({$encryption})\nSent to: {$to}\n\nIf you received this, your SMTP settings are working.";
+
+        try {
+            Mailer::send($to, $subject, $html, $text);
+            ActivityLog::log('admin.settings.email.test_sent');
+            flash('success', 'Test email sent to ' . $to);
+        } catch (\Throwable $e) {
+            error_log('Test email failed: ' . $e->getMessage());
+            flash('error', 'Failed to send test email. Please check your SMTP settings and server logs.');
+        }
+
         $this->redirect('/admin/settings/email');
     }
 }

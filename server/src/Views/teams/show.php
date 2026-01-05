@@ -3,7 +3,7 @@
  * Team Show View
  */
 
-$canManage = !empty($isOwner) || !empty($isAdmin);
+$canManage = !empty($isOwner) || !empty($isAdmin) || !empty($adminViewAll);
 ?>
 
 <div class="flex flex-col gap-6">

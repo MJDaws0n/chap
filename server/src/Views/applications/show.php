@@ -27,6 +27,8 @@ if (!empty($envArr)) {
 
 $incomingWebhooks = $incomingWebhooks ?? [];
 $incomingWebhookReveals = $incomingWebhookReveals ?? [];
+$allocatedPorts = $allocatedPorts ?? [];
+$allocatedPorts = array_values(array_map('intval', is_array($allocatedPorts) ? $allocatedPorts : []));
 ?>
 
 <div class="flex flex-col gap-6">
@@ -311,6 +313,20 @@ $incomingWebhookReveals = $incomingWebhookReveals ?? [];
                 </div>
             </div>
 
+            <!-- Ports -->
+            <div class="card">
+                <div class="card-header flex items-center justify-between gap-4 flex-wrap">
+                    <h2 class="card-title">Ports</h2>
+                    <button type="button" class="btn btn-secondary btn-sm" id="add-port-btn">New Port</button>
+                </div>
+                <div class="card-body">
+                    <div id="ports-error" class="text-sm text-red mb-3 hidden"></div>
+                    <div id="ports-list" class="flex flex-col gap-2"></div>
+                    <div id="ports-empty" class="text-muted text-sm hidden">No ports allocated.</div>
+                    <p class="text-xs text-tertiary mt-3">Ports are system-managed. Use <code>{port[0]}</code>, <code>{port[1]}</code>, … in environment variables (zero-based).</p>
+                </div>
+            </div>
+
             <!-- Environment Variables -->
             <div class="card">
                 <div class="card-header flex items-center justify-between gap-4 flex-wrap">
@@ -321,6 +337,7 @@ $incomingWebhookReveals = $incomingWebhookReveals ?? [];
                     </div>
                 </div>
                 <div class="card-body">
+                    <p class="text-xs text-tertiary mb-3">Dynamic vars: use <code>{port[0]}</code>, <code>{port[1]}</code>, … to reference allocated ports (zero-based). Saving will fail if an index doesn’t exist.</p>
                     <form method="POST" action="/applications/<?= $application->uuid ?>" id="env-form">
                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                         <input type="hidden" name="_method" value="PUT">
@@ -422,6 +439,142 @@ document.querySelectorAll('[data-delete-incoming-webhook]').forEach(form => {
         }
     });
 });
+</script>
+
+<script>
+(function() {
+    'use strict';
+
+    const config = {
+        applicationUuid: '<?= e($application->uuid) ?>',
+        initialPorts: <?= json_encode($allocatedPorts, JSON_UNESCAPED_SLASHES) ?>,
+    };
+
+    const els = {
+        addBtn: document.getElementById('add-port-btn'),
+        list: document.getElementById('ports-list'),
+        empty: document.getElementById('ports-empty'),
+        error: document.getElementById('ports-error'),
+    };
+
+    if (!els.addBtn || !els.list || !els.empty || !els.error) return;
+
+    const state = {
+        ports: Array.isArray(config.initialPorts) ? config.initialPorts.slice() : [],
+        busy: false,
+    };
+
+    function setError(message) {
+        if (!message) {
+            els.error.textContent = '';
+            els.error.classList.add('hidden');
+            return;
+        }
+        els.error.textContent = String(message);
+        els.error.classList.remove('hidden');
+    }
+
+    function render() {
+        const ports = state.ports || [];
+        if (ports.length === 0) {
+            els.empty.classList.remove('hidden');
+            els.list.innerHTML = '';
+            return;
+        }
+
+        els.empty.classList.add('hidden');
+        els.list.innerHTML = ports.map((p, idx) => `
+            <div class="flex items-center justify-between gap-3 p-2 bg-tertiary border border-primary rounded-md">
+                <div class="min-w-0">
+                    <div class="font-medium text-primary">${escapeHtml(String(p))}</div>
+                    <div class="text-xs text-tertiary">Use {port[${idx}]}</div>
+                </div>
+                <button type="button" class="btn btn-ghost btn-sm" data-copy="${escapeAttr(String(p))}">Copy</button>
+            </div>
+        `).join('');
+
+        els.list.querySelectorAll('[data-copy]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const val = btn.getAttribute('data-copy') || '';
+                try {
+                    await navigator.clipboard.writeText(val);
+                    if (window.Toast && typeof window.Toast.success === 'function') {
+                        window.Toast.success('Copied');
+                    }
+                } catch {
+                    // ignore
+                }
+            });
+        });
+    }
+
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function escapeAttr(str) {
+        return escapeHtml(str);
+    }
+
+    async function allocatePort() {
+        if (state.busy) return;
+        state.busy = true;
+        setError('');
+        els.addBtn.disabled = true;
+        els.addBtn.setAttribute('aria-disabled', 'true');
+
+        try {
+            const url = `/applications/${encodeURIComponent(config.applicationUuid)}/ports`;
+
+            let data;
+            if (window.Chap && typeof window.Chap.api === 'function') {
+                data = await window.Chap.api(url, 'POST', {});
+            } else {
+                const csrf = document.querySelector('input[name="_csrf_token"]')?.value || '';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+                    },
+                    body: JSON.stringify({ _csrf_token: csrf }),
+                });
+
+                data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    throw new Error((data && (data.error || data.message)) ? (data.error || data.message) : 'Failed to allocate port');
+                }
+            }
+
+            if (Array.isArray(data?.ports)) {
+                state.ports = data.ports.map((x) => parseInt(x, 10)).filter((x) => Number.isInteger(x));
+            } else if (Number.isInteger(parseInt(data?.port, 10))) {
+                const p = parseInt(data.port, 10);
+                state.ports = Array.from(new Set([...(state.ports || []), p])).sort((a, b) => a - b);
+            }
+            render();
+        } catch (e) {
+            const msg = e && e.message ? e.message : String(e);
+            setError(msg);
+        } finally {
+            state.busy = false;
+            els.addBtn.disabled = false;
+            els.addBtn.removeAttribute('aria-disabled');
+        }
+    }
+
+    els.addBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        allocatePort();
+    });
+    render();
+})();
 </script>
 
 <script>

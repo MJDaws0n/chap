@@ -172,10 +172,15 @@ class ApplicationController extends BaseApiController
             return;
         }
 
-        $deployment = DeploymentService::create($application, null, [
-            'triggered_by' => $this->user ? 'user' : 'api',
-            'triggered_by_name' => $this->user?->displayName(),
-        ]);
+        try {
+            $deployment = DeploymentService::create($application, null, [
+                'triggered_by' => $this->user ? 'user' : 'api',
+                'triggered_by_name' => $this->user?->displayName(),
+            ]);
+        } catch (\Throwable $e) {
+            $this->error($e->getMessage(), 422);
+            return;
+        }
 
         $this->success(['deployment' => $deployment->toArray()], 201);
     }

@@ -107,14 +107,7 @@ class ProfileController extends BaseController
             return;
         }
 
-        // Delete all user's personal teams and associated data
-        $personalTeam = $this->user->personalTeam();
-        if ($personalTeam) {
-            // TODO: Delete all team resources (projects, apps, etc.)
-            $personalTeam->delete();
-        }
-
-        // Delete user
+        // Delete user (also deletes their personal team)
         $this->user->delete();
 
         // Clear session

@@ -2,6 +2,8 @@
 
 namespace Chap\WebSocket;
 
+use Chap\App;
+
 /**
  * WebSocket Server Singleton Helper
  * Allows other services to send messages to connected nodes
@@ -25,8 +27,20 @@ class Server
     public static function sendToNode(int $nodeId, array $data): bool
     {
         if (!self::$handler) {
-            error_log("[WebSocket\\Server] No handler set, cannot send to node {$nodeId}");
-            return false;
+            // We're likely in the HTTP process, while the WebSocket daemon runs in a separate process.
+            // Enqueue the message so the daemon can pick it up and deliver it.
+            try {
+                $db = App::db();
+                $type = (string)($data['type'] ?? 'task');
+                $db->query(
+                    "INSERT INTO deployment_tasks (node_id, task_data, created_at, task_type) VALUES (?, ?, NOW(), ?)",
+                    [$nodeId, json_encode($data), $type]
+                );
+                return true;
+            } catch (\Throwable $e) {
+                error_log("[WebSocket\\Server] No handler set and failed to enqueue message for node {$nodeId}: " . $e->getMessage());
+                return false;
+            }
         }
 
         error_log("[WebSocket\\Server] Forwarding message to handler for node {$nodeId}");

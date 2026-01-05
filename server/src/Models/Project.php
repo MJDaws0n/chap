@@ -10,11 +10,25 @@ use Chap\App;
 class Project extends BaseModel
 {
     protected static string $table = 'projects';
-    protected static array $fillable = ['team_id', 'name', 'description'];
+    protected static array $fillable = [
+        'team_id', 'name', 'description',
+        'cpu_millicores_limit', 'ram_mb_limit', 'storage_mb_limit',
+        'port_limit', 'bandwidth_mbps_limit', 'pids_limit',
+        'allowed_node_ids'
+    ];
 
     public int $team_id;
     public string $name = '';
     public ?string $description = null;
+
+    // Resource limits (configured)
+    public int $cpu_millicores_limit = -1;
+    public int $ram_mb_limit = -1;
+    public int $storage_mb_limit = -1;
+    public int $port_limit = -1;
+    public int $bandwidth_mbps_limit = -1;
+    public int $pids_limit = -1;
+    public ?string $allowed_node_ids = null;
 
     /**
      * Get team

@@ -3,6 +3,22 @@
  * Node Show View
  * Updated to use new design system
  */
+$errors = $_SESSION['_errors'] ?? [];
+$old = $_SESSION['_old_input'] ?? [];
+$oldPortRanges = $old['port_ranges'] ?? null;
+if ($oldPortRanges === null) {
+    $oldPortRanges = [];
+    foreach (($portRanges ?? []) as $r) {
+        $s = (int)($r['start_port'] ?? 0);
+        $e = (int)($r['end_port'] ?? 0);
+        if ($s > 0 && $e > 0) {
+            $oldPortRanges[] = ($s === $e) ? (string)$s : ($s . '-' . $e);
+        }
+    }
+}
+if (!is_array($oldPortRanges)) $oldPortRanges = [$oldPortRanges];
+if (empty($oldPortRanges)) $oldPortRanges = [''];
+
 $statusBadge = [
     'online' => 'badge-success',
     'offline' => 'badge-danger',
@@ -16,7 +32,7 @@ $statusBadge = [
         <div class="page-header-top">
             <div>
                 <nav class="breadcrumb">
-                    <span class="breadcrumb-item"><a href="/nodes">Nodes</a></span>
+                    <span class="breadcrumb-item"><a href="/admin/nodes">Nodes</a></span>
                     <span class="breadcrumb-separator">/</span>
                     <span class="breadcrumb-current"><?= e($node->name) ?></span>
                 </nav>
@@ -40,7 +56,7 @@ $statusBadge = [
 
             <div class="page-header-actions">
                 <span class="badge <?= $statusBadge ?>"><?= ucfirst($node->status ?? 'pending') ?></span>
-                <form action="/nodes/<?= e($node->uuid) ?>" method="POST" class="inline-block" id="delete-node-form">
+                <form action="/admin/nodes/<?= e($node->uuid) ?>" method="POST" class="inline-block" id="delete-node-form">
                     <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                     <input type="hidden" name="_method" value="DELETE">
                     <button type="button" class="btn btn-danger-ghost" id="delete-node-btn">Delete Node</button>
@@ -86,7 +102,7 @@ $statusBadge = [
 
             <!-- Edit Node Form -->
             <div class="card-footer">
-                <form method="POST" action="/nodes/<?= e($node->uuid) ?>">
+                <form method="POST" action="/admin/nodes/<?= e($node->uuid) ?>">
                     <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                     <input type="hidden" name="_method" value="PUT">
                     
@@ -113,6 +129,28 @@ $statusBadge = [
                                 placeholder="wss://node.example.com:6002"
                                 value="<?= e($node->logs_websocket_url ?? '') ?>"
                             >
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Port Ranges</label>
+                            <div id="port-ranges" class="flex flex-col gap-2">
+                                <?php foreach ($oldPortRanges as $v): ?>
+                                    <input
+                                        type="text"
+                                        name="port_ranges[]"
+                                        class="input"
+                                        placeholder="3000-3999 or 25565"
+                                        value="<?= e((string)$v) ?>"
+                                    >
+                                <?php endforeach; ?>
+                            </div>
+                            <div class="mt-2">
+                                <button type="button" class="btn btn-ghost btn-sm" id="add-port-range">+ Add range</button>
+                            </div>
+                            <p class="text-xs text-tertiary mt-2">Only these ports can be auto-allocated on this node. Use a single port (e.g. 25565) or range (e.g. 3000–3999).</p>
+                            <?php if (!empty($errors['port_ranges'])): ?>
+                                <p class="text-sm text-red mt-2"><?= e($errors['port_ranges']) ?></p>
+                            <?php endif; ?>
                         </div>
 
                         <div class="flex items-center justify-start">
@@ -182,4 +220,20 @@ document.getElementById('delete-node-btn').addEventListener('click', function() 
             }
         });
 });
+
+(function() {
+    const rangesEl = document.getElementById('port-ranges');
+    const addRangeBtn = document.getElementById('add-port-range');
+    if (!rangesEl || !addRangeBtn) return;
+
+    addRangeBtn.addEventListener('click', function() {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.name = 'port_ranges[]';
+        input.className = 'input';
+        input.placeholder = '3000-3999 or 25565';
+        rangesEl.appendChild(input);
+        input.focus();
+    });
+})();
 </script>

@@ -85,6 +85,20 @@ if (!empty($backParams)) {
                             <label class="text-sm text-secondary" for="fe-language">Language</label>
                             <select class="select select-sm" id="fe-language" aria-label="Language">
                                 <option value="">Auto</option>
+                                <option value="text/x-sh">Bash / Shell</option>
+                                <option value="text/css">CSS</option>
+                                <option value="text/x-dockerfile">Dockerfile</option>
+                                <option value="text/html">HTML</option>
+                                <option value="text/javascript">JavaScript</option>
+                                <option value="application/typescript">TypeScript</option>
+                                <option value="application/json">JSON</option>
+                                <option value="text/x-markdown">Markdown</option>
+                                <option value="text/x-nginx-conf">Nginx</option>
+                                <option value="application/x-httpd-php">PHP</option>
+                                <option value="text/x-python">Python</option>
+                                <option value="text/x-sql">SQL</option>
+                                <option value="text/x-toml">TOML</option>
+                                <option value="text/x-yaml">YAML</option>
                             </select>
                         </div>
                     </div>
@@ -119,6 +133,7 @@ if (!empty($backParams)) {
         </div>
 
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/mode/loadmode.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/meta.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
@@ -131,8 +146,6 @@ if (!empty($backParams)) {
                 border: 1px solid var(--border-secondary);
                 border-radius: var(--radius-md);
                 height: min(70vh, 720px);
-                background: var(--bg-secondary);
-                color: var(--text-primary);
                 max-width: 100%;
             }
             .CodeMirror-scroll {
@@ -143,28 +156,38 @@ if (!empty($backParams)) {
                 overflow-wrap: anywhere;
             }
             #file-editor .card-body { overflow: hidden; }
-            .CodeMirror-gutters {
-                background: var(--bg-secondary);
-                border-right: 1px solid var(--border-primary);
-            }
-            .CodeMirror-linenumber { color: var(--text-tertiary); }
-            .CodeMirror-cursor { border-left: 1px solid var(--text-primary); }
-            .CodeMirror-selected { background: var(--accent-blue-subtle) !important; }
-            .CodeMirror-activeline-background { background: var(--bg-tertiary); }
 
-            /* Token colors using existing theme accents */
-            .cm-keyword { color: var(--accent-purple); }
-            .cm-atom, .cm-number { color: var(--accent-orange); }
-            .cm-def, .cm-property { color: var(--accent-blue); }
-            .cm-string { color: var(--accent-green); }
-            .cm-comment { color: var(--text-tertiary); }
-            .cm-variable, .cm-variable-2, .cm-variable-3 { color: var(--text-primary); }
-            .cm-operator { color: var(--text-secondary); }
-            .cm-meta, .cm-qualifier { color: var(--accent-gray); }
-            .cm-tag { color: var(--accent-red); }
-            .cm-attribute { color: var(--accent-orange); }
-            .cm-builtin { color: var(--accent-teal); }
-            .cm-error { color: var(--accent-red); }
+            /* Light mode: keep token colors aligned to design tokens.
+               Dark mode: use CodeMirror's built-in theme (material-darker). */
+            :root:not([data-theme]),
+            :root[data-theme="light"] {
+                #file-editor .CodeMirror {
+                    background: var(--bg-secondary);
+                    color: var(--text-primary);
+                }
+                #file-editor .CodeMirror-gutters {
+                    background: var(--bg-secondary);
+                    border-right: 1px solid var(--border-primary);
+                }
+                #file-editor .CodeMirror-linenumber { color: var(--text-tertiary); }
+                #file-editor .CodeMirror-cursor { border-left: 1px solid var(--text-primary); }
+                #file-editor .CodeMirror-selected { background: var(--accent-blue-subtle) !important; }
+                #file-editor .CodeMirror-activeline-background { background: var(--bg-tertiary); }
+
+                /* Token colors using existing theme accents */
+                #file-editor .cm-keyword { color: var(--accent-purple); }
+                #file-editor .cm-atom, #file-editor .cm-number { color: var(--accent-orange); }
+                #file-editor .cm-def, #file-editor .cm-property { color: var(--accent-blue); }
+                #file-editor .cm-string { color: var(--accent-green); }
+                #file-editor .cm-comment { color: var(--text-tertiary); }
+                #file-editor .cm-variable, #file-editor .cm-variable-2, #file-editor .cm-variable-3 { color: var(--text-primary); }
+                #file-editor .cm-operator { color: var(--text-secondary); }
+                #file-editor .cm-meta, #file-editor .cm-qualifier { color: var(--accent-gray); }
+                #file-editor .cm-tag { color: var(--accent-red); }
+                #file-editor .cm-attribute { color: var(--accent-orange); }
+                #file-editor .cm-builtin { color: var(--accent-teal); }
+                #file-editor .cm-error { color: var(--accent-red); }
+            }
 
             #file-editor .icon { width: 18px; height: 18px; }
         </style>

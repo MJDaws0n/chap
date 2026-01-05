@@ -581,6 +581,29 @@ class DeploymentService
                 [$nodeId]
             );
 
+            // Ensure every task has a stable task_id inside task_data so the node can ack it and stop retries.
+            // (Older rows may not include payload.task_id.)
+            foreach ($tasks as $t) {
+                $decoded = json_decode($t['task_data'] ?? '', true);
+                if (!is_array($decoded)) {
+                    continue;
+                }
+                if (!isset($decoded['payload']) || !is_array($decoded['payload'])) {
+                    $decoded['payload'] = [];
+                }
+                if (empty($decoded['payload']['task_id'])) {
+                    $decoded['payload']['task_id'] = (string)($t['id'] ?? '');
+                    try {
+                        $db->query(
+                            "UPDATE deployment_tasks SET task_data = ?, updated_at = NOW() WHERE id = ?",
+                            [json_encode($decoded), $t['id']]
+                        );
+                    } catch (\Throwable $e) {
+                        // Best-effort backfill; ignore.
+                    }
+                }
+            }
+
             // Mark fetched tasks as 'sent' so they aren't deleted before node ack
             if (!empty($tasks)) {
                 $ids = array_column($tasks, 'id');
@@ -588,7 +611,14 @@ class DeploymentService
                 $db->query("UPDATE deployment_tasks SET status = 'sent', updated_at = NOW() WHERE id IN ({$placeholders})", $ids);
             }
 
-            return array_map(fn($t) => json_decode($t['task_data'], true), $tasks);
+            $decodedTasks = [];
+            foreach ($tasks as $t) {
+                $decoded = json_decode($t['task_data'] ?? '', true);
+                if ($decoded) {
+                    $decodedTasks[] = $decoded;
+                }
+            }
+            return $decodedTasks;
         } catch (\Exception $e) {
             // Table may not exist yet
             return [];
@@ -633,10 +663,25 @@ class DeploymentService
                 if (!isset($grouped[$nid])) {
                     $grouped[$nid] = [];
                 }
-                $decoded = json_decode($t['task_data'], true);
-                if ($decoded) {
-                    $grouped[$nid][] = $decoded;
+                $decoded = json_decode($t['task_data'] ?? '', true);
+                if (!is_array($decoded)) {
+                    continue;
                 }
+                if (!isset($decoded['payload']) || !is_array($decoded['payload'])) {
+                    $decoded['payload'] = [];
+                }
+                if (empty($decoded['payload']['task_id'])) {
+                    $decoded['payload']['task_id'] = (string)($t['id'] ?? '');
+                    try {
+                        $db->query(
+                            "UPDATE deployment_tasks SET task_data = ?, updated_at = NOW() WHERE id = ?",
+                            [json_encode($decoded), $t['id']]
+                        );
+                    } catch (\Throwable $e) {
+                        // Best-effort backfill; ignore.
+                    }
+                }
+                $grouped[$nid][] = $decoded;
             }
             
             return $grouped;

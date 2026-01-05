@@ -3,6 +3,7 @@
 namespace Chap\Models;
 
 use Chap\App;
+use Chap\Models\NodePortRange;
 
 /**
  * Node Model (Server/Node that runs deployments)
@@ -13,11 +14,11 @@ class Node extends BaseModel
     protected static array $fillable = [
         'team_id', 'name', 'description', 'logs_websocket_url', 'token', 'status', 
         'agent_version', 'docker_version', 'os_info', 'cpu_cores',
-        'memory_total', 'disk_total', 'last_seen_at', 'settings'
+        'memory_total', 'disk_total', 'last_seen_at', 'settings', 'port_cursor'
     ];
     protected static array $hidden = ['token'];
 
-    public int $team_id;
+    public ?int $team_id = null;
     public string $name = '';
     public ?string $description = null;
     public ?string $logs_websocket_url = null;
@@ -31,13 +32,30 @@ class Node extends BaseModel
     public ?int $disk_total = null;
     public ?string $last_seen_at = null;
     public ?string $settings = null;
+    public ?int $port_cursor = null;
+
+    /** @return array<int,array{start_port:int,end_port:int}> */
+    public function portRanges(): array
+    {
+        $ranges = NodePortRange::forNode((int)$this->id);
+        return array_map(fn($r) => ['start_port' => (int)$r->start_port, 'end_port' => (int)$r->end_port], $ranges);
+    }
 
     /**
      * Get team
      */
     public function team(): ?Team
     {
-        return Team::find($this->team_id);
+        // Nodes are treated as global (not owned). Keep this for backwards compatibility.
+        return $this->team_id ? Team::find($this->team_id) : null;
+    }
+
+    /** @return int[] */
+    public static function allIds(): array
+    {
+        $db = App::db();
+        $rows = $db->fetchAll('SELECT id FROM nodes ORDER BY id');
+        return array_values(array_map(fn($r) => (int)$r['id'], $rows));
     }
 
     /**
@@ -169,7 +187,8 @@ class Node extends BaseModel
      */
     public static function forTeam(int $teamId): array
     {
-        return self::where('team_id', $teamId);
+        // Nodes are global; team_id is ignored.
+        return self::all();
     }
 
     /**
@@ -179,10 +198,34 @@ class Node extends BaseModel
     {
         $db = App::db();
         $results = $db->fetchAll(
-            "SELECT * FROM nodes WHERE team_id = ? AND status = 'online' ORDER BY name",
-            [$teamId]
+            "SELECT * FROM nodes WHERE status = 'online' ORDER BY name"
         );
         
+        return array_map(fn($data) => self::fromArray($data), $results);
+    }
+
+    /**
+     * Get online nodes for team filtered to a set of allowed node IDs.
+     *
+     * @param int[] $allowedNodeIds
+     */
+    public static function onlineForTeamAllowed(int $teamId, array $allowedNodeIds): array
+    {
+        $allowedNodeIds = array_values(array_unique(array_map('intval', $allowedNodeIds)));
+        $allowedNodeIds = array_values(array_filter($allowedNodeIds, fn($v) => $v > 0));
+        if (empty($allowedNodeIds)) {
+            return [];
+        }
+
+        $db = App::db();
+        $placeholders = implode(',', array_fill(0, count($allowedNodeIds), '?'));
+        $params = $allowedNodeIds;
+
+        $results = $db->fetchAll(
+            "SELECT * FROM nodes WHERE status = 'online' AND id IN ({$placeholders}) ORDER BY name",
+            $params
+        );
+
         return array_map(fn($data) => self::fromArray($data), $results);
     }
 }

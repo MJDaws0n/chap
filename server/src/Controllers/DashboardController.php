@@ -23,7 +23,7 @@ class DashboardController extends BaseController
 
         // Get stats
         $projects = admin_view_all() ? Project::all() : Project::forTeam($team->id);
-        $nodes = admin_view_all() ? Node::all() : Node::forTeam($team->id);
+        $nodes = Node::all();
         $onlineNodes = array_filter($nodes, fn($n) => $n->isOnline());
 
         // Count applications and deployments

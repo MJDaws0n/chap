@@ -2,22 +2,45 @@
     'use strict';
 
     const FALLBACK_LANGUAGES = [
-        { label: 'Bash', mode: 'shell', mime: 'text/x-sh' },
+        { label: 'Bash / Shell', mode: 'shell', mime: 'text/x-sh' },
+        { label: 'C', mode: 'clike', mime: 'text/x-csrc' },
+        { label: 'C++', mode: 'clike', mime: 'text/x-c++src' },
+        { label: 'C#', mode: 'clike', mime: 'text/x-csharp' },
         { label: 'CSS', mode: 'css', mime: 'text/css' },
+        { label: 'Diff', mode: 'diff', mime: 'text/x-diff' },
         { label: 'Dockerfile', mode: 'dockerfile', mime: 'text/x-dockerfile' },
+        { label: 'Go', mode: 'go', mime: 'text/x-go' },
+        { label: 'GraphQL', mode: 'graphql', mime: 'application/graphql' },
         { label: 'HTML', mode: 'htmlmixed', mime: 'text/html' },
+        { label: 'INI / Properties', mode: 'properties', mime: 'text/x-properties' },
+        { label: 'Java', mode: 'clike', mime: 'text/x-java' },
         { label: 'JavaScript', mode: 'javascript', mime: 'text/javascript' },
         { label: 'JSON', mode: 'javascript', mime: 'application/json' },
+        { label: 'Kotlin', mode: 'clike', mime: 'text/x-kotlin' },
+        { label: 'Lua', mode: 'lua', mime: 'text/x-lua' },
+        { label: 'Makefile', mode: 'cmake', mime: 'text/x-cmake' },
         { label: 'Markdown', mode: 'markdown', mime: 'text/x-markdown' },
         { label: 'Nginx', mode: 'nginx', mime: 'text/x-nginx-conf' },
         { label: 'PHP', mode: 'php', mime: 'application/x-httpd-php' },
         { label: 'Python', mode: 'python', mime: 'text/x-python' },
+        { label: 'Ruby', mode: 'ruby', mime: 'text/x-ruby' },
+        { label: 'Rust', mode: 'rust', mime: 'text/x-rustsrc' },
         { label: 'SQL', mode: 'sql', mime: 'text/x-sql' },
+        { label: 'Swift', mode: 'swift', mime: 'text/x-swift' },
         { label: 'TOML', mode: 'toml', mime: 'text/x-toml' },
+        { label: 'TypeScript', mode: 'javascript', mime: 'application/typescript' },
+        { label: 'XML', mode: 'xml', mime: 'application/xml' },
         { label: 'YAML', mode: 'yaml', mime: 'text/x-yaml' },
     ];
 
-    const FALLBACK_MODE_MAP = new Map(FALLBACK_LANGUAGES.map((l) => [l.mode, l]));
+    const FALLBACK_VALUE_MAP = new Map(
+        FALLBACK_LANGUAGES.flatMap((l) => {
+            const keys = [];
+            if (l.mode) keys.push([l.mode, l]);
+            if (l.mime) keys.push([l.mime, l]);
+            return keys;
+        })
+    );
 
     function qs(sel, root) { return (root || document).querySelector(sel); }
 
@@ -57,6 +80,20 @@
         let cm = null;
         let currentPath = initialPath || '';
         let selectedMode = ''; // '' = auto
+
+        if (languageEl) {
+            // Populate ASAP so the dropdown isn't stuck on only “Auto”
+            // if the websocket/auth flow is slow or fails.
+            populateLanguagePickerWhenReady();
+        }
+
+        function applyEditorTheme() {
+            if (!cm) return;
+            const effectiveTheme = document.documentElement.getAttribute('data-theme');
+            const isDark = effectiveTheme === 'dark';
+            cm.setOption('theme', isDark ? 'material-darker' : 'default');
+            cm.refresh();
+        }
 
         function setStatus(kind, text) {
             statusEl.textContent = text;
@@ -110,7 +147,7 @@
             if (!v) return null;
 
             // If CodeMirror meta isn't available for some reason, use a small built-in mapping.
-            const fallback = FALLBACK_MODE_MAP.get(v);
+            const fallback = FALLBACK_VALUE_MAP.get(v);
             if ((!window.CodeMirror || !Array.isArray(window.CodeMirror.modeInfo)) && fallback) return fallback;
             if (!window.CodeMirror || !Array.isArray(window.CodeMirror.modeInfo)) return null;
 
@@ -131,13 +168,13 @@
             if (window.CodeMirror && Array.isArray(window.CodeMirror.modeInfo) && window.CodeMirror.modeInfo.length) {
                 // A-Z by human name
                 const modes = window.CodeMirror.modeInfo
-                    .filter((m) => m && m.name && m.mode)
+                    .filter((m) => m && m.name && (m.mode || m.mime))
                     .slice()
                     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
                 for (const m of modes) {
                     const opt = document.createElement('option');
-                    opt.value = m.mode;
+                    opt.value = m.mime || m.mode;
                     opt.textContent = m.name;
                     languageEl.appendChild(opt);
                 }
@@ -147,7 +184,7 @@
             // Fallback (keeps the picker useful even if meta.min.js failed to load).
             for (const entry of FALLBACK_LANGUAGES) {
                 const opt = document.createElement('option');
-                opt.value = entry.mode;
+                opt.value = entry.mime || entry.mode;
                 opt.textContent = entry.label;
                 languageEl.appendChild(opt);
             }
@@ -155,6 +192,9 @@
 
         function populateLanguagePickerWhenReady() {
             if (!languageEl) return;
+
+            // Populate immediately with whatever we have (fallback list if meta isn't ready yet).
+            populateLanguagePicker();
 
             const maxAttempts = 30;
             let attempt = 0;
@@ -218,6 +258,9 @@
                     lineWrapping: true,
                     viewportMargin: Infinity,
                 });
+
+                applyEditorTheme();
+                document.addEventListener('themechange', () => applyEditorTheme());
             }
 
             if (cm) {

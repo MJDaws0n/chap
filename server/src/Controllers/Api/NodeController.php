@@ -15,7 +15,7 @@ class NodeController extends BaseApiController
     public function index(): void
     {
         $team = $this->currentTeam();
-        $nodes = Node::forTeam($team->id);
+        $nodes = Node::all();
 
         $this->success([
             'nodes' => array_map(fn($n) => $n->toArray(), $nodes),
@@ -27,7 +27,7 @@ class NodeController extends BaseApiController
      */
     public function store(): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $data = $this->all();
 
         if (empty($data['name'])) {
@@ -37,7 +37,7 @@ class NodeController extends BaseApiController
 
         $node = Node::create([
             'uuid' => uuid(),
-            'team_id' => $team->id,
+            'team_id' => null,
             'name' => $data['name'],
             'description' => $data['description'] ?? null,
             'token' => generate_token(32),
@@ -52,10 +52,10 @@ class NodeController extends BaseApiController
      */
     public function show(string $id): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $node = Node::findByUuid($id);
 
-        if (!$node || $node->team_id !== $team->id) {
+        if (!$node) {
             $this->notFound('Node not found');
             return;
         }
@@ -68,10 +68,10 @@ class NodeController extends BaseApiController
      */
     public function update(string $id): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $node = Node::findByUuid($id);
 
-        if (!$node || $node->team_id !== $team->id) {
+        if (!$node) {
             $this->notFound('Node not found');
             return;
         }
@@ -91,10 +91,10 @@ class NodeController extends BaseApiController
      */
     public function destroy(string $id): void
     {
-        $team = $this->currentTeam();
+        $this->currentTeam();
         $node = Node::findByUuid($id);
 
-        if (!$node || $node->team_id !== $team->id) {
+        if (!$node) {
             $this->notFound('Node not found');
             return;
         }

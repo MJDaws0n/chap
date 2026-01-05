@@ -10,11 +10,25 @@ use Chap\App;
 class Team extends BaseModel
 {
     protected static string $table = 'teams';
-    protected static array $fillable = ['name', 'description', 'personal_team'];
+    protected static array $fillable = [
+        'name', 'description', 'personal_team',
+        'cpu_millicores_limit', 'ram_mb_limit', 'storage_mb_limit',
+        'port_limit', 'bandwidth_mbps_limit', 'pids_limit',
+        'allowed_node_ids'
+    ];
 
     public string $name = '';
     public ?string $description = null;
     public bool $personal_team = false;
+
+    // Resource limits (configured)
+    public int $cpu_millicores_limit = -1;
+    public int $ram_mb_limit = -1;
+    public int $storage_mb_limit = -1;
+    public int $port_limit = -1;
+    public int $bandwidth_mbps_limit = -1;
+    public int $pids_limit = -1;
+    public ?string $allowed_node_ids = null;
 
     // Role from join (when fetched through user)
     public ?string $role = null;

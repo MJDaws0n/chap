@@ -91,6 +91,10 @@ class NodeHandler implements MessageComponentInterface {
                 $this->handleContainerLogsResponse($from, $data);
                 break;
 
+            case 'port:check:response':
+                $this->handlePortCheckResponse($from, $data);
+                break;
+
             // Session validation for browser WebSocket connections
             case 'session:validate':
                 $this->handleSessionValidate($from, $data);
@@ -99,11 +103,6 @@ class NodeHandler implements MessageComponentInterface {
             // Node agent metrics reporting
             case 'node:metrics':
                 $this->handleNodeMetrics($from, $data);
-                break;
-
-            // Node agent system info reporting
-            case 'node:system_info':
-                // Already handled above, but ensure no error
                 break;
 
             // Node agent container logs
@@ -128,9 +127,54 @@ class NodeHandler implements MessageComponentInterface {
                 // Accept container stop/restart result from agent, no-op for now
                 break;
 
+            // Node agent application deletion result
+            case 'application:deleted':
+            case 'application:delete:failed':
+                // Accept delete result messages from agent. The reliable stop-retry signal
+                // is task:ack (sent by the agent when it receives the delete task).
+                $payload = $data['payload'] ?? [];
+                $applicationUuid = $payload['application_uuid'] ?? '';
+                $taskId = $payload['task_id'] ?? '';
+                if ($data['type'] === 'application:deleted') {
+                    echo "Application deleted on node: {$applicationUuid} task_id={$taskId}\n";
+                } else {
+                    $error = $payload['error'] ?? 'Unknown error';
+                    echo "Application delete failed on node: {$applicationUuid} task_id={$taskId} error={$error}\n";
+                }
+                break;
+
             default:
                 $this->sendError($from, 'Unknown message type: ' . $data['type']);
         }
+    }
+
+    protected function handlePortCheckResponse(ConnectionInterface $conn, array $data): void
+    {
+        $payload = $data['payload'] ?? [];
+        $requestId = (string)($payload['request_id'] ?? '');
+        $port = $payload['port'] ?? null;
+        $free = $payload['free'] ?? null;
+
+        if ($requestId === '' || $port === null || $free === null) {
+            return;
+        }
+
+        $nodeId = $conn->nodeId ?? null;
+        if (!$nodeId) {
+            return;
+        }
+
+        $node = Node::find((int)$nodeId);
+        if (!$node) {
+            return;
+        }
+
+        $cacheFile = "/tmp/port_check_{$node->uuid}_{$requestId}.json";
+        file_put_contents($cacheFile, json_encode([
+            'port' => (int)$port,
+            'free' => (bool)$free,
+            'timestamp' => time(),
+        ]));
     }
 
     /**

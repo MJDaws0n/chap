@@ -69,10 +69,20 @@ class DeploymentController extends BaseController
         $triggeredByName = $this->user?->displayName();
 
         // Create deployment
-        $deployment = DeploymentService::create($application, $commitSha, [
-            'triggered_by' => $this->user ? 'user' : 'manual',
-            'triggered_by_name' => $triggeredByName,
-        ]);
+        try {
+            $deployment = DeploymentService::create($application, $commitSha, [
+                'triggered_by' => $this->user ? 'user' : 'manual',
+                'triggered_by_name' => $triggeredByName,
+            ]);
+        } catch (\Throwable $e) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => $e->getMessage()], 422);
+            } else {
+                flash('error', $e->getMessage());
+                $this->redirect('/applications/' . $appId);
+            }
+            return;
+        }
 
         if ($this->isApiRequest()) {
             $this->json(['deployment' => $deployment->toArray()], 201);

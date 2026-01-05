@@ -90,7 +90,7 @@
 
                         <div class="min-w-0 flex-1">
                             <p class="font-medium text-primary truncate">
-                                <code class="code-inline"><?= e($actionText) ?></code>
+                                <?= e($actionText) ?>
                                 <?php if (!empty($row['subject_type'])): ?>
                                     <span class="text-secondary font-normal"> on </span>
                                     <span class="text-blue font-normal"><?= e((string)$row['subject_type']) ?></span>

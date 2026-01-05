@@ -10,7 +10,7 @@
         <div>
             <nav class="breadcrumb">
                 <span class="breadcrumb-item">
-                    <a href="/nodes">Nodes</a>
+                    <a href="/admin/nodes">Nodes</a>
                 </span>
                 <span class="breadcrumb-separator">/</span>
                 <span class="breadcrumb-current">Add Node</span>
@@ -21,9 +21,15 @@
     </div>
 
     <div class="form-container">
-        <form action="/nodes" method="POST" class="card card-glass" id="node-form">
+        <form action="/admin/nodes" method="POST" class="card card-glass" id="node-form">
             <div class="card-body">
                 <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+
+                <?php
+                $oldPortRanges = $old['port_ranges'] ?? [''];
+                if (!is_array($oldPortRanges)) $oldPortRanges = [$oldPortRanges];
+                if (empty($oldPortRanges)) $oldPortRanges = [''];
+                ?>
 
                 <div class="form-group">
                     <label for="name" class="form-label">Node Name <span class="text-danger">*</span></label>
@@ -67,8 +73,30 @@
                     <p class="form-hint">Direct WebSocket URL for live logs (browsers connect here). Leave blank to use polling.</p>
                 </div>
 
+                <div class="form-group">
+                    <label class="form-label">Port Ranges <span class="text-danger">*</span></label>
+                    <div id="port-ranges" class="flex flex-col gap-2">
+                        <?php foreach ($oldPortRanges as $i => $v): ?>
+                            <input
+                                type="text"
+                                name="port_ranges[]"
+                                class="input"
+                                placeholder="3000-3999 or 25565"
+                                value="<?= htmlspecialchars((string)$v) ?>"
+                            >
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="mt-2">
+                        <button type="button" class="btn btn-ghost btn-sm" id="add-port-range">+ Add range</button>
+                    </div>
+                    <p class="form-hint">Only these ports can be auto-allocated on this node. Use a single port (e.g. 25565) or range (e.g. 3000–3999).</p>
+                    <?php if (!empty($errors['port_ranges'])): ?>
+                        <p class="form-error"><?= htmlspecialchars($errors['port_ranges']) ?></p>
+                    <?php endif; ?>
+                </div>
+
                 <div class="form-actions">
-                    <a href="/nodes" class="btn btn-ghost">Cancel</a>
+                    <a href="/admin/nodes" class="btn btn-ghost">Cancel</a>
                     <button type="submit" class="btn btn-primary">Add Node</button>
                 </div>
             </div>
@@ -146,6 +174,8 @@
 <script>
 (function() {
     const nameInput = document.getElementById('name');
+    const rangesEl = document.getElementById('port-ranges');
+    const addRangeBtn = document.getElementById('add-port-range');
     
     nameInput.addEventListener('input', function(e) {
         const caret = nameInput.selectionStart;
@@ -170,6 +200,16 @@
     document.getElementById('node-form').addEventListener('submit', function(e) {
         // Remove trailing dashes before submit
         nameInput.value = nameInput.value.replace(/-+$/, '');
+    });
+
+    addRangeBtn.addEventListener('click', function() {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.name = 'port_ranges[]';
+        input.className = 'input';
+        input.placeholder = '3000-3999 or 25565';
+        rangesEl.appendChild(input);
+        input.focus();
     });
 })();
 </script>
