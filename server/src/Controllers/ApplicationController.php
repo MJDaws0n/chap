@@ -515,9 +515,7 @@ class ApplicationController extends BaseController
             'description' => $data['description'] ?? null,
             'git_repository' => $data['git_repository'] ?? null,
             'git_branch' => $data['git_branch'] ?? 'main',
-            'build_pack' => $data['build_pack'] ?? 'dockerfile',
-            'dockerfile_path' => $data['dockerfile_path'] ?? 'Dockerfile',
-            'build_context' => $data['build_context'] ?? '.',
+            'build_pack' => 'docker-compose',
             'port' => !empty($data['port']) ? (int)$data['port'] : null,
             'domains' => $data['domains'] ?? null,
             'environment_variables' => !empty($envVars) ? json_encode($envVars) : null,
@@ -738,9 +736,7 @@ class ApplicationController extends BaseController
             'description' => $data['description'] ?? $application->description,
             'git_repository' => $data['git_repository'] ?? $application->git_repository,
             'git_branch' => $data['git_branch'] ?? $application->git_branch,
-            'build_pack' => $data['build_pack'] ?? $application->build_pack,
-            'dockerfile_path' => $data['dockerfile_path'] ?? $application->dockerfile_path,
-            'build_context' => $data['build_context'] ?? $application->build_context,
+            'build_pack' => 'docker-compose',
             'port' => isset($data['port']) && $data['port'] !== '' ? (int)$data['port'] : $application->port,
             'domains' => $data['domains'] ?? $application->domains,
             'environment_variables' => !empty($envVars) ? json_encode($envVars) : null,
@@ -1096,7 +1092,7 @@ class ApplicationController extends BaseController
             $container->container_id = $dep['container_id'];
             $container->name = $application->name . '-' . substr($dep['container_id'], 0, 12);
             $container->status = ($dep['status'] === 'running') ? 'running' : 'exited';
-            $container->image = $dep['image_tag'] ?? $application->docker_image ?? 'unknown';
+            $container->image = $dep['image_tag'] ?? 'unknown';
             $container->node_id = $dep['node_id'];
             $containers[] = $container;
         }

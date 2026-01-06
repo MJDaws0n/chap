@@ -31,6 +31,15 @@ class Server
             // Enqueue the message so the daemon can pick it up and deliver it.
             try {
                 $db = App::db();
+
+                // Ensure a stable task_id exists so the node can ACK and we can stop retries.
+                if (!isset($data['payload']) || !is_array($data['payload'])) {
+                    $data['payload'] = [];
+                }
+                if (empty($data['payload']['task_id'])) {
+                    $data['payload']['task_id'] = uuid();
+                }
+
                 $type = (string)($data['type'] ?? 'task');
                 $db->query(
                     "INSERT INTO deployment_tasks (node_id, task_data, created_at, task_type) VALUES (?, ?, NOW(), ?)",

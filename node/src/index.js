@@ -270,7 +270,11 @@ function send(type, data = {}) {
  * Handle incoming messages
  */
 function handleMessage(message) {
-    console.log(`[Agent] Received: ${message.type}`);
+    // Avoid log spam for high-frequency/noisy message types.
+    const noisyTypes = new Set(['heartbeat:ack', 'pong', 'container:logs', 'port:check']);
+    if (!noisyTypes.has(message.type)) {
+        console.log(`[Agent] Received: ${message.type}`);
+    }
     
     switch (message.type) {
         case 'server:auth:success':
@@ -295,25 +299,41 @@ function handleMessage(message) {
             break;
 
         case 'heartbeat:ack':
-            console.log('[Agent] Server heartbeat acknowledged');
+            // no-op
             break;
         
-        case 'app:event':
-            // Log application-related events sent by the server for debugging
-            console.log('[Agent] App event from server:', JSON.stringify(message.payload, null, 2));
+        case 'app:event': {
+            // Keep this quiet by default; set DEBUG_APP_EVENTS=1 to see full payloads.
+            const taskId = message.payload?.task_id || message.payload?.taskId;
+            if (taskId) {
+                send('task:ack', {
+                    payload: {
+                        task_id: taskId,
+                        status: 'received',
+                    }
+                });
+            }
+            if (process.env.DEBUG_APP_EVENTS === '1') {
+                console.log('[Agent] App event from server:', JSON.stringify(message.payload, null, 2));
+            } else {
+                const action = message.payload?.action || 'unknown';
+                console.log(`[Agent] App event: ${action}`);
+            }
             break;
+        }
             
         case 'task:deploy':
             handleDeploy(message);
+            break;
+
+        case 'task:cancel':
+            handleCancel(message);
             break;
             
         case 'container:stop':
             handleStop(message);
             break;
-            
-        case 'container:restart':
-            handleRestart(message);
-            break;
+			
             
         case 'application:delete':
             handleApplicationDelete(message);
@@ -324,15 +344,12 @@ function handleMessage(message) {
             break;
             
         case 'container:logs':
-            //handleLogs(message);
+            // Legacy HTTP logs polling task type (deprecated). ACK and ignore so the server won't retry.
+            handleLegacyContainerLogs(message);
             break;
             
         case 'container:exec':
             handleExec(message);
-            break;
-            
-        case 'image:pull':
-            handlePull(message);
             break;
             
             case 'ping':
@@ -353,9 +370,50 @@ function handleMessage(message) {
     }
 }
 
+function handleCancel(message) {
+    const payload = message.payload || {};
+    const taskId = payload.task_id || payload.taskId;
+    const deploymentId = payload.deployment_id || payload.deploymentId;
+
+    // ACK so the server stops retrying.
+    if (taskId) {
+        send('task:ack', {
+            payload: {
+                task_id: taskId,
+                status: 'received',
+                deployment_id: deploymentId,
+            }
+        });
+    }
+
+    // Best-effort: deployments are not currently cancellable mid-flight in the agent.
+    // Intentionally no-op.
+}
+
+function handleLegacyContainerLogs(message) {
+    const payload = message.payload || {};
+    const taskId = payload.task_id || payload.taskId;
+    const applicationUuid = payload.application_uuid || payload.applicationId;
+
+    // ACK so the server stops retrying.
+    if (taskId) {
+        send('task:ack', {
+            payload: {
+                task_id: taskId,
+                status: 'received',
+                application_uuid: applicationUuid,
+            }
+        });
+    }
+
+    // Logs are now served via the browser<->node websocket only.
+    // Do not fetch/poll container logs over this channel.
+}
+
 async function handlePortCheck(message) {
     const payload = message.payload || {};
     const requestId = payload.request_id || payload.requestId;
+    const taskId = payload.task_id || payload.taskId;
     const port = parseInt(payload.port, 10);
 
     if (!requestId || !Number.isInteger(port) || port < 1 || port > 65535) {
@@ -363,6 +421,17 @@ async function handlePortCheck(message) {
             payload: { request_id: requestId || '', port: payload.port || null, free: false, error: 'Invalid request' }
         });
         return;
+    }
+
+    // ACK receipt so the server won't retry the request.
+    if (taskId) {
+        send('task:ack', {
+            payload: {
+                task_id: taskId,
+                status: 'received',
+                request_id: requestId,
+            }
+        });
     }
 
     let free = false;
@@ -391,6 +460,7 @@ async function handlePortCheck(message) {
     send('port:check:response', {
         payload: {
             request_id: requestId,
+            task_id: taskId || undefined,
             port,
             free,
             error: free ? null : (lastError ? String(lastError.message || lastError) : null),
@@ -520,62 +590,15 @@ async function handleDeploy(message) {
         // Send starting status
         sendLog(deploymentId, '🚀 Deployment started', 'info');
         console.log(`[Agent] ✓ Deployment acknowledged and queued`);
-        
-        let imageName = '';
-        
-        // DEBUG: Log the entire appConfig to see what we're receiving
-        console.log(`[Agent] 🔍 DEBUG appConfig:`, JSON.stringify(appConfig, null, 2));
-        
-        // Determine build type from application config
-        const buildType = appConfig.build_pack || appConfig.type || 'docker';
-        console.log(`[Agent] 📦 Build type: ${buildType}`);
-        console.log(`[Agent] 🔍 DEBUG - build_pack value: "${appConfig.build_pack}"`);
-        console.log(`[Agent] 🔍 DEBUG - type value: "${appConfig.type}"`);
-        sendLog(deploymentId, `Build type: ${buildType}`, 'info');
-        
-        // Build or pull image based on type
-        if (buildType === 'compose' || buildType === 'docker-compose') {
-            await deployCompose(deploymentId, appConfig);
-            return;
-        } else if (buildType === 'git') {
-            imageName = await buildFromGit(deploymentId, appConfig);
-        } else if (buildType === 'dockerfile') {
-            imageName = await buildFromDockerfile(deploymentId, appConfig);
-        } else if (buildType === 'docker' || appConfig.docker_image) {
-            imageName = appConfig.docker_image || appConfig.dockerImage;
-            await pullImage(deploymentId, imageName);
-        } else {
-            throw new Error(`Unknown build type: ${buildType}`);
+
+        const buildPack = String(appConfig.build_pack || 'docker-compose').trim();
+        if (buildPack !== 'docker-compose' && buildPack !== 'compose') {
+            throw new Error(`Unsupported build_pack "${buildPack}" (compose-only)`);
         }
-        
-        // Deploy container
-        console.log(`[Agent] 🚀 Deploying container...`);
-        sendLog(deploymentId, '🚀 Starting container...', 'info');
-        
-        // Stop existing container if any
-        console.log(`[Agent] 🛑 Stopping existing container (if any)...`);
-        await stopContainer(`chap-${safeId(applicationId)}`);
-        
-        // Run new container
-        console.log(`[Agent] 🏃 Running new container...`);
-        const containerId = await runContainer(deploymentId, applicationId, imageName, appConfig);
-        console.log(`[Agent] ✓ Container started: ${containerId}`);
-        
-        // Send completion
-        send('task:complete', {
-            payload: {
-                deployment_id: deploymentId,
-                container_id: containerId
-            }
-        });
-        
-        console.log('\n' + '='.repeat(60));
-        console.log(`[Agent] ✅ DEPLOYMENT COMPLETED SUCCESSFULLY`);
-        console.log(`[Agent] Deployment ID: ${deploymentId}`);
-        console.log(`[Agent] Container ID: ${containerId}`);
-        console.log('='.repeat(60) + '\n');
-        sendLog(deploymentId, '✅ Deployment completed successfully!', 'info');
-        
+
+        sendLog(deploymentId, 'Build type: docker-compose', 'info');
+        await deployCompose(deploymentId, appConfig);
+        return;
     } catch (err) {
         console.error('\n' + '='.repeat(60));
         console.error(`[Agent] ❌ DEPLOYMENT FAILED`);
@@ -591,179 +614,6 @@ async function handleDeploy(message) {
             }
         });
     }
-}
-
-/**
- * Build image from Git repository (with security validation)
- */
-async function buildFromGit(deploymentId, appConfig) {
-    const applicationId = appConfig.uuid || appConfig.applicationId;
-    const repoDir = storage.getRepoDir(applicationId);
-    const buildDir = storage.getBuildDir(applicationId, deploymentId);
-    
-    // Support both snake_case (from server) and camelCase field names
-    const gitRepository = appConfig.git_repository || appConfig.gitRepository;
-    const gitBranch = appConfig.git_branch || appConfig.gitBranch || 'main';
-    const buildContext = appConfig.build_context || appConfig.baseDirectory || '';
-    const dockerfilePath = appConfig.dockerfile_path || appConfig.dockerfilePath || 'Dockerfile';
-    
-    security.auditLog('build_from_git_start', { applicationId, deploymentId, gitRepository, gitBranch });
-    
-    // Clone or update repository
-    console.log(`[Agent] 📥 Fetching repository: ${gitRepository}`);
-    console.log(`[Agent] 🌿 Branch: ${gitBranch}`);
-    sendLog(deploymentId, `📥 Fetching repository: ${gitRepository}`, 'info');
-    sendLog(deploymentId, `Branch: ${gitBranch}`, 'info');
-    
-    // Clone or update repository; if private, try each GitHub App before failing.
-    const authAttempts = appConfig.git_auth_attempts || [];
-    sendLog(deploymentId, `Git auth attempts available: ${Array.isArray(authAttempts) ? authAttempts.length : 0}`, 'info');
-    if (fs.existsSync(path.join(repoDir, '.git'))) {
-        console.log(`[Agent] 🔄 Repository exists, updating...`);
-        sendLog(deploymentId, '🔄 Repository exists, updating...', 'info');
-    } else {
-        console.log(`[Agent] 📥 Cloning repository...`);
-    }
-
-    try {
-        const res = await gitCloneOrUpdateWithAuthAttempts({
-            deploymentId,
-            repoDir,
-            repoUrl: gitRepository,
-            branch: gitBranch,
-            attempts: authAttempts,
-            sendLogFn: sendLog,
-        });
-        if (res.usedAuth) {
-            console.log(`[Agent] ✓ Repository cloned with auth (${res.label})`);
-            sendLog(deploymentId, `✓ Repository cloned with auth (${res.label})`, 'info');
-        } else {
-            console.log(`[Agent] ✓ Repository ready`);
-            sendLog(deploymentId, '✓ Repository ready', 'info');
-        }
-    } catch (err) {
-        console.error(`[Agent] ❌ Git fetch/clone failed: ${err.message}`);
-        sendLog(deploymentId, `❌ Git fetch/clone failed: ${err.message}`, 'error');
-        throw err;
-    }
-    
-    // Copy to build directory
-    sendLog(deploymentId, 'Preparing build context...', 'info');
-    await execCommand(`cp -r ${repoDir}/. ${buildDir}/`);
-    
-    // Change to base directory if specified
-    const contextDir = path.join(buildDir, buildContext);
-    
-    // Security: Validate Dockerfile if it exists
-    const dockerfileFull = path.join(contextDir, dockerfilePath);
-    if (fs.existsSync(dockerfileFull)) {
-        const dockerfileContent = fs.readFileSync(dockerfileFull, 'utf8');
-        const validation = security.validateDockerfile(dockerfileContent);
-        if (!validation.valid) {
-            console.error(`[Agent] ❌ Security: ${validation.error}`);
-            sendLog(deploymentId, `❌ Security validation failed: ${validation.error}`, 'error');
-            throw new Error(`Security: ${validation.error}`);
-        }
-        console.log(`[Agent] 🔒 Dockerfile security validated`);
-        sendLog(deploymentId, '🔒 Dockerfile security validated', 'info');
-    }
-    
-    // Run install command if specified (in sandboxed way - limited commands)
-    if (appConfig.installCommand) {
-        console.log(`[Agent] 📦 Running install command: ${appConfig.installCommand}`);
-        sendLog(deploymentId, `📦 Running install: ${appConfig.installCommand}`, 'info');
-        const installOutput = await execCommand(appConfig.installCommand, { cwd: contextDir });
-        console.log(`[Agent] ✓ Install completed`);
-        sendLog(deploymentId, '✓ Install completed', 'info');
-    }
-    
-    // Run build command if specified
-    if (appConfig.buildCommand) {
-        console.log(`[Agent] 🔨 Running build command: ${appConfig.buildCommand}`);
-        sendLog(deploymentId, `🔨 Running build: ${appConfig.buildCommand}`, 'info');
-        const buildOutput = await execCommand(appConfig.buildCommand, { cwd: contextDir });
-        console.log(`[Agent] ✓ Build completed`);
-        sendLog(deploymentId, '✓ Build completed', 'info');
-    }
-    
-    // Build Docker image with resource limits
-    const imageName = `chap-app-${safeId(applicationId)}:${deploymentId}`;
-    
-    console.log(`[Agent] 🐳 Building Docker image: ${imageName}`);
-    sendLog(deploymentId, `🐳 Building Docker image: ${imageName}`, 'info');
-    sendLog(deploymentId, `Using Dockerfile: ${dockerfilePath}`, 'info');
-    
-    // Security: Build with resource limits and no cache for untrusted code
-    const buildCmd = `docker build --memory=${security.SECURITY_CONFIG.maxMemory} --cpu-period=100000 --cpu-quota=200000 -t ${imageName} -f ${dockerfilePath} .`;
-    await execCommand(buildCmd, { cwd: contextDir });
-    console.log(`[Agent] ✓ Docker image built successfully`);
-    sendLog(deploymentId, '✓ Docker image built successfully', 'info');
-    
-    // Clean old builds but keep recent ones
-    storage.cleanOldBuilds(applicationId, 3);
-    
-    security.auditLog('build_from_git_complete', { applicationId, deploymentId, imageName });
-    
-    return imageName;
-}
-
-/**
- * Build image from Dockerfile (with security validation)
- */
-async function buildFromDockerfile(deploymentId, appConfig) {
-    const applicationId = appConfig.uuid || appConfig.applicationId;
-    const buildDir = storage.getBuildDir(applicationId, deploymentId);
-    const imageName = `chap-app-${safeId(applicationId)}:${deploymentId}`;
-    
-    security.auditLog('build_from_dockerfile_start', { applicationId, deploymentId });
-    
-    if (appConfig.dockerfile) {
-        // Security: Validate Dockerfile content
-        const validation = security.validateDockerfile(appConfig.dockerfile);
-        if (!validation.valid) {
-            console.error(`[Agent] ❌ Security: ${validation.error}`);
-            sendLog(deploymentId, `❌ Security validation failed: ${validation.error}`, 'error');
-            throw new Error(`Security: ${validation.error}`);
-        }
-        console.log(`[Agent] 🔒 Dockerfile security validated`);
-        sendLog(deploymentId, '🔒 Dockerfile security validated', 'info');
-        
-        fs.writeFileSync(path.join(buildDir, 'Dockerfile'), appConfig.dockerfile);
-    }
-    
-    sendLog(deploymentId, 'Building Docker image...', 'info');
-    
-    // Security: Build with resource limits
-    const buildCmd = `docker build --memory=${security.SECURITY_CONFIG.maxMemory} --cpu-period=100000 --cpu-quota=200000 -t ${imageName} .`;
-    await execCommand(buildCmd, { cwd: buildDir });
-    
-    // Clean old builds
-    storage.cleanOldBuilds(applicationId, 3);
-    
-    security.auditLog('build_from_dockerfile_complete', { applicationId, deploymentId, imageName });
-    
-    return imageName;
-}
-
-/**
- * Pull Docker image (with security validation)
- */
-async function pullImage(deploymentId, imageName) {
-    // Security: Validate image name
-    const validation = security.validateImageName(imageName);
-    if (!validation.valid) {
-        console.error(`[Agent] ❌ Security: ${validation.error}`);
-        sendLog(deploymentId, `❌ Security validation failed: ${validation.error}`, 'error');
-        throw new Error(`Security: ${validation.error}`);
-    }
-    
-    console.log(`[Agent] 📥 Pulling Docker image: ${imageName}`);
-    sendLog(deploymentId, `📥 Pulling image: ${imageName}`, 'info');
-    security.auditLog('image_pull', { imageName, deploymentId });
-    
-    await execCommand(`docker pull ${imageName}`);
-    console.log(`[Agent] ✓ Image pulled successfully`);
-    sendLog(deploymentId, '✓ Image pulled successfully', 'info');
 }
 
 /**
@@ -828,12 +678,64 @@ async function deployCompose(deploymentId, appConfig) {
     // Security: Sanitize environment variables
     const safeEnvVars = security.sanitizeEnvVars(envVars);
     
+    const injectChapLabels = (composeContent) => {
+        const raw = String(composeContent || '');
+        if (!raw.trim()) return raw;
+
+        let doc;
+        try {
+            doc = yaml.parse(raw);
+        } catch (err) {
+            throw new Error(`Invalid docker-compose YAML: ${err.message}`);
+        }
+
+        if (!doc || typeof doc !== 'object') {
+            return raw;
+        }
+
+        if (!doc.services || typeof doc.services !== 'object') {
+            return raw;
+        }
+
+        for (const [serviceName, service] of Object.entries(doc.services)) {
+            if (!service || typeof service !== 'object') continue;
+
+            const requiredLabels = {
+                'chap.managed': 'true',
+                'chap.app': String(applicationId),
+                'chap.deployment': String(deploymentId),
+            };
+
+            if (Array.isArray(service.labels)) {
+                const existing = new Set(service.labels.map((x) => String(x)));
+                for (const [k, v] of Object.entries(requiredLabels)) {
+                    const kv = `${k}=${v}`;
+                    if (!existing.has(kv)) service.labels.push(kv);
+                }
+            } else if (service.labels && typeof service.labels === 'object') {
+                for (const [k, v] of Object.entries(requiredLabels)) {
+                    service.labels[k] = v;
+                }
+            } else {
+                service.labels = { ...requiredLabels };
+            }
+
+            doc.services[serviceName] = service;
+        }
+
+        return yaml.stringify(doc);
+    };
+
     // Write docker-compose.yml if provided via config (overrides the one from repo)
     if (dockerCompose) {
         console.log(`[Agent] 📝 Writing docker-compose.yml from config`);
         // Security: Sanitize compose file to remove dangerous options
         try {
             dockerCompose = security.sanitizeComposeFile(dockerCompose);
+
+            // Ensure compose services are tagged as Chap-managed so metrics can find them.
+            dockerCompose = injectChapLabels(dockerCompose);
+
             console.log(`[Agent] 🔒 Docker Compose file sanitized for security`);
             sendLog(deploymentId, '🔒 Compose file security validated', 'info');
         } catch (err) {
@@ -848,7 +750,11 @@ async function deployCompose(deploymentId, appConfig) {
         if (fs.existsSync(existingComposePath)) {
             try {
                 const existingCompose = fs.readFileSync(existingComposePath, 'utf8');
-                const sanitizedCompose = security.sanitizeComposeFile(existingCompose);
+                let sanitizedCompose = security.sanitizeComposeFile(existingCompose);
+
+                // Ensure compose services are tagged as Chap-managed so metrics can find them.
+                sanitizedCompose = injectChapLabels(sanitizedCompose);
+
                 fs.writeFileSync(existingComposePath, sanitizedCompose);
                 console.log(`[Agent] 🔒 Existing compose file sanitized for security`);
                 sendLog(deploymentId, '🔒 Compose file security validated', 'info');
@@ -954,100 +860,6 @@ async function deployCompose(deploymentId, appConfig) {
 }
 
 /**
- * Run a container (with security hardening)
- */
-async function runContainer(deploymentId, applicationId, imageName, appConfig) {
-    const containerName = `chap-${safeId(applicationId)}`;
-    const volumeDir = storage.getVolumeDir(applicationId);
-    
-    // Security: Validate image name
-    const imageValidation = security.validateImageName(imageName);
-    if (!imageValidation.valid) {
-        throw new Error(`Security: ${imageValidation.error}`);
-    }
-    
-    // Security: Ensure isolated network exists
-    await security.ensureAppNetwork(execCommand);
-    
-    // Security: Build secure docker run arguments
-    const cpuLimit = appConfig.cpuLimit ?? appConfig.cpu_limit;
-    const memoryLimit = appConfig.memoryLimit ?? appConfig.memory_limit;
-    const secureArgs = security.buildSecureDockerArgs(applicationId, deploymentId, {
-        cpuLimit,
-        memoryLimit,
-    });
-    
-    // Build docker run command with security args
-    let cmd = `docker run ${secureArgs.join(' ')}`;
-    
-    // Security + runtime enforcement: Sanitize and add ports (host ports must be pre-allocated)
-    const allocatedPorts = appConfig.allocated_ports || appConfig.allocatedPorts || [];
-    const allowedHostPorts = Array.isArray(allocatedPorts)
-        ? allocatedPorts.map(p => parseInt(p, 10)).filter(p => Number.isInteger(p))
-        : [];
-
-    const ports = appConfig.ports || (appConfig.port ? [{ containerPort: appConfig.port }] : []);
-    const safePorts = security.sanitizePorts(ports);
-    for (const port of safePorts) {
-        if (!port.hostPort) {
-            throw new Error('Port publishing requires an allocated host port (dynamic/random ports are not allowed)');
-        }
-        if (allowedHostPorts.length > 0 && !allowedHostPorts.includes(port.hostPort)) {
-            throw new Error(`Host port ${port.hostPort} is not allocated to this application`);
-        }
-        if (port.hostPort) {
-            cmd += ` -p ${port.hostPort}:${port.containerPort}`;
-        } else {
-            cmd += ` -p ${port.containerPort}`;
-        }
-    }
-    
-    // Security: Sanitize and add environment variables
-    const envVars = appConfig.environmentVariables ?? appConfig.environment_variables;
-    const safeEnvVars = security.sanitizeEnvVars(envVars);
-    for (const [key, value] of Object.entries(safeEnvVars)) {
-        // Escape double quotes in value
-        const escapedValue = value.replace(/"/g, '\\"');
-        cmd += ` -e "${key}=${escapedValue}"`;
-    }
-    
-    // Security: Sanitize and add volumes
-    const safeVolumes = security.sanitizeVolumes(appConfig.volumes, volumeDir);
-    for (const vol of safeVolumes) {
-        // Ensure the directory exists
-        fs.mkdirSync(vol.source, { recursive: true });
-        const ro = vol.readOnly ? ':ro' : '';
-        cmd += ` -v "${vol.source}:${vol.target}${ro}"`;
-    }
-    
-    // Add persistent data volume for the app (in safe location)
-    if (appConfig.persistentStorage) {
-        const dataVolume = path.join(volumeDir, 'data');
-        fs.mkdirSync(dataVolume, { recursive: true });
-        cmd += ` -v "${dataVolume}:${appConfig.persistentStorage}"`;
-    }
-    
-    // Add image and start command
-    cmd += ` ${imageName}`;
-    if (appConfig.startCommand) {
-        // Security: Basic command sanitization
-        const safeCommand = appConfig.startCommand.replace(/[;&|`$]/g, '');
-        cmd += ` ${safeCommand}`;
-    }
-    
-    console.log(`[Agent] 🐳 Docker run command (secured):`);
-    console.log(`[Agent]   ${cmd}`);
-    security.auditLog('container_run', { applicationId, imageName, deploymentId });
-    
-    sendLog(deploymentId, `Starting container: ${containerName}`, 'info');
-    const containerId = (await execCommand(cmd)).trim();
-    console.log(`[Agent] ✓ Container ${containerName} started (secured)`);
-    sendLog(deploymentId, `✓ Container started: ${containerName}`, 'info');
-    
-    return containerId;
-}
-
-/**
  * Stop container
  */
 function sleep(ms) {
@@ -1080,43 +892,6 @@ async function isContainerRunning(containerNameOrId) {
     }
 }
 
-async function stopContainerWithTimeout(containerNameOrId, { timeoutMs = 30000, remove = false } = {}) {
-    const name = dockerSafeName(containerNameOrId);
-    if (!name) return;
-
-    const start = Date.now();
-    let running = await isContainerRunning(name);
-
-    while (running && (Date.now() - start) < timeoutMs) {
-        try {
-            // Short stop attempt; loop until overall timeout.
-            await execCommand(`docker stop -t 10 ${name}`, { timeout: 12000 });
-        } catch (err) {
-            // Keep trying until we hit the overall timeout.
-        }
-
-        await sleep(1000);
-        running = await isContainerRunning(name);
-    }
-
-    if (running) {
-        // Still running after timeout: force kill.
-        try { await execCommand(`docker kill ${name}`, { timeout: 5000 }); } catch (err) {}
-    }
-
-    if (remove) {
-        try { await execCommand(`docker rm -f ${name}`, { timeout: 5000 }); } catch (err) {}
-    }
-}
-
-async function stopContainer(containerName) {
-    try {
-        await stopContainerWithTimeout(containerName, { timeoutMs: 30000, remove: true });
-    } catch (err) {
-        // Container might not exist / docker might be unavailable
-    }
-}
-
 /**
  * Handle application deletion - remove all containers and data
  */
@@ -1139,15 +914,6 @@ async function handleApplicationDelete(message) {
     }
     
     try {
-        // Stop and remove regular container
-        const containerName = `chap-${safeId(applicationUuid)}`;
-        try {
-            await stopContainerWithTimeout(containerName, { timeoutMs: 30000, remove: true });
-            console.log(`[Agent] ✓ Removed container: ${containerName}`);
-        } catch (err) {
-            // Container might not exist
-        }
-        
         // Stop and remove docker compose services
         const composeDir = storage.getComposeDir(applicationUuid);
         if (fs.existsSync(composeDir)) {
@@ -1211,41 +977,50 @@ async function handleApplicationDelete(message) {
 async function handleStop(message) {
     const payload = message.payload || {};
     const applicationUuid = payload.application_uuid || payload.applicationId;
-    const buildPack = payload.build_pack || 'docker';
+    const taskId = payload.task_id || payload.taskId;
     
     console.log(`[Agent] 🛑 Stopping application: ${applicationUuid}`);
+
+    // Acknowledge receipt so the server won't keep retrying this stop task.
+    if (taskId) {
+        send('task:ack', {
+            payload: {
+                task_id: taskId,
+                status: 'received',
+                application_uuid: applicationUuid,
+            }
+        });
+    }
     
     try {
-        // Check if this is a compose app
         const composeDir = storage.getComposeDir(applicationUuid);
-        if ((buildPack === 'compose' || buildPack === 'docker-compose') && fs.existsSync(composeDir)) {
-            // Stop compose services
-            console.log(`[Agent] Stopping compose services...`);
-            const safeAppId = String(applicationUuid).trim();
-            try {
-                await execCommand(`docker compose -p chap-${safeAppId} stop --timeout 30`, { cwd: composeDir, timeout: 35000 });
-            } catch (err) {
-                // If stop hangs or fails, force kill.
-                try { await execCommand(`docker compose -p chap-${safeAppId} kill`, { cwd: composeDir, timeout: 15000 }); } catch (e) {}
-            }
-            console.log(`[Agent] ✓ Compose services stopped`);
-        } else {
-            // Stop regular container
-            const containerName = `chap-${safeId(applicationUuid)}`;
-            await stopContainerWithTimeout(containerName, { timeoutMs: 30000, remove: false });
-            console.log(`[Agent] ✓ Container ${containerName} stopped`);
+        if (!fs.existsSync(composeDir)) {
+            throw new Error('Compose directory not found for application');
         }
+
+        // Stop compose services
+        console.log(`[Agent] Stopping compose services...`);
+        const safeAppId = String(applicationUuid).trim();
+        try {
+            await execCommand(`docker compose -p chap-${safeAppId} stop --timeout 30`, { cwd: composeDir, timeout: 35000 });
+        } catch (err) {
+            // If stop hangs or fails, force kill.
+            try { await execCommand(`docker compose -p chap-${safeAppId} kill`, { cwd: composeDir, timeout: 15000 }); } catch (e) {}
+        }
+        console.log(`[Agent] ✓ Compose services stopped`);
         
-        send('stopped', { 
+        send('stopped', {
             payload: {
-                application_uuid: applicationUuid
+                application_uuid: applicationUuid,
+                task_id: taskId || undefined,
             }
         });
     } catch (err) {
         console.error(`[Agent] ❌ Failed to stop:`, err.message);
-        send('stopped', { 
+        send('stopped', {
             payload: {
                 application_uuid: applicationUuid,
+                task_id: taskId || undefined,
                 error: err.message
             }
         });
@@ -1258,30 +1033,38 @@ async function handleStop(message) {
 async function handleRestart(message) {
     const payload = message.payload || {};
     const applicationUuid = payload.application_uuid || payload.applicationId;
-    const buildPack = payload.build_pack || 'docker';
+    const taskId = payload.task_id || payload.taskId;
     
     console.log(`[Agent] 🔄 Restarting application: ${applicationUuid}`);
+
+    // Acknowledge receipt so the server won't keep retrying this restart task.
+    if (taskId) {
+        send('task:ack', {
+            payload: {
+                task_id: taskId,
+                status: 'received',
+                application_uuid: applicationUuid,
+            }
+        });
+    }
     
     try {
-        // Check if this is a compose app
         const composeDir = storage.getComposeDir(applicationUuid);
-        if ((buildPack === 'compose' || buildPack === 'docker-compose') && fs.existsSync(composeDir)) {
-            // Restart compose services
-            console.log(`[Agent] Restarting compose services...`);
-            const safeAppId = String(applicationUuid).trim();
-            await execCommand(`docker compose -p chap-${safeAppId} restart`, { cwd: composeDir });
-            console.log(`[Agent] ✓ Compose services restarted`);
-        } else {
-            // Restart regular container
-            const containerName = `chap-${safeId(applicationUuid)}`;
-            await execCommand(`docker restart ${containerName}`);
-            console.log(`[Agent] ✓ Container ${containerName} restarted`);
+        if (!fs.existsSync(composeDir)) {
+            throw new Error('Compose directory not found for application');
         }
+
+        // Restart compose services
+        console.log(`[Agent] Restarting compose services...`);
+        const safeAppId = String(applicationUuid).trim();
+        await execCommand(`docker compose -p chap-${safeAppId} restart`, { cwd: composeDir });
+        console.log(`[Agent] ✓ Compose services restarted`);
         
         send('restarted', { 
             payload: {
                 application_uuid: applicationUuid,
-                container_name: containerName
+                task_id: taskId || undefined,
+                container_name: null
             }
         });
     } catch (err) {
@@ -1289,6 +1072,7 @@ async function handleRestart(message) {
         send('restarted', { 
             payload: {
                 application_uuid: applicationUuid,
+                task_id: taskId || undefined,
                 error: err.message
             }
         });
@@ -1440,31 +1224,6 @@ async function handleExec(message) {
         send('execResult', { applicationId, output });
     } catch (err) {
         send('execResult', { applicationId, error: err.message });
-    }
-}
-
-/**
- * Handle pull request (with security validation)
- */
-async function handlePull(message) {
-    const { imageName } = message;
-    
-    // Security: Validate image name
-    const validation = security.validateImageName(imageName);
-    if (!validation.valid) {
-        console.warn(`[Agent] 🔒 Pull blocked: ${validation.error}`);
-        security.auditLog('pull_blocked', { imageName, reason: validation.error });
-        send('pullFailed', { imageName, error: `Security: ${validation.error}` });
-        return;
-    }
-    
-    security.auditLog('image_pull_request', { imageName });
-    
-    try {
-        await execCommand(`docker pull ${imageName}`);
-        send('pulled', { imageName });
-    } catch (err) {
-        send('pullFailed', { imageName, error: err.message });
     }
 }
 

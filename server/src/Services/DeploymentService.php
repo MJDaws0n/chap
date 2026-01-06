@@ -102,6 +102,15 @@ class DeploymentService
     private static function storeTask(int $nodeId, array $task): void
     {
         $db = App::db();
+
+        // Ensure every task has a stable task_id so nodes can ack it and stop retries.
+        // Some task producers (e.g. container:stop) historically omitted this.
+        if (!isset($task['payload']) || !is_array($task['payload'])) {
+            $task['payload'] = [];
+        }
+        if (empty($task['payload']['task_id'])) {
+            $task['payload']['task_id'] = uuid();
+        }
         
         // Create tasks table if not exists (for simplicity, using a simple queue)
         $db->query(
@@ -174,7 +183,6 @@ class DeploymentService
             'type' => 'container:stop',
             'payload' => [
                 'application_uuid' => $application->uuid,
-                'build_pack' => $application->build_pack,
             ],
         ];
 
@@ -211,7 +219,6 @@ class DeploymentService
             'type' => 'container:restart',
             'payload' => [
                 'application_uuid' => $application->uuid,
-                'build_pack' => $application->build_pack,
             ],
         ];
 
@@ -343,7 +350,7 @@ class DeploymentService
                     'application_id' => $application->id,
                     'container_id' => $dockerContainerId,
                     'name' => $containerName,
-                    'image' => $application->docker_image ?? 'unknown',
+                    'image' => 'unknown',
                     'status' => 'running',
                     'started_at' => date('Y-m-d H:i:s'),
                 ]);
@@ -362,6 +369,10 @@ class DeploymentService
     {
         try {
             $db = App::db();
+
+            // Track per-application running state based on this metrics snapshot.
+            $seenByAppId = [];
+            $runningByAppId = [];
             
             foreach ($containers as $containerData) {
                 $dockerId = $containerData['id'] ?? '';
@@ -382,6 +393,11 @@ class DeploymentService
                     "SELECT id, application_id FROM containers WHERE container_id = ?",
                     [$dockerId]
                 );
+
+                $applicationIdForThisContainer = null;
+                if ($existing && !empty($existing['application_id'])) {
+                    $applicationIdForThisContainer = (int)$existing['application_id'];
+                }
                 
                 if ($existing) {
                     // Update existing container
@@ -396,6 +412,7 @@ class DeploymentService
                     $applicationId = self::findApplicationIdFromContainerName($name);
                     
                     if ($applicationId) {
+                        $applicationIdForThisContainer = (int)$applicationId;
                         // Create new container record
                         $db->insert('containers', [
                             'uuid' => uuid(),
@@ -410,6 +427,35 @@ class DeploymentService
                         
                         echo "Discovered and tracked new container: {$name} ({$dockerId})\n";
                     }
+                }
+
+                if ($applicationIdForThisContainer) {
+                    $seenByAppId[$applicationIdForThisContainer] = true;
+                    if ($isRunning) {
+                        $runningByAppId[$applicationIdForThisContainer] = true;
+                    }
+                }
+            }
+
+            // Update application statuses based on container snapshot.
+            // Only adjust states that should reflect runtime (running/stopped).
+            $apps = $db->fetchAll("SELECT id, status FROM applications WHERE node_id = ?", [$nodeId]);
+            foreach ($apps as $appRow) {
+                $appId = (int)($appRow['id'] ?? 0);
+                if (!$appId) {
+                    continue;
+                }
+
+                $current = (string)($appRow['status'] ?? '');
+                if (in_array($current, ['deploying', 'building', 'queued', 'error'], true)) {
+                    continue;
+                }
+
+                $hasRunning = !empty($runningByAppId[$appId]);
+                $newStatus = $hasRunning ? 'running' : 'stopped';
+
+                if ($current !== $newStatus) {
+                    $db->update('applications', ['status' => $newStatus], 'id = ?', [$appId]);
                 }
             }
         } catch (\Exception $e) {
@@ -581,9 +627,26 @@ class DeploymentService
                 [$nodeId]
             );
 
+            // Legacy: container:logs tasks are deprecated (logs are browser<->node WebSocket only).
+            // Auto-ack them so they don't spam the node forever.
+            if (!empty($tasks)) {
+                $legacyIds = [];
+                foreach ($tasks as $t) {
+                    if (($t['task_type'] ?? '') === 'container:logs') {
+                        $legacyIds[] = $t['id'];
+                    }
+                }
+                if (!empty($legacyIds)) {
+                    $placeholders = implode(',', array_fill(0, count($legacyIds), '?'));
+                    $db->query("UPDATE deployment_tasks SET status = 'acknowledged', updated_at = NOW() WHERE id IN ({$placeholders})", $legacyIds);
+                    // Remove legacy rows from the list we will send.
+                    $tasks = array_values(array_filter($tasks, fn($t) => ($t['task_type'] ?? '') !== 'container:logs'));
+                }
+            }
+
             // Ensure every task has a stable task_id inside task_data so the node can ack it and stop retries.
             // (Older rows may not include payload.task_id.)
-            foreach ($tasks as $t) {
+            foreach ($tasks as &$t) {
                 $decoded = json_decode($t['task_data'] ?? '', true);
                 if (!is_array($decoded)) {
                     continue;
@@ -593,16 +656,18 @@ class DeploymentService
                 }
                 if (empty($decoded['payload']['task_id'])) {
                     $decoded['payload']['task_id'] = (string)($t['id'] ?? '');
+                    $t['task_data'] = json_encode($decoded);
                     try {
                         $db->query(
                             "UPDATE deployment_tasks SET task_data = ?, updated_at = NOW() WHERE id = ?",
-                            [json_encode($decoded), $t['id']]
+                            [$t['task_data'], $t['id']]
                         );
                     } catch (\Throwable $e) {
                         // Best-effort backfill; ignore.
                     }
                 }
             }
+            unset($t);
 
             // Mark fetched tasks as 'sent' so they aren't deleted before node ack
             if (!empty($tasks)) {
@@ -646,6 +711,22 @@ class DeploymentService
                 "SELECT * FROM deployment_tasks WHERE node_id IN ({$placeholders}) AND (status = 'pending' OR (status = 'sent' AND updated_at < (NOW() - INTERVAL 10 SECOND))) ORDER BY created_at ASC LIMIT 50",
                 $nodeIds
             );
+
+            // Legacy: container:logs tasks are deprecated (logs are browser<->node WebSocket only).
+            // Auto-ack them so they don't spam the node forever.
+            if (!empty($tasks)) {
+                $legacyIds = [];
+                foreach ($tasks as $t) {
+                    if (($t['task_type'] ?? '') === 'container:logs') {
+                        $legacyIds[] = $t['id'];
+                    }
+                }
+                if (!empty($legacyIds)) {
+                    $placeholdersLegacy = implode(',', array_fill(0, count($legacyIds), '?'));
+                    $db->query("UPDATE deployment_tasks SET status = 'acknowledged', updated_at = NOW() WHERE id IN ({$placeholdersLegacy})", $legacyIds);
+                    $tasks = array_values(array_filter($tasks, fn($t) => ($t['task_type'] ?? '') !== 'container:logs'));
+                }
+            }
 
             if (empty($tasks)) {
                 return [];

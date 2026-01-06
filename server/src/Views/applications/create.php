@@ -135,20 +135,6 @@ $initialEnv = old('environment_variables', '');
                             <option value="docker-compose" <?= old('build_pack') === 'docker-compose' ? 'selected' : '' ?>>Docker Compose</option>
                         </select>
                     </div>
-
-                    <div class="form-group">
-                        <label for="dockerfile_path" class="form-label">Dockerfile Path</label>
-                        <input type="text" name="dockerfile_path" id="dockerfile_path"
-                            value="<?= e(old('dockerfile_path', 'Dockerfile')) ?>"
-                            class="input">
-                    </div>
-
-                    <div class="form-group">
-                        <label for="build_context" class="form-label">Build Context</label>
-                        <input type="text" name="build_context" id="build_context"
-                            value="<?= e(old('build_context', '.')) ?>"
-                            class="input">
-                    </div>
                 </div>
             </div>
         </div>

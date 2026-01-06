@@ -39,7 +39,7 @@ class Application extends BaseModel
     public ?string $git_commit_sha = null;
 
     // Build configuration
-    public string $build_pack = 'dockerfile';
+    public string $build_pack = 'docker-compose';
     public string $dockerfile_path = 'Dockerfile';
     public string $docker_compose_path = 'docker-compose.yml';
     public string $build_context = '.';
@@ -230,7 +230,6 @@ class Application extends BaseModel
                         'task_id' => $taskId,
                         'application_uuid' => $this->uuid,
                         'application_id' => $this->uuid,
-                        'build_pack' => $this->build_pack,
                     ],
                 ];
                 
@@ -279,10 +278,7 @@ class Application extends BaseModel
             'name' => $this->name,
             'git_repository' => $this->git_repository,
             'git_branch' => $this->git_branch,
-            'build_pack' => $this->build_pack,
-            'dockerfile_path' => $this->dockerfile_path,
-            'docker_compose_path' => $this->docker_compose_path,
-            'build_context' => $this->build_context,
+            'build_pack' => 'docker-compose',
             'environment_variables' => $resolved['resolved'],
             'build_args' => $this->getBuildArgs(),
             'port' => $this->port,

@@ -124,7 +124,18 @@ class NodeHandler implements MessageComponentInterface {
             // Node agent stopped/restarted
             case 'stopped':
             case 'restarted':
-                // Accept container stop/restart result from agent, no-op for now
+                // Accept container stop/restart result from agent and update application status.
+                $payload = $data['payload'] ?? [];
+                $applicationUuid = (string)($payload['application_uuid'] ?? $payload['applicationId'] ?? '');
+                if (!empty($applicationUuid)) {
+                    try {
+                        $db = \Chap\App::db();
+                        $newStatus = ($data['type'] === 'restarted') ? 'running' : 'stopped';
+                        $db->query("UPDATE applications SET status = ?, updated_at = NOW() WHERE uuid = ?", [$newStatus, $applicationUuid]);
+                    } catch (\Throwable $e) {
+                        // ignore
+                    }
+                }
                 break;
 
             // Node agent application deletion result
