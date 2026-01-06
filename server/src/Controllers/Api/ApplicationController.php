@@ -17,6 +17,7 @@ class ApplicationController extends BaseApiController
     public function index(string $envId): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('applications', 'read', (int) $team->id);
         $environment = Environment::findByUuid($envId);
 
         if (!$environment || !$this->canAccessEnvironment($environment, $team)) {
@@ -37,6 +38,7 @@ class ApplicationController extends BaseApiController
     public function store(string $envId): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('applications', 'write', (int) $team->id);
         $environment = Environment::findByUuid($envId);
 
         if (!$environment || !$this->canAccessEnvironment($environment, $team)) {
@@ -72,6 +74,7 @@ class ApplicationController extends BaseApiController
     public function show(string $id): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('applications', 'read', (int) $team->id);
         $application = Application::findByUuid($id);
 
         if (!$application) {
@@ -97,6 +100,7 @@ class ApplicationController extends BaseApiController
     public function update(string $id): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('applications', 'write', (int) $team->id);
         $application = Application::findByUuid($id);
 
         if (!$application) {
@@ -130,6 +134,7 @@ class ApplicationController extends BaseApiController
     public function destroy(string $id): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('applications', 'write', (int) $team->id);
         $application = Application::findByUuid($id);
 
         if (!$application) {
@@ -154,6 +159,7 @@ class ApplicationController extends BaseApiController
     public function deploy(string $id): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('deployments', 'execute', (int) $team->id);
         $application = Application::findByUuid($id);
 
         if (!$application) {

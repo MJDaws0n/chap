@@ -36,6 +36,9 @@ class IncomingWebhookController extends BaseController
             return;
         }
 
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('applications', 'write', $teamId);
+
         $name = trim((string)($_POST['name'] ?? 'GitHub'));
         if ($name === '') {
             $name = 'GitHub';
@@ -89,6 +92,9 @@ class IncomingWebhookController extends BaseController
             return;
         }
 
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('applications', 'write', $teamId);
+
         $secret = generate_token(32);
         $webhook->update([
             'secret' => $secret,
@@ -128,6 +134,9 @@ class IncomingWebhookController extends BaseController
             $this->redirect('/projects');
             return;
         }
+
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('applications', 'write', $teamId);
 
         $webhook->delete();
 

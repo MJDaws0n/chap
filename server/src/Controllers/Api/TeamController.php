@@ -46,6 +46,9 @@ class TeamController extends BaseApiController
             'role' => 'owner',
         ]);
 
+        // Ensure built-in roles exist for this team.
+        \Chap\Auth\TeamRoleSeeder::ensureBuiltins((int) $team->id);
+
         $this->success(['team' => $team->toArray()], 201);
     }
 
@@ -76,10 +79,7 @@ class TeamController extends BaseApiController
             return;
         }
 
-        if (!$this->user->isTeamAdmin($team) && !admin_view_all()) {
-            $this->forbidden('You do not have permission to update this team');
-            return;
-        }
+        $this->requireTeamPermission('team.settings', 'write', (int) $team->id);
 
         $data = $this->all();
         

@@ -2,6 +2,8 @@
 
 namespace Chap\Controllers;
 
+use Chap\Auth\TeamPermissionService;
+
 /**
  * Settings Controller
  */
@@ -12,8 +14,15 @@ class SettingsController extends BaseController
      */
     public function index(): void
     {
+        $team = $this->currentTeam();
+        $this->requireTeamPermission('team.settings', 'read', (int) $team->id);
+
+        $userId = (int) ($this->user?->id ?? 0);
+        $canWriteSettings = admin_view_all() || TeamPermissionService::can((int) $team->id, $userId, 'team.settings', 'write');
+
         $this->view('settings/index', [
             'title' => 'Settings',
+            'canWriteSettings' => $canWriteSettings,
         ]);
     }
 
@@ -22,6 +31,9 @@ class SettingsController extends BaseController
      */
     public function update(): void
     {
+        $team = $this->currentTeam();
+        $this->requireTeamPermission('team.settings', 'write', (int) $team->id);
+
         if (!verify_csrf($this->input('_csrf_token', ''))) {
             flash('error', 'Invalid request');
             $this->redirect('/settings');

@@ -16,6 +16,7 @@ class EnvironmentController extends BaseApiController
     public function index(string $projectId): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('environments', 'read', (int) $team->id);
         $project = Project::findByUuid($projectId);
 
         if (!$project || $project->team_id !== $team->id) {
@@ -36,6 +37,7 @@ class EnvironmentController extends BaseApiController
     public function store(string $projectId): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('environments', 'write', (int) $team->id);
         $project = Project::findByUuid($projectId);
 
         if (!$project || $project->team_id !== $team->id) {
@@ -66,6 +68,7 @@ class EnvironmentController extends BaseApiController
     public function show(string $id): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('environments', 'read', (int) $team->id);
         $environment = Environment::findByUuid($id);
 
         if (!$environment) {
@@ -91,6 +94,7 @@ class EnvironmentController extends BaseApiController
     public function update(string $id): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('environments', 'write', (int) $team->id);
         $environment = Environment::findByUuid($id);
 
         if (!$environment) {
@@ -120,6 +124,7 @@ class EnvironmentController extends BaseApiController
     public function destroy(string $id): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('environments', 'write', (int) $team->id);
         $environment = Environment::findByUuid($id);
 
         if (!$environment) {

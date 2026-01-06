@@ -52,6 +52,8 @@ class DeploymentController extends BaseController
             return;
         }
 
+        $this->requireTeamPermission('deployments', 'execute', (int) $project->team_id);
+
         // Check if application can be deployed
         if ($application->status === 'deploying') {
             if ($this->isApiRequest()) {
@@ -109,6 +111,9 @@ class DeploymentController extends BaseController
             }
         }
 
+        $teamId = (int) ($deployment->application()?->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('deployments', 'read', $teamId);
+
         $application = $deployment->application();
 
         if ($this->isApiRequest()) {
@@ -139,6 +144,9 @@ class DeploymentController extends BaseController
             $this->json(['error' => 'Deployment not found'], 404);
         }
 
+        $teamId = (int) ($deployment->application()?->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('deployments', 'read', $teamId);
+
         $this->json([
             'logs' => $deployment->logsArray(),
             'status' => $deployment->status,
@@ -161,6 +169,9 @@ class DeploymentController extends BaseController
                 $this->redirect('/projects');
             }
         }
+
+        $teamId = (int) ($deployment->application()?->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('deployments', 'execute', $teamId);
 
         if (!$deployment->canBeCancelled()) {
             if ($this->isApiRequest()) {
@@ -197,6 +208,9 @@ class DeploymentController extends BaseController
                 $this->redirect('/projects');
             }
         }
+
+        $teamId = (int) ($deployment->application()?->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('deployments', 'execute', $teamId);
 
         if ($deployment->status !== 'running' && $deployment->status !== 'failed') {
             if ($this->isApiRequest()) {

@@ -15,6 +15,8 @@ class ActivityController extends BaseController
     public function index(): void
     {
         $team = $this->currentTeam();
+
+        $this->requireTeamPermission('activity', 'read', (int) $team->id);
         
         // Get page from query string
         $page = max(1, (int)($_GET['page'] ?? 1));

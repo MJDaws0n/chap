@@ -14,6 +14,9 @@ class TemplateController extends BaseApiController
      */
     public function index(): void
     {
+        $team = $this->currentTeam();
+        $this->requireTeamPermission('templates', 'read', (int) $team->id);
+
         $templates = Template::all();
 
         $this->success([
@@ -26,6 +29,9 @@ class TemplateController extends BaseApiController
      */
     public function show(string $slug): void
     {
+        $team = $this->currentTeam();
+        $this->requireTeamPermission('templates', 'read', (int) $team->id);
+
         $template = Template::findBySlug($slug);
 
         if (!$template) {

@@ -37,9 +37,11 @@
                         <p class="form-hint">New applications will be deployed to this node by default.</p>
                     </div>
 
-                    <div class="flex items-center justify-end">
-                        <button type="submit" class="btn btn-primary">Save Settings</button>
-                    </div>
+                    <?php if (!empty($canWriteSettings)): ?>
+                        <div class="flex items-center justify-end">
+                            <button type="submit" class="btn btn-primary">Save Settings</button>
+                        </div>
+                    <?php endif; ?>
                 </form>
             </div>
         </div>

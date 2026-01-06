@@ -15,6 +15,9 @@ class TemplateController extends BaseController
      */
     public function index(): void
     {
+        $team = $this->currentTeam();
+        $this->requireTeamPermission('templates', 'read', (int) $team->id);
+
         $templates = Template::where('is_active', true);
         
         $this->view('templates/index', [
@@ -29,6 +32,9 @@ class TemplateController extends BaseController
      */
     public function show(string $slug): void
     {
+        $team = $this->currentTeam();
+        $this->requireTeamPermission('templates', 'read', (int) $team->id);
+
         $templates = Template::where('slug', $slug);
         $template = $templates[0] ?? null;
         

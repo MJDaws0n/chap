@@ -46,6 +46,14 @@ Route::middleware(['auth'], function() {
     Route::post('/teams/{id}/members', 'TeamController@addMember');
     Route::put('/teams/{id}/members/{userId}', 'TeamController@updateMember');
     Route::delete('/teams/{id}/members/{userId}', 'TeamController@removeMember');
+
+    // Team roles
+    Route::get('/teams/{id}/roles', 'TeamRoleController@index');
+    Route::get('/teams/{id}/roles/create', 'TeamRoleController@create');
+    Route::post('/teams/{id}/roles', 'TeamRoleController@store');
+    Route::get('/teams/{id}/roles/{roleId}/edit', 'TeamRoleController@edit');
+    Route::put('/teams/{id}/roles/{roleId}', 'TeamRoleController@update');
+    Route::delete('/teams/{id}/roles/{roleId}', 'TeamRoleController@destroy');
     
     // Nodes (admin-only)
     Route::middleware(['admin'], function() {

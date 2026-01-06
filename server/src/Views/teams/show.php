@@ -4,6 +4,56 @@
  */
 
 $canManage = !empty($isOwner) || !empty($isAdmin) || !empty($adminViewAll);
+$canViewMembers = $canViewMembers ?? true;
+$canManageMembers = $canManageMembers ?? $canManage;
+$canViewRoles = $canViewRoles ?? false;
+$canManageRoles = $canManageRoles ?? false;
+
+$builtinBaseRoles = $builtinBaseRoles ?? [];
+$customRoles = $customRoles ?? [];
+
+$baseRoleOrder = ['admin' => 80, 'manager' => 60, 'member' => 40, 'read_only_member' => 20];
+
+function team_member_base_role_slug($member, array $baseRoleOrder): string {
+    $legacy = $member->role ?? 'member';
+    if ($legacy === 'owner') {
+        return 'owner';
+    }
+    $slugs = $member->team_role_slugs ?? [];
+    if (!is_array($slugs)) {
+        $slugs = [];
+    }
+    $best = 'member';
+    $bestLvl = 0;
+    foreach ($slugs as $s) {
+        if (!isset($baseRoleOrder[$s])) {
+            continue;
+        }
+        if ($baseRoleOrder[$s] > $bestLvl) {
+            $bestLvl = $baseRoleOrder[$s];
+            $best = $s;
+        }
+    }
+    if ($legacy === 'admin') {
+        return 'admin';
+    }
+    return $best;
+}
+
+function team_member_custom_role_ids($member, array $customRoles): array {
+    $slugs = $member->team_role_slugs ?? [];
+    if (!is_array($slugs)) {
+        $slugs = [];
+    }
+    $ids = [];
+    foreach ($customRoles as $r) {
+        $slug = (string)($r['slug'] ?? '');
+        if ($slug !== '' && in_array($slug, $slugs, true)) {
+            $ids[] = (int)($r['id'] ?? 0);
+        }
+    }
+    return $ids;
+}
 ?>
 
 <div class="flex flex-col gap-6">
@@ -39,6 +89,10 @@ $canManage = !empty($isOwner) || !empty($isAdmin) || !empty($adminViewAll);
                     <button type="submit" class="btn btn-secondary">Set Current</button>
                 </form>
 
+                <?php if (!empty($canViewRoles)): ?>
+                    <a href="/teams/<?= (int)$team->id ?>/roles" class="btn btn-ghost">Roles</a>
+                <?php endif; ?>
+
                 <?php if ($canManage): ?>
                     <a href="/teams/<?= (int)$team->id ?>/edit" class="btn btn-ghost">Edit</a>
                 <?php endif; ?>
@@ -52,7 +106,13 @@ $canManage = !empty($isOwner) || !empty($isAdmin) || !empty($adminViewAll);
         </div>
 
         <div class="card-body">
-            <?php if ($canManage): ?>
+            <?php if (empty($canViewMembers)): ?>
+                <div class="empty-state" style="padding: var(--space-6);">
+                    <p class="empty-state-title">Permission denied</p>
+                    <p class="empty-state-description">You don't have permission to view team members.</p>
+                </div>
+            <?php else: ?>
+            <?php if ($canManageMembers): ?>
                 <form action="/teams/<?= (int)$team->id ?>/members" method="POST" class="card" style="background: transparent; border: 1px solid var(--border-default);">
                     <div class="card-body">
                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
@@ -64,14 +124,42 @@ $canManage = !empty($isOwner) || !empty($isAdmin) || !empty($adminViewAll);
                             </div>
 
                             <div class="form-group">
-                                <label class="form-label" for="role">Role</label>
-                                <select class="select" id="role" name="role">
-                                    <option value="member" selected>member</option>
-                                    <option value="admin">admin</option>
+                                <label class="form-label" for="base_role">Base role</label>
+                                <select class="select" id="base_role" name="base_role">
+                                    <?php
+                                    $baseLabels = [
+                                        'admin' => 'Admin',
+                                        'manager' => 'Manager',
+                                        'member' => 'Member',
+                                        'read_only_member' => 'Read-only Member',
+                                    ];
+                                    foreach (($builtinBaseRoles ?? []) as $r) {
+                                        $slug = (string)($r['slug'] ?? '');
+                                        if (!isset($baseLabels[$slug])) {
+                                            continue;
+                                        }
+                                        $selected = ($slug === 'member') ? 'selected' : '';
+                                        echo '<option value="' . e($slug) . '" ' . $selected . '>' . e($baseLabels[$slug]) . '</option>';
+                                    }
+                                    ?>
                                 </select>
-                                <p class="form-hint">
-                                    <strong>admin</strong>: manage members + team settings. <strong>member</strong>: access team resources.
-                                </p>
+                                <p class="form-hint">Base role controls the member’s baseline access.</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Extra roles <span class="text-muted">(optional)</span></label>
+                                <?php if (empty($customRoles)): ?>
+                                    <p class="form-hint">No custom roles yet.</p>
+                                <?php else: ?>
+                                    <div class="flex flex-col gap-2">
+                                        <?php foreach ($customRoles as $r): ?>
+                                            <label class="checkbox">
+                                                <input type="checkbox" name="custom_role_ids[]" value="<?= (int)$r['id'] ?>">
+                                                <span><?= e((string)($r['name'] ?? '')) ?></span>
+                                            </label>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php endif; ?>
                             </div>
                         </div>
 
@@ -95,23 +183,64 @@ $canManage = !empty($isOwner) || !empty($isAdmin) || !empty($adminViewAll);
                         <?php
                         $memberRole = $member->role ?? 'member';
                         $isTeamOwnerRow = ($memberRole === 'owner');
+                        $baseSlug = team_member_base_role_slug($member, $baseRoleOrder);
+                        $customSelectedIds = team_member_custom_role_ids($member, $customRoles);
+                        $roleTags = [];
+                        if ($isTeamOwnerRow) {
+                            $roleTags = ['Owner'];
+                        } else {
+                            $labels = [
+                                'admin' => 'Admin',
+                                'manager' => 'Manager',
+                                'member' => 'Member',
+                                'read_only_member' => 'Read-only',
+                            ];
+                            if (isset($labels[$baseSlug])) {
+                                $roleTags[] = $labels[$baseSlug];
+                            }
+                            foreach ($customRoles as $r) {
+                                if (in_array((int)$r['id'], $customSelectedIds, true)) {
+                                    $roleTags[] = (string)($r['name'] ?? '');
+                                }
+                            }
+                        }
                         ?>
                         <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 p-3" style="border: 1px solid var(--border-muted); border-radius: var(--radius-md);">
                             <div class="min-w-0">
                                 <p class="text-sm font-semibold text-primary truncate"><?= e($member->displayName()) ?></p>
-                                <p class="text-xs text-tertiary"><?= e($member->email ?? '') ?> · role: <code class="code-inline"><?= e($memberRole) ?></code></p>
+                                <p class="text-xs text-tertiary"><?= e($member->email ?? '') ?> · roles:
+                                    <?php foreach ($roleTags as $t): ?>
+                                        <span class="badge badge-neutral" style="margin-right: var(--space-1);"><?= e($t) ?></span>
+                                    <?php endforeach; ?>
+                                </p>
                             </div>
 
-                            <?php if ($canManage && !$isTeamOwnerRow): ?>
+                            <?php if ($canManageMembers && !$isTeamOwnerRow): ?>
                                 <div class="flex flex-col gap-2 w-full md:w-auto">
                                     <form action="/teams/<?= (int)$team->id ?>/members/<?= (int)$member->id ?>" method="POST" class="flex flex-col md:flex-row gap-2">
                                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                                         <input type="hidden" name="_method" value="PUT">
 
-                                        <select class="select" name="role">
-                                            <option value="member" <?= $memberRole === 'member' ? 'selected' : '' ?>>member</option>
-                                            <option value="admin" <?= $memberRole === 'admin' ? 'selected' : '' ?>>admin</option>
+                                        <select class="select" name="base_role">
+                                            <option value="read_only_member" <?= $baseSlug === 'read_only_member' ? 'selected' : '' ?>>Read-only Member</option>
+                                            <option value="member" <?= $baseSlug === 'member' ? 'selected' : '' ?>>Member</option>
+                                            <option value="manager" <?= $baseSlug === 'manager' ? 'selected' : '' ?>>Manager</option>
+                                            <option value="admin" <?= $baseSlug === 'admin' ? 'selected' : '' ?>>Admin</option>
                                         </select>
+
+                                        <?php if (!empty($customRoles)): ?>
+                                            <details class="w-full md:w-auto" style="border: 1px solid var(--border-muted); border-radius: var(--radius-md); padding: var(--space-2);">
+                                                <summary class="text-xs text-secondary" style="cursor: pointer;">Extra roles</summary>
+                                                <div class="mt-2 flex flex-col gap-2">
+                                                    <?php foreach ($customRoles as $r): ?>
+                                                        <label class="checkbox">
+                                                            <input type="checkbox" name="custom_role_ids[]" value="<?= (int)$r['id'] ?>" <?= in_array((int)$r['id'], $customSelectedIds, true) ? 'checked' : '' ?>>
+                                                            <span><?= e((string)($r['name'] ?? '')) ?></span>
+                                                        </label>
+                                                    <?php endforeach; ?>
+                                                </div>
+                                            </details>
+                                        <?php endif; ?>
 
                                         <button type="submit" class="btn btn-secondary">Save</button>
                                     </form>
@@ -126,6 +255,7 @@ $canManage = !empty($isOwner) || !empty($isAdmin) || !empty($adminViewAll);
                         </div>
                     <?php endforeach; ?>
                 </div>
+            <?php endif; ?>
             <?php endif; ?>
         </div>
     </div>

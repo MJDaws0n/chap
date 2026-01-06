@@ -40,6 +40,8 @@ class ApplicationController extends BaseController
             $this->json(['error' => 'Environment not found'], 404);
         }
 
+        $this->requireTeamPermission('applications', 'write', (int) $project->team_id);
+
         $repoUrl = trim((string) $this->input('repo', ''));
         $branch = trim((string) $this->input('branch', 'main'));
 
@@ -129,6 +131,8 @@ class ApplicationController extends BaseController
             flash('error', 'Environment not found');
             $this->redirect('/projects');
         }
+
+        $this->requireTeamPermission('applications', 'write', (int) $project->team_id);
 
         $allowedNodeIds = $this->user ? NodeAccess::allowedNodeIds($this->user, $team, $project, $environment) : [];
         $nodes = Node::onlineForTeamAllowed((int)$project->team_id, $allowedNodeIds);
@@ -387,6 +391,8 @@ class ApplicationController extends BaseController
             }
         }
 
+        $this->requireTeamPermission('applications', 'write', (int) $project->team_id);
+
         $data = $this->all();
 
         // Parse legacy UI fields into configured hierarchy limits.
@@ -564,6 +570,9 @@ class ApplicationController extends BaseController
             }
         }
 
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('applications', 'read', $teamId);
+
         $deployments = Deployment::forApplication($application->id, 10);
         $project = $application->environment()?->project();
         $nodes = [];
@@ -616,6 +625,9 @@ class ApplicationController extends BaseController
                 $this->redirect('/projects');
             }
         }
+
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('applications', 'write', $teamId);
 
         $data = $this->all();
 
@@ -784,6 +796,9 @@ class ApplicationController extends BaseController
             }
         }
 
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('applications', 'write', $teamId);
+
         $envUuid = $application->environment()->uuid;
         $appName = $application->name;
 
@@ -816,6 +831,9 @@ class ApplicationController extends BaseController
                 $this->redirect('/projects');
             }
         }
+
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('deployments', 'execute', $teamId);
 
         if (!$application->node_id) {
             if ($this->isApiRequest()) {
@@ -881,6 +899,9 @@ class ApplicationController extends BaseController
             }
         }
 
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('applications', 'execute', $teamId);
+
         // Send stop command to node via WebSocket
         DeploymentService::stop($application);
 
@@ -911,6 +932,9 @@ class ApplicationController extends BaseController
             }
         }
 
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('applications', 'execute', $teamId);
+
         DeploymentService::restart($application);
 
         if ($this->isApiRequest()) {
@@ -938,6 +962,9 @@ class ApplicationController extends BaseController
             }
             return;
         }
+
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('logs', 'read', $teamId);
 
         // Live logs are WebSocket-only; the HTTP API is intentionally not supported.
         if ($this->isApiRequest()) {
@@ -984,6 +1011,9 @@ class ApplicationController extends BaseController
             return;
         }
 
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('files', 'read', $teamId);
+
         // File manager is WebSocket-only; the HTTP API is intentionally not supported.
         if ($this->isApiRequest()) {
             $this->json(['error' => 'File manager requires WebSocket'], 400);
@@ -1025,6 +1055,9 @@ class ApplicationController extends BaseController
             }
             return;
         }
+
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('files', 'write', $teamId);
 
         if ($this->isApiRequest()) {
             $this->json(['error' => 'File editor requires WebSocket'], 400);

@@ -21,6 +21,8 @@ class GitSourceController extends BaseController
     {
         $team = $this->currentTeam();
 
+        $this->requireTeamPermission('git_sources', 'read', (int) $team->id);
+
         $tab = trim((string) $this->input('tab', 'github-apps'));
         if (!in_array($tab, ['github-apps', 'oauth', 'deploy-keys'], true)) {
             $tab = 'github-apps';
@@ -46,6 +48,9 @@ class GitSourceController extends BaseController
      */
     public function createGithubApp(): void
     {
+        $team = $this->currentTeam();
+        $this->requireTeamPermission('git_sources', 'write', (int) $team->id);
+
         $this->view('git-sources/github-apps/create', [
             'title' => 'Add GitHub App',
         ]);
@@ -56,6 +61,9 @@ class GitSourceController extends BaseController
      */
     public function createGithubAppManifest(): void
     {
+        $team = $this->currentTeam();
+        $this->requireTeamPermission('git_sources', 'write', (int) $team->id);
+
         $baseUrl = request_base_url();
         $redirectUrl = rtrim($baseUrl, '/') . '/git-sources/github-apps/manifest/callback';
 
@@ -78,6 +86,8 @@ class GitSourceController extends BaseController
         }
 
         $team = $this->currentTeam();
+
+        $this->requireTeamPermission('git_sources', 'write', (int) $team->id);
 
         $name = trim((string)$this->input('name', ''));
         $org = trim((string)$this->input('organization', ''));
@@ -136,6 +146,8 @@ class GitSourceController extends BaseController
     public function handleGithubAppManifestCallback(): void
     {
         $team = $this->currentTeam();
+
+        $this->requireTeamPermission('git_sources', 'write', (int) $team->id);
 
         $code = trim((string)$this->input('code', ''));
         $state = trim((string)$this->input('state', ''));
@@ -218,6 +230,9 @@ class GitSourceController extends BaseController
     public function githubAppInstallations(string $id): void
     {
         $team = $this->currentTeam();
+
+        $this->requireTeamPermission('git_sources', 'write', (int) $team->id);
+
         $source = GitSource::findByUuid($id) ?? GitSource::find((int)$id);
         if (!$source || (int)$source->team_id !== (int)$team->id || $source->inferredAuthMethod() !== 'github_app') {
             flash('error', 'GitHub App not found');
@@ -265,6 +280,8 @@ class GitSourceController extends BaseController
         }
 
         $team = $this->currentTeam();
+
+        $this->requireTeamPermission('git_sources', 'write', (int) $team->id);
         $source = GitSource::findByUuid($id) ?? GitSource::find((int)$id);
         if (!$source || (int)$source->team_id !== (int)$team->id || $source->inferredAuthMethod() !== 'github_app') {
             flash('error', 'GitHub App not found');
@@ -296,6 +313,8 @@ class GitSourceController extends BaseController
         }
 
         $team = $this->currentTeam();
+
+        $this->requireTeamPermission('git_sources', 'write', (int) $team->id);
 
         $name = trim((string)$this->input('name', ''));
         $appId = trim((string)$this->input('github_app_id', ''));
@@ -361,6 +380,8 @@ class GitSourceController extends BaseController
         }
 
         $team = $this->currentTeam();
+
+        $this->requireTeamPermission('git_sources', 'write', (int) $team->id);
         $source = GitSource::findByUuid($id) ?? GitSource::find((int)$id);
         if (!$source || (int)$source->team_id !== (int)$team->id || $source->inferredAuthMethod() !== 'github_app') {
             flash('error', 'GitHub App not found');
@@ -379,6 +400,9 @@ class GitSourceController extends BaseController
      */
     public function create(): void
     {
+        $team = $this->currentTeam();
+        $this->requireTeamPermission('git_sources', 'write', (int) $team->id);
+
         $this->view('git-sources/create', [
             'title' => 'Connect Git Source',
             'providers' => [
@@ -413,6 +437,8 @@ class GitSourceController extends BaseController
         }
 
         $team = $this->currentTeam();
+
+        $this->requireTeamPermission('git_sources', 'write', (int) $team->id);
         $data = $this->all();
 
         $provider = $data['provider'] ?? '';
@@ -445,6 +471,9 @@ class GitSourceController extends BaseController
      */
     public function show(string $id): void
     {
+        $team = $this->currentTeam();
+        $this->requireTeamPermission('git_sources', 'read', (int) $team->id);
+
         // TODO: Fetch git source by UUID
         // TODO: List available repositories
         
@@ -463,6 +492,9 @@ class GitSourceController extends BaseController
             $this->redirect('/git-sources');
             return;
         }
+
+        $team = $this->currentTeam();
+        $this->requireTeamPermission('git_sources', 'write', (int) $team->id);
 
         // TODO: Fetch and delete git source
 

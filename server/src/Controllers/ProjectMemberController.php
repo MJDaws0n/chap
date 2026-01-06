@@ -21,7 +21,7 @@ class ProjectMemberController extends BaseController
             return;
         }
 
-        $this->requireTeamAdmin();
+        $this->requireTeamPermission('projects', 'write', (int) $team->id);
 
         if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
             flash('error', 'Invalid request');
@@ -92,7 +92,7 @@ class ProjectMemberController extends BaseController
             return;
         }
 
-        $this->requireTeamAdmin();
+        $this->requireTeamPermission('projects', 'write', (int) $team->id);
 
         if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
             flash('error', 'Invalid request');
@@ -127,7 +127,7 @@ class ProjectMemberController extends BaseController
             return;
         }
 
-        $this->requireTeamAdmin();
+        $this->requireTeamPermission('projects', 'write', (int) $team->id);
 
         if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
             flash('error', 'Invalid request');

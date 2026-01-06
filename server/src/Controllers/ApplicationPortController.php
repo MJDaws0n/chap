@@ -25,6 +25,9 @@ class ApplicationPortController extends BaseController
             return;
         }
 
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('applications', 'write', $teamId);
+
         if (!$application->node_id) {
             $this->json(['error' => 'Application has no node assigned'], 422);
             return;
@@ -63,6 +66,9 @@ class ApplicationPortController extends BaseController
             $this->json(['error' => 'Application not found'], 404);
             return;
         }
+
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('applications', 'write', $teamId);
 
         if (!$application->node_id) {
             $this->json(['error' => 'Application has no node assigned'], 422);
@@ -104,6 +110,8 @@ class ApplicationPortController extends BaseController
             $this->json(['error' => 'Environment not found'], 404);
             return;
         }
+
+        $this->requireTeamPermission('applications', 'write', (int) $project->team_id);
 
         $node = Node::findByUuid($nodeUuid);
         if (!$node) {
@@ -159,6 +167,8 @@ class ApplicationPortController extends BaseController
             $this->json(['error' => 'Environment not found'], 404);
             return;
         }
+
+        $this->requireTeamPermission('applications', 'write', (int) $project->team_id);
 
         $node = Node::findByUuid($nodeUuid);
         if (!$node) {

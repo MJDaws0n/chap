@@ -3,6 +3,7 @@
 namespace Chap\Controllers;
 
 use Chap\App;
+use Chap\Auth\TeamPermissionService;
 use Chap\Models\Project;
 use Chap\Models\Node;
 use Chap\Models\Application;
@@ -21,8 +22,18 @@ class DashboardController extends BaseController
     {
         $team = $this->currentTeam();
 
+        $userId = (int) ($this->user?->id ?? 0);
+        $canReadProjects = admin_view_all() || TeamPermissionService::can((int) $team->id, $userId, 'projects', 'read');
+        $canWriteProjects = admin_view_all() || TeamPermissionService::can((int) $team->id, $userId, 'projects', 'write');
+        $canReadDeployments = admin_view_all() || TeamPermissionService::can((int) $team->id, $userId, 'deployments', 'read');
+        $canReadTemplates = admin_view_all() || TeamPermissionService::can((int) $team->id, $userId, 'templates', 'read');
+
         // Get stats
-        $projects = admin_view_all() ? Project::all() : Project::forTeam($team->id);
+        $projects = [];
+        if ($canReadProjects) {
+            $projects = admin_view_all() ? Project::all() : Project::forTeam($team->id);
+        }
+
         $nodes = Node::all();
         $onlineNodes = array_filter($nodes, fn($n) => $n->isOnline());
 
@@ -38,16 +49,25 @@ class DashboardController extends BaseController
         }
 
         // Get deployment count
-        $deploymentCount = $this->getDeploymentCount(admin_view_all() ? null : $team->id);
+        $deploymentCount = 0;
+        if ($canReadDeployments) {
+            $deploymentCount = $this->getDeploymentCount(admin_view_all() ? null : $team->id);
+        }
 
         // Get recent deployments
-        $recentDeployments = $this->getRecentDeployments(admin_view_all() ? null : $team->id);
+        $recentDeployments = [];
+        if ($canReadDeployments) {
+            $recentDeployments = $this->getRecentDeployments(admin_view_all() ? null : $team->id);
+        }
 
         // Get recent activity
         $activity = admin_view_all() ? $this->getRecentActivityAll(10) : ActivityLog::forTeam($team->id, 10);
 
         $this->view('dashboard/index', [
             'title' => 'Dashboard',
+            'canCreateProject' => $canWriteProjects,
+            'canBrowseTemplates' => $canReadTemplates,
+            'canViewDeployments' => $canReadDeployments,
             'stats' => [
                 'projects' => count($projects),
                 'applications' => $applicationCount,
@@ -130,7 +150,7 @@ class DashboardController extends BaseController
     {
         $team = \Chap\Models\Team::findByUuid($uuid);
 
-        if (!$team || !$this->user->belongsToTeam($team)) {
+        if (!$team || (!$this->user->belongsToTeam($team) && !admin_view_all())) {
             flash('error', 'Team not found');
             $this->redirect('/dashboard');
         }

@@ -74,8 +74,15 @@
         <div class="card-header">
             <h2 class="card-title">Recent Deployments</h2>
         </div>
-        
-        <?php if (empty($recentDeployments)): ?>
+
+        <?php if (empty($canViewDeployments)): ?>
+            <div class="card-body">
+                <div class="empty-state">
+                    <p class="empty-state-title">Permission denied</p>
+                    <p class="empty-state-description">You don't have permission to view deployments.</p>
+                </div>
+            </div>
+        <?php elseif (empty($recentDeployments)): ?>
             <div class="card-body">
                 <div class="empty-state">
                     <div class="empty-state-icon">
@@ -85,7 +92,9 @@
                     </div>
                     <p class="empty-state-title">No deployments yet</p>
                     <p class="empty-state-description">Create your first application to get started</p>
-                    <a href="/projects" class="btn btn-primary btn-sm">Create Application</a>
+                    <?php if (!empty($canCreateProject)): ?>
+                        <a href="/projects" class="btn btn-primary btn-sm">Create Application</a>
+                    <?php endif; ?>
                 </div>
             </div>
         <?php else: ?>
@@ -128,17 +137,19 @@
         </div>
         <div class="card-body">
             <div class="flex flex-col gap-3">
-                <a href="/projects/create" class="flex items-center gap-4 p-4 bg-tertiary rounded-lg hover:bg-secondary transition-colors">
-                    <div class="icon-box icon-box-blue">
-                        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-                        </svg>
-                    </div>
-                    <div class="min-w-0 flex-1">
-                        <p class="font-medium">New Project</p>
-                        <p class="text-sm text-secondary truncate">Create a new project to organize your apps</p>
-                    </div>
-                </a>
+                <?php if (!empty($canCreateProject)): ?>
+                    <a href="/projects/create" class="flex items-center gap-4 p-4 bg-tertiary rounded-lg hover:bg-secondary transition-colors">
+                        <div class="icon-box icon-box-blue">
+                            <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                            </svg>
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <p class="font-medium">New Project</p>
+                            <p class="text-sm text-secondary truncate">Create a new project to organize your apps</p>
+                        </div>
+                    </a>
+                <?php endif; ?>
 
                 <?php if (!empty($isAdmin)): ?>
                     <a href="/admin/nodes/create" class="flex items-center gap-4 p-4 bg-tertiary rounded-lg hover:bg-secondary transition-colors">
@@ -154,17 +165,19 @@
                     </a>
                 <?php endif; ?>
 
-                <a href="/templates" class="flex items-center gap-4 p-4 bg-tertiary rounded-lg hover:bg-secondary transition-colors">
-                    <div class="icon-box icon-box-green">
-                        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"></path>
-                        </svg>
-                    </div>
-                    <div class="min-w-0 flex-1">
-                        <p class="font-medium">Browse Templates</p>
-                        <p class="text-sm text-secondary truncate">Deploy one-click services and applications</p>
-                    </div>
-                </a>
+                <?php if (!empty($canBrowseTemplates)): ?>
+                    <a href="/templates" class="flex items-center gap-4 p-4 bg-tertiary rounded-lg hover:bg-secondary transition-colors">
+                        <div class="icon-box icon-box-green">
+                            <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"></path>
+                            </svg>
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <p class="font-medium">Browse Templates</p>
+                            <p class="text-sm text-secondary truncate">Deploy one-click services and applications</p>
+                        </div>
+                    </a>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -175,7 +188,9 @@
 <div class="card mt-6">
     <div class="card-header">
         <h2 class="card-title">Node Status</h2>
-        <a href="/admin/nodes" class="text-sm text-blue">Manage nodes</a>
+        <?php if (!empty($isAdmin)): ?>
+            <a href="/admin/nodes" class="text-sm text-blue">Manage nodes</a>
+        <?php endif; ?>
     </div>
     <div class="table-container">
         <table class="table">
@@ -192,7 +207,11 @@
                     <tr>
                         <td>
                             <div>
-                                <a href="/admin/nodes/<?= e($node->uuid) ?>" class="font-medium text-blue"><?= e($node->name) ?></a>
+                                <?php if (!empty($isAdmin)): ?>
+                                    <a href="/admin/nodes/<?= e($node->uuid) ?>" class="font-medium text-blue"><?= e($node->name) ?></a>
+                                <?php else: ?>
+                                    <span class="font-medium"><?= e($node->name) ?></span>
+                                <?php endif; ?>
                                 <?php if ($node->description): ?>
                                     <p class="text-sm text-secondary truncate"><?= e($node->description) ?></p>
                                 <?php endif; ?>

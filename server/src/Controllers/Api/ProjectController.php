@@ -15,6 +15,7 @@ class ProjectController extends BaseApiController
     public function index(): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('projects', 'read', (int) $team->id);
         $projects = Project::forTeam($team->id);
 
         $this->success([
@@ -28,6 +29,7 @@ class ProjectController extends BaseApiController
     public function store(): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('projects', 'write', (int) $team->id);
         $data = $this->all();
 
         if (empty($data['name'])) {
@@ -54,6 +56,7 @@ class ProjectController extends BaseApiController
     public function show(string $id): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('projects', 'read', (int) $team->id);
         $project = Project::findByUuid($id);
 
         if (!$project || $project->team_id !== $team->id) {
@@ -73,6 +76,7 @@ class ProjectController extends BaseApiController
     public function update(string $id): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('projects', 'write', (int) $team->id);
         $project = Project::findByUuid($id);
 
         if (!$project || $project->team_id !== $team->id) {
@@ -96,6 +100,7 @@ class ProjectController extends BaseApiController
     public function destroy(string $id): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('projects', 'write', (int) $team->id);
         $project = Project::findByUuid($id);
 
         if (!$project || $project->team_id !== $team->id) {

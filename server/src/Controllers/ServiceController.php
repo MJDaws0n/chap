@@ -4,6 +4,7 @@ namespace Chap\Controllers;
 
 use Chap\Models\Environment;
 use Chap\Models\Template;
+use Chap\Models\Service;
 use Chap\Models\ActivityLog;
 
 /**
@@ -26,6 +27,9 @@ class ServiceController extends BaseController
             $this->redirect('/projects');
             return;
         }
+
+        $teamId = (int) ($environment->project()?->team_id ?? 0);
+        $this->requireTeamPermission('services', 'write', $teamId);
 
         // Get available templates
         $templates = Template::all();
@@ -51,6 +55,9 @@ class ServiceController extends BaseController
             return;
         }
 
+        $teamId = (int) ($environment->project()?->team_id ?? 0);
+        $this->requireTeamPermission('services', 'write', $teamId);
+
         if (!verify_csrf($this->input('_csrf_token', ''))) {
             flash('error', 'Invalid request');
             $this->redirect("/environments/{$envId}/services/create");
@@ -72,11 +79,29 @@ class ServiceController extends BaseController
      */
     public function show(string $id): void
     {
-        // TODO: Fetch service by UUID
-        // TODO: Check team access
-        
+        $this->currentTeam();
+        $service = Service::findByUuid($id) ?? Service::find((int) $id);
+
+        if (!$service) {
+            flash('error', 'Service not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $project = $service->environment()?->project();
+        if (!$project || !$this->canAccessTeamId((int) $project->team_id)) {
+            flash('error', 'Service not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $this->requireTeamPermission('services', 'read', (int) $project->team_id);
+
         $this->view('services/show', [
-            'title' => 'Service Details',
+            'title' => $service->name !== '' ? $service->name : 'Service',
+            'service' => $service,
+            'environment' => $service->environment(),
+            'project' => $project,
         ]);
     }
 
@@ -85,9 +110,29 @@ class ServiceController extends BaseController
      */
     public function edit(string $id): void
     {
-        // TODO: Implement
+        $this->currentTeam();
+        $service = Service::findByUuid($id) ?? Service::find((int) $id);
+
+        if (!$service) {
+            flash('error', 'Service not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $project = $service->environment()?->project();
+        if (!$project || !$this->canAccessTeamId((int) $project->team_id)) {
+            flash('error', 'Service not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $this->requireTeamPermission('services', 'write', (int) $project->team_id);
+
         $this->view('services/edit', [
             'title' => 'Edit Service',
+            'service' => $service,
+            'environment' => $service->environment(),
+            'project' => $project,
         ]);
     }
 
@@ -96,6 +141,30 @@ class ServiceController extends BaseController
      */
     public function update(string $id): void
     {
+        $this->currentTeam();
+        $service = Service::findByUuid($id) ?? Service::find((int) $id);
+
+        if (!$service) {
+            flash('error', 'Service not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $project = $service->environment()?->project();
+        if (!$project || !$this->canAccessTeamId((int) $project->team_id)) {
+            flash('error', 'Service not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $this->requireTeamPermission('services', 'write', (int) $project->team_id);
+
+        if (!verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect("/services/{$id}/edit");
+            return;
+        }
+
         // TODO: Implement
         flash('success', 'Service updated');
         $this->redirect("/services/{$id}");
@@ -106,6 +175,30 @@ class ServiceController extends BaseController
      */
     public function destroy(string $id): void
     {
+        $this->currentTeam();
+        $service = Service::findByUuid($id) ?? Service::find((int) $id);
+
+        if (!$service) {
+            flash('error', 'Service not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $project = $service->environment()?->project();
+        if (!$project || !$this->canAccessTeamId((int) $project->team_id)) {
+            flash('error', 'Service not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $this->requireTeamPermission('services', 'write', (int) $project->team_id);
+
+        if (!verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect("/services/{$id}");
+            return;
+        }
+
         // TODO: Implement
         flash('success', 'Service deleted');
         $this->redirect('/projects');
@@ -116,6 +209,30 @@ class ServiceController extends BaseController
      */
     public function start(string $id): void
     {
+        $this->currentTeam();
+        $service = Service::findByUuid($id) ?? Service::find((int) $id);
+
+        if (!$service) {
+            flash('error', 'Service not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $project = $service->environment()?->project();
+        if (!$project || !$this->canAccessTeamId((int) $project->team_id)) {
+            flash('error', 'Service not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $this->requireTeamPermission('services', 'execute', (int) $project->team_id);
+
+        if (!verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect("/services/{$id}");
+            return;
+        }
+
         // TODO: Queue start task
         flash('success', 'Service starting');
         $this->redirect("/services/{$id}");
@@ -126,6 +243,30 @@ class ServiceController extends BaseController
      */
     public function stop(string $id): void
     {
+        $this->currentTeam();
+        $service = Service::findByUuid($id) ?? Service::find((int) $id);
+
+        if (!$service) {
+            flash('error', 'Service not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $project = $service->environment()?->project();
+        if (!$project || !$this->canAccessTeamId((int) $project->team_id)) {
+            flash('error', 'Service not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $this->requireTeamPermission('services', 'execute', (int) $project->team_id);
+
+        if (!verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect("/services/{$id}");
+            return;
+        }
+
         // TODO: Queue stop task
         flash('success', 'Service stopping');
         $this->redirect("/services/{$id}");

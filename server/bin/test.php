@@ -432,8 +432,31 @@ try {
 echo YELLOW . "\n[Foreign Key Constraint Tests]\n" . RESET;
 
 try {
+    // Nodes are global/unowned: nodes.team_id is nullable and not FK-constrained.
+    $nodeColumns = $db->query("DESCRIBE nodes")->fetchAll();
+    $teamIdCol = null;
+    foreach ($nodeColumns as $col) {
+        if (($col['Field'] ?? '') === 'team_id') {
+            $teamIdCol = $col;
+            break;
+        }
+    }
+    assert_not_null($teamIdCol, "nodes.team_id column exists");
+    if ($teamIdCol !== null) {
+        assert_equals('YES', strtoupper((string)($teamIdCol['Null'] ?? '')), "nodes.team_id is nullable");
+    }
+
+    $nodesFk = $db->query("
+            SELECT CONSTRAINT_NAME 
+            FROM information_schema.KEY_COLUMN_USAGE 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = 'nodes'
+            AND COLUMN_NAME = 'team_id'
+            AND REFERENCED_TABLE_NAME = 'teams'
+        ")->fetchAll();
+    assert_true(empty($nodesFk), "No FK exists: nodes.team_id -> teams (nodes are global)");
+
     $fkTests = [
-        ['nodes', 'team_id', 'teams'],
         ['projects', 'team_id', 'teams'],
         ['environments', 'project_id', 'projects'],
         ['applications', 'environment_id', 'environments'],

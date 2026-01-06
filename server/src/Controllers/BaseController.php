@@ -3,6 +3,7 @@
 namespace Chap\Controllers;
 
 use Chap\Auth\AuthManager;
+use Chap\Auth\TeamPermissionService;
 use Chap\Models\Application;
 use Chap\Models\User;
 use Chap\View\View;
@@ -237,13 +238,44 @@ abstract class BaseController
         }
 
         $team = $this->currentTeam();
-        
-        if (!$this->user->isTeamAdmin($team)) {
+
+        $userId = (int)($this->user?->id ?? 0);
+        if ($userId <= 0 || !TeamPermissionService::can((int)$team->id, $userId, 'team.members', 'execute')) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Admin access required'], 403);
             } else {
                 flash('error', 'You need admin privileges for this action');
                 $this->redirect('/dashboard');
+            }
+        }
+    }
+
+    /**
+     * Require a specific team permission for the current user.
+     */
+    protected function requireTeamPermission(string $permKey, string $action, ?int $teamId = null): void
+    {
+        if (admin_view_all()) {
+            return;
+        }
+
+        $team = $teamId !== null ? \Chap\Models\Team::find((int)$teamId) : $this->currentTeam();
+        if (!$team) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Team not found'], 404);
+            } else {
+                flash('error', 'Team not found');
+                $this->redirect('/teams');
+            }
+        }
+
+        $userId = (int)($this->user?->id ?? 0);
+        if ($userId <= 0 || !TeamPermissionService::can((int)$team->id, $userId, $permKey, $action)) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Permission denied'], 403);
+            } else {
+                flash('error', 'Permission denied');
+                $this->redirect($_SERVER['HTTP_REFERER'] ?? '/dashboard');
             }
         }
     }

@@ -17,6 +17,7 @@ class DeploymentController extends BaseApiController
     public function index(string $appId): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('deployments', 'read', (int) $team->id);
         $application = Application::findByUuid($appId);
 
         if (!$application) {
@@ -49,6 +50,7 @@ class DeploymentController extends BaseApiController
     public function show(string $id): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('deployments', 'read', (int) $team->id);
         $deployment = Deployment::findByUuid($id);
 
         if (!$deployment) {
@@ -85,6 +87,7 @@ class DeploymentController extends BaseApiController
     public function cancel(string $id): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('deployments', 'execute', (int) $team->id);
         $deployment = Deployment::findByUuid($id);
 
         if (!$deployment) {

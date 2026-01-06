@@ -23,6 +23,7 @@ class ProjectController extends BaseController
             $projects = Project::all();
         } else {
             $team = $this->currentTeam();
+            $this->requireTeamPermission('projects', 'read', (int)$team->id);
             $projects = Project::forTeam($team->id);
         }
 
@@ -43,6 +44,8 @@ class ProjectController extends BaseController
      */
     public function create(): void
     {
+        $team = $this->currentTeam();
+        $this->requireTeamPermission('projects', 'write', (int)$team->id);
         $this->view('projects/create', [
             'title' => 'New Project'
         ]);
@@ -54,6 +57,7 @@ class ProjectController extends BaseController
     public function store(): void
     {
         $team = $this->currentTeam();
+        $this->requireTeamPermission('projects', 'write', (int)$team->id);
 
         if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
             flash('error', 'Invalid request');
@@ -109,6 +113,8 @@ class ProjectController extends BaseController
 
         $environments = $project->environments();
 
+        $this->requireTeamPermission('projects', 'read', (int)$project->team_id);
+
         if ($this->isApiRequest()) {
             $this->json([
                 'project' => $project->toArray(),
@@ -129,6 +135,7 @@ class ProjectController extends BaseController
     public function edit(string $uuid): void
     {
         $project = Project::findByUuid($uuid);
+    $this->requireTeamPermission('projects', 'write', (int)$project->team_id);
 
         if (!$project || !$this->canAccessTeamId($project->team_id)) {
             flash('error', 'Project not found');
@@ -159,6 +166,7 @@ class ProjectController extends BaseController
     public function update(string $uuid): void
     {
         $project = Project::findByUuid($uuid);
+    $this->requireTeamPermission('projects', 'write', (int)$project->team_id);
 
         if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
@@ -274,6 +282,7 @@ class ProjectController extends BaseController
     public function destroy(string $uuid): void
     {
         $project = Project::findByUuid($uuid);
+    $this->requireTeamPermission('projects', 'write', (int)$project->team_id);
 
         if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {

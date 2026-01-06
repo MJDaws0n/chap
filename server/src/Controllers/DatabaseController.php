@@ -3,6 +3,7 @@
 namespace Chap\Controllers;
 
 use Chap\Models\Environment;
+use Chap\Models\Database;
 use Chap\Models\ActivityLog;
 
 /**
@@ -25,6 +26,9 @@ class DatabaseController extends BaseController
             $this->redirect('/projects');
             return;
         }
+
+        $teamId = (int) ($environment->project()?->team_id ?? 0);
+        $this->requireTeamPermission('databases', 'write', $teamId);
 
         $this->view('databases/create', [
             'title' => 'New Database',
@@ -53,6 +57,9 @@ class DatabaseController extends BaseController
             return;
         }
 
+        $teamId = (int) ($environment->project()?->team_id ?? 0);
+        $this->requireTeamPermission('databases', 'write', $teamId);
+
         if (!verify_csrf($this->input('_csrf_token', ''))) {
             flash('error', 'Invalid request');
             $this->redirect("/environments/{$envId}/databases/create");
@@ -73,12 +80,29 @@ class DatabaseController extends BaseController
      */
     public function show(string $id): void
     {
-        // TODO: Fetch database by UUID
-        // TODO: Check team access
-        // TODO: Render view
+        $this->currentTeam();
+        $database = Database::findByUuid($id) ?? Database::find((int) $id);
+
+        if (!$database) {
+            flash('error', 'Database not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $project = $database->environment()?->project();
+        if (!$project || !$this->canAccessTeamId((int) $project->team_id)) {
+            flash('error', 'Database not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $this->requireTeamPermission('databases', 'read', (int) $project->team_id);
 
         $this->view('databases/show', [
-            'title' => 'Database Details',
+            'title' => $database->name !== '' ? $database->name : 'Database',
+            'database' => $database,
+            'environment' => $database->environment(),
+            'project' => $project,
         ]);
     }
 
@@ -87,9 +111,29 @@ class DatabaseController extends BaseController
      */
     public function edit(string $id): void
     {
-        // TODO: Implement
+        $this->currentTeam();
+        $database = Database::findByUuid($id) ?? Database::find((int) $id);
+
+        if (!$database) {
+            flash('error', 'Database not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $project = $database->environment()?->project();
+        if (!$project || !$this->canAccessTeamId((int) $project->team_id)) {
+            flash('error', 'Database not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $this->requireTeamPermission('databases', 'write', (int) $project->team_id);
+
         $this->view('databases/edit', [
             'title' => 'Edit Database',
+            'database' => $database,
+            'environment' => $database->environment(),
+            'project' => $project,
         ]);
     }
 
@@ -98,6 +142,30 @@ class DatabaseController extends BaseController
      */
     public function update(string $id): void
     {
+        $this->currentTeam();
+        $database = Database::findByUuid($id) ?? Database::find((int) $id);
+
+        if (!$database) {
+            flash('error', 'Database not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $project = $database->environment()?->project();
+        if (!$project || !$this->canAccessTeamId((int) $project->team_id)) {
+            flash('error', 'Database not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $this->requireTeamPermission('databases', 'write', (int) $project->team_id);
+
+        if (!verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect("/databases/{$id}/edit");
+            return;
+        }
+
         // TODO: Implement
         flash('success', 'Database updated');
         $this->redirect("/databases/{$id}");
@@ -108,6 +176,30 @@ class DatabaseController extends BaseController
      */
     public function destroy(string $id): void
     {
+        $this->currentTeam();
+        $database = Database::findByUuid($id) ?? Database::find((int) $id);
+
+        if (!$database) {
+            flash('error', 'Database not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $project = $database->environment()?->project();
+        if (!$project || !$this->canAccessTeamId((int) $project->team_id)) {
+            flash('error', 'Database not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $this->requireTeamPermission('databases', 'write', (int) $project->team_id);
+
+        if (!verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect("/databases/{$id}");
+            return;
+        }
+
         // TODO: Implement
         flash('success', 'Database deleted');
         $this->redirect('/projects');
@@ -118,6 +210,30 @@ class DatabaseController extends BaseController
      */
     public function start(string $id): void
     {
+        $this->currentTeam();
+        $database = Database::findByUuid($id) ?? Database::find((int) $id);
+
+        if (!$database) {
+            flash('error', 'Database not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $project = $database->environment()?->project();
+        if (!$project || !$this->canAccessTeamId((int) $project->team_id)) {
+            flash('error', 'Database not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $this->requireTeamPermission('databases', 'execute', (int) $project->team_id);
+
+        if (!verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect("/databases/{$id}");
+            return;
+        }
+
         // TODO: Queue start task
         flash('success', 'Database starting');
         $this->redirect("/databases/{$id}");
@@ -128,6 +244,30 @@ class DatabaseController extends BaseController
      */
     public function stop(string $id): void
     {
+        $this->currentTeam();
+        $database = Database::findByUuid($id) ?? Database::find((int) $id);
+
+        if (!$database) {
+            flash('error', 'Database not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $project = $database->environment()?->project();
+        if (!$project || !$this->canAccessTeamId((int) $project->team_id)) {
+            flash('error', 'Database not found');
+            $this->redirect('/projects');
+            return;
+        }
+
+        $this->requireTeamPermission('databases', 'execute', (int) $project->team_id);
+
+        if (!verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect("/databases/{$id}");
+            return;
+        }
+
         // TODO: Queue stop task
         flash('success', 'Database stopping');
         $this->redirect("/databases/{$id}");

@@ -33,6 +33,8 @@ class EnvironmentController extends BaseController
 
         $data = $this->all();
 
+        $this->requireTeamPermission('environments', 'write', (int)$project->team_id);
+
         if (empty($data['name'])) {
             if ($this->isApiRequest()) {
                 $this->json(['errors' => ['name' => 'Name is required']], 422);
@@ -83,6 +85,8 @@ class EnvironmentController extends BaseController
             }
         }
 
+        $this->requireTeamPermission('environments', 'read', (int)$project->team_id);
+
         $applications = $environment->applications();
 
         if ($this->isApiRequest()) {
@@ -126,6 +130,8 @@ class EnvironmentController extends BaseController
                 $this->redirect('/projects');
             }
         }
+
+        $this->requireTeamPermission('environments', 'write', (int)$project->team_id);
 
         if ($this->isApiRequest()) {
             $this->json([
@@ -181,6 +187,8 @@ class EnvironmentController extends BaseController
                 $this->redirect('/projects');
             }
         }
+
+        $this->requireTeamPermission('environments', 'write', (int)$project->team_id);
 
         if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
             flash('error', 'Invalid request');
@@ -309,6 +317,8 @@ class EnvironmentController extends BaseController
             }
         }
 
+        $this->requireTeamPermission('environments', 'write', (int)$project->team_id);
+
         if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
             flash('error', 'Invalid request');
             $this->redirect('/environments/' . $uuid);
@@ -342,6 +352,8 @@ class EnvironmentController extends BaseController
             }
             return;
         }
+
+        $this->requireTeamPermission('environments', 'write', (int)$project->team_id);
 
         $this->view('environments/create', [
             'title' => 'Create Environment',

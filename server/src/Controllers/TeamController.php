@@ -2,6 +2,9 @@
 
 namespace Chap\Controllers;
 
+use Chap\Auth\TeamPermissionService;
+use Chap\Auth\TeamPermissions;
+use Chap\Auth\TeamRoleSeeder;
 use Chap\Models\Team;
 use Chap\Models\User;
 use Chap\Services\ResourceHierarchy;
@@ -65,6 +68,8 @@ class TeamController extends BaseController
             'personal_team' => 0
         ]);
 
+        TeamRoleSeeder::ensureBuiltins((int)$team->id);
+
         // Add user as owner
         $team->addMember($user->id, 'owner');
 
@@ -96,7 +101,22 @@ class TeamController extends BaseController
             return;
         }
 
-        $members = $team->members();
+        $userId = (int)($user?->id ?? 0);
+        $canManageMembers = admin_view_all() || TeamPermissionService::can((int)$team->id, $userId, 'team.members', 'execute');
+        $canViewMembers = $canManageMembers || admin_view_all() || TeamPermissionService::can((int)$team->id, $userId, 'team.members', 'read');
+        $canViewRoles = admin_view_all() || TeamPermissionService::can((int)$team->id, $userId, 'team.roles', 'read');
+        $canManageRoles = admin_view_all() || TeamPermissionService::can((int)$team->id, $userId, 'team.roles', 'write');
+
+        $members = $canViewMembers ? $team->members() : [];
+
+        $roles = $team->roles();
+        $builtinBase = array_values(array_filter($roles, function($r) {
+            $slug = (string)($r['slug'] ?? '');
+            return in_array($slug, ['admin', 'manager', 'member', 'read_only_member'], true);
+        }));
+        $customRoles = array_values(array_filter($roles, function($r) {
+            return empty($r['is_builtin']) && empty($r['is_locked']);
+        }));
 
         $this->view('teams/show', [
             'title' => $team->name,
@@ -104,6 +124,12 @@ class TeamController extends BaseController
             'members' => $members,
             'isOwner' => $team->isOwner($user->id),
             'isAdmin' => $team->isAdmin($user->id),
+            'canViewMembers' => $canViewMembers,
+            'canManageMembers' => $canManageMembers,
+            'canViewRoles' => $canViewRoles,
+            'canManageRoles' => $canManageRoles,
+            'builtinBaseRoles' => $builtinBase,
+            'customRoles' => $customRoles,
         ]);
     }
 
@@ -120,11 +146,9 @@ class TeamController extends BaseController
         }
 
         $user = $this->user;
-        
-        if (!$team->isOwner($user->id) && !$team->isAdmin($user->id) && !admin_view_all()) {
-            flash('error', 'You do not have permission to edit this team');
-            redirect('/teams/' . $id);
-            return;
+
+        if (!admin_view_all()) {
+            $this->requireTeamPermission('team.settings', 'write', (int)$team->id);
         }
 
         $allowedNodeIds = $user->allowedNodeIdsForTeam((int)$team->id);
@@ -162,10 +186,8 @@ class TeamController extends BaseController
             return;
         }
         
-        if (!$team->isOwner($user->id) && !$team->isAdmin($user->id) && !admin_view_all()) {
-            flash('error', 'You do not have permission to edit this team');
-            redirect('/teams/' . $id);
-            return;
+        if (!admin_view_all()) {
+            $this->requireTeamPermission('team.settings', 'write', (int)$team->id);
         }
 
         $name = trim($_POST['name'] ?? '');
@@ -362,8 +384,9 @@ class TeamController extends BaseController
         }
 
         $user = $this->user;
-        
-        if (!$team->isOwner($user->id) && !$team->isAdmin($user->id) && !admin_view_all()) {
+
+        $userId = (int)($user?->id ?? 0);
+        if (!admin_view_all() && !TeamPermissionService::can((int)$team->id, $userId, 'team.members', 'execute')) {
             if ($this->isApiRequest()) {
                 $this->json(['error' => 'Permission denied'], 403);
             }
@@ -379,14 +402,20 @@ class TeamController extends BaseController
         }
 
         $account = trim($_POST['account'] ?? ($_POST['email'] ?? ''));
-        $role = $_POST['role'] ?? 'member';
-
-        $allowedRoles = ['owner', 'admin', 'member'];
-        if (!in_array($role, $allowedRoles, true)) {
+        $baseRoleSlug = (string)($_POST['base_role'] ?? 'member');
+        $baseRoleSlug = TeamPermissions::normalizeSlug($baseRoleSlug);
+        $allowedBase = ['admin', 'manager', 'member', 'read_only_member'];
+        if (!in_array($baseRoleSlug, $allowedBase, true)) {
             flash('error', 'Invalid role');
             $this->redirect('/teams/' . $id);
             return;
         }
+
+        $customRoleIds = $_POST['custom_role_ids'] ?? [];
+        if (!is_array($customRoleIds)) {
+            $customRoleIds = [];
+        }
+        $customRoleIds = array_values(array_unique(array_map('intval', $customRoleIds)));
 
         if ($account === '') {
             flash('error', 'Account is required');
@@ -419,7 +448,31 @@ class TeamController extends BaseController
             return;
         }
 
-        $team->addMember($newUser->id, $role);
+        // Persist membership (legacy role remains owner/admin/member).
+        $legacyRole = ($baseRoleSlug === 'admin') ? 'admin' : 'member';
+        $team->addMember($newUser->id, $legacyRole);
+
+        // Resolve role IDs and assign (multi-role).
+        $db = \Chap\App::db();
+        $baseRole = $db->fetch(
+            "SELECT id FROM team_roles WHERE team_id = ? AND slug = ? LIMIT 1",
+            [(int)$team->id, $baseRoleSlug]
+        );
+        if (!$baseRole) {
+            flash('error', 'Role not found');
+            $this->redirect('/teams/' . $id);
+            return;
+        }
+
+        $roleIds = array_merge([(int)$baseRole['id']], $customRoleIds);
+        try {
+            TeamPermissionService::setUserRoles((int)$team->id, $userId, (int)$newUser->id, $roleIds);
+        } catch (\Throwable $e) {
+            $team->removeMember((int)$newUser->id);
+            flash('error', $e->getMessage());
+            $this->redirect('/teams/' . $id);
+            return;
+        }
 
         flash('success', 'Member added successfully');
         redirect('/teams/' . $id);
@@ -445,8 +498,15 @@ class TeamController extends BaseController
             return;
         }
         
-        if (!$team->isOwner($currentUser->id) && !$team->isAdmin($currentUser->id) && !admin_view_all()) {
+        $actorId = (int)($currentUser?->id ?? 0);
+        if (!admin_view_all() && !TeamPermissionService::can((int)$team->id, $actorId, 'team.members', 'execute')) {
             flash('error', 'Permission denied');
+            redirect('/teams/' . $id);
+            return;
+        }
+
+        if (!admin_view_all() && !TeamPermissionService::canManageUser((int)$team->id, $actorId, (int)$userId)) {
+            flash('error', 'You cannot manage this user');
             redirect('/teams/' . $id);
             return;
         }
@@ -477,8 +537,15 @@ class TeamController extends BaseController
         }
 
         $currentUser = $this->user;
-        if (!$team->isOwner($currentUser->id) && !$team->isAdmin($currentUser->id) && !admin_view_all()) {
+        $actorId = (int)($currentUser?->id ?? 0);
+        if (!admin_view_all() && !TeamPermissionService::can((int)$team->id, $actorId, 'team.members', 'execute')) {
             flash('error', 'Permission denied');
+            $this->redirect('/teams/' . $id);
+            return;
+        }
+
+        if (!admin_view_all() && !TeamPermissionService::canManageUser((int)$team->id, $actorId, (int)$userId)) {
+            flash('error', 'You cannot manage this user');
             $this->redirect('/teams/' . $id);
             return;
         }
@@ -495,16 +562,39 @@ class TeamController extends BaseController
             return;
         }
 
-        $role = $_POST['role'] ?? null;
+        $baseRoleSlug = (string)($_POST['base_role'] ?? 'member');
+        $baseRoleSlug = TeamPermissions::normalizeSlug($baseRoleSlug);
+        $allowedBase = ['admin', 'manager', 'member', 'read_only_member'];
+        if (!in_array($baseRoleSlug, $allowedBase, true)) {
+            flash('error', 'Invalid role');
+            $this->redirect('/teams/' . $id);
+            return;
+        }
 
-        if ($role !== null) {
-            $allowedRoles = ['admin', 'member'];
-            if (!in_array($role, $allowedRoles, true)) {
-                flash('error', 'Invalid role');
-                $this->redirect('/teams/' . $id);
-                return;
-            }
-            $team->updateMemberRole($userId, $role);
+        $customRoleIds = $_POST['custom_role_ids'] ?? [];
+        if (!is_array($customRoleIds)) {
+            $customRoleIds = [];
+        }
+        $customRoleIds = array_values(array_unique(array_map('intval', $customRoleIds)));
+
+        $db = \Chap\App::db();
+        $baseRole = $db->fetch(
+            "SELECT id FROM team_roles WHERE team_id = ? AND slug = ? LIMIT 1",
+            [(int)$team->id, $baseRoleSlug]
+        );
+        if (!$baseRole) {
+            flash('error', 'Role not found');
+            $this->redirect('/teams/' . $id);
+            return;
+        }
+
+        $roleIds = array_merge([(int)$baseRole['id']], $customRoleIds);
+        try {
+            TeamPermissionService::setUserRoles((int)$team->id, $actorId, (int)$userId, $roleIds);
+        } catch (\Throwable $e) {
+            flash('error', $e->getMessage());
+            $this->redirect('/teams/' . $id);
+            return;
         }
 
         flash('success', 'Member updated');

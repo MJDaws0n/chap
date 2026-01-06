@@ -3,6 +3,8 @@
 namespace Chap\Models;
 
 use Chap\App;
+use Chap\Auth\TeamPermissionService;
+use Chap\Auth\TeamRoleSeeder;
 
 /**
  * User Model
@@ -52,6 +54,10 @@ class User extends BaseModel
     // Joined/derived fields
     public ?string $role = null;
     public ?string $project_role = null;
+
+    // Team role metadata (hydrated by Team::members())
+    public array $team_role_slugs = [];
+    public array $team_role_names = [];
 
     /**
      * Whether this user can select any team as current team.
@@ -219,7 +225,12 @@ class User extends BaseModel
     public function isTeamAdmin(Team $team): bool
     {
         $role = $this->teamRole($team);
-        return in_array($role, ['owner', 'admin']);
+        if (in_array($role, ['owner', 'admin'], true)) {
+            return true;
+        }
+
+        $highest = TeamPermissionService::highestRole((int)$team->id, (int)$this->id);
+        return in_array((string)$highest['slug'], ['owner', 'admin'], true);
     }
 
     /**
@@ -241,6 +252,8 @@ class User extends BaseModel
             'user_id' => $this->id,
             'role' => 'owner',
         ]);
+
+        TeamRoleSeeder::ensureBuiltins((int)$teamId);
         
         return Team::find($teamId);
     }
