@@ -105,6 +105,7 @@ Route::middleware(['auth'], function() {
     Route::delete('/applications/{id}/ports/{port}', 'ApplicationPortController@unallocate');
     Route::get('/applications/{id}/logs', 'ApplicationController@logs');
     Route::get('/applications/{id}/files', 'ApplicationController@files');
+    Route::get('/applications/{id}/volumes', 'ApplicationController@volumes');
     Route::get('/applications/{id}/files/edit', 'ApplicationController@fileEditor');
     Route::get('/applications/{id}/environment', 'ApplicationController@environment');
     Route::post('/applications/{id}/environment', 'ApplicationController@updateEnvironment');

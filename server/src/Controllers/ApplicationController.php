@@ -1039,6 +1039,51 @@ class ApplicationController extends BaseController
     }
 
     /**
+     * Persistent volumes manager page for application (WebSocket-only, browser connects to node).
+     */
+    public function volumes(string $uuid): void
+    {
+        $team = $this->currentTeam();
+        $application = Application::findByUuid($uuid);
+
+        if (!$this->canAccessApplication($application, $team)) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Application not found'], 404);
+            } else {
+                flash('error', 'Application not found');
+                $this->redirect('/projects');
+            }
+            return;
+        }
+
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        // Volumes can be destructive; use the same permission gate as Files.
+        $this->requireTeamPermission('files', 'read', $teamId);
+
+        if ($this->isApiRequest()) {
+            $this->json(['error' => 'Volumes manager requires WebSocket'], 400);
+            return;
+        }
+
+        $node = $application->node();
+        if (!$node && $application->node_id) {
+            $node = \Chap\Models\Node::find($application->node_id);
+        }
+
+        // Reuse the node browser WS URL (currently named logs_websocket_url in DB/model)
+        $browserWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
+
+        $this->view('applications/volumes', [
+            'title' => 'Volumes - ' . $application->name,
+            'application' => $application,
+            'environment' => $application->environment(),
+            'project' => $application->environment()->project(),
+            'browserWebsocketUrl' => $browserWebsocketUrl,
+            'sessionId' => session_id(),
+        ]);
+    }
+
+    /**
      * Dedicated file editor page (loads file via node WebSocket)
      */
     public function fileEditor(string $uuid): void

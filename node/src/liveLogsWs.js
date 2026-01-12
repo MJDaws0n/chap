@@ -41,6 +41,65 @@ const FILES_LIMIT = {
     downloadChunkBytes: 48 * 1024,
 };
 
+const VOLUMES_LIMIT = {
+    maxRequestsPerWindow: 10,
+    windowMs: 10000,
+    // Backups can be large; keep a sane cap.
+    maxDownloadBytes: 512 * 1024 * 1024, // 512MB
+    maxUploadBytes: 512 * 1024 * 1024, // 512MB
+    chunkBytes: 48 * 1024,
+    uploadChunkBytes: 1024 * 1024,
+};
+
+const VOLUMES_STREAM_LIMIT = {
+    // Decoded bytes allowed per window per connection (upload streaming).
+    windowMs: 10000,
+    maxBytesPerWindow: 128 * 1024 * 1024, // 128MB / 10s
+};
+
+const VOLUME_HELPER_IMAGE = process.env.CHAP_VOLUME_HELPER_IMAGE || 'alpine:3.20';
+
+function isSafeVolumeName(name) {
+    if (typeof name !== 'string') return false;
+    const v = name.trim();
+    if (!v) return false;
+    if (v.length > 255) return false;
+    // Docker volume names allow [a-zA-Z0-9][a-zA-Z0-9_.-]
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(v)) return false;
+    return true;
+}
+
+function checkVolumesRateLimit(browserWs) {
+    const now = Date.now();
+    if (!browserWs._volWindowStart) {
+        browserWs._volWindowStart = now;
+        browserWs._volWindowCount = 0;
+    }
+    if (now - browserWs._volWindowStart > VOLUMES_LIMIT.windowMs) {
+        browserWs._volWindowStart = now;
+        browserWs._volWindowCount = 0;
+    }
+    if (browserWs._volWindowCount >= VOLUMES_LIMIT.maxRequestsPerWindow) return false;
+    browserWs._volWindowCount += 1;
+    return true;
+}
+
+function checkVolumesStreamRateLimit(browserWs, bytes) {
+    const b = Number.isFinite(bytes) ? bytes : 0;
+    const now = Date.now();
+    if (!browserWs._volStreamWindowStart) {
+        browserWs._volStreamWindowStart = now;
+        browserWs._volStreamBytes = 0;
+    }
+    if (now - browserWs._volStreamWindowStart > VOLUMES_STREAM_LIMIT.windowMs) {
+        browserWs._volStreamWindowStart = now;
+        browserWs._volStreamBytes = 0;
+    }
+    if (browserWs._volStreamBytes + b > VOLUMES_STREAM_LIMIT.maxBytesPerWindow) return false;
+    browserWs._volStreamBytes += b;
+    return true;
+}
+
 function isSafePathValue(p) {
     if (typeof p !== 'string') return false;
     if (!p.length) return false;
@@ -92,6 +151,25 @@ function runDockerInspectMounts(containerId) {
                     ? mounts.map((m) => (m && m.Destination ? String(m.Destination) : '')).filter(Boolean)
                     : [];
                 resolve(dests.filter((d) => d !== '/'));
+            } catch {
+                resolve([]);
+            }
+        });
+        proc.on('error', () => resolve([]));
+    });
+}
+
+function runDockerInspectMountDetails(containerId) {
+    return new Promise((resolve) => {
+        const proc = spawn('docker', ['inspect', '--format', '{{json .Mounts}}', containerId], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let out = '';
+        proc.stdout.on('data', (c) => { out += c.toString(); });
+        proc.on('close', () => {
+            try {
+                const mounts = JSON.parse((out || '').trim() || '[]');
+                resolve(Array.isArray(mounts) ? mounts : []);
             } catch {
                 resolve([]);
             }
@@ -383,6 +461,309 @@ function createLiveLogsWs(deps) {
 
     // Upload transfer state: transferId -> { containerId, path, size, received, chunks: Buffer[] }
     const uploads = new Map();
+
+    // Volume replace (streaming) transfer: transferId -> { volumeName, size, received, proc, startedAt }
+    const volumeReplacements = new Map();
+
+    function volumesReply(browserWs, requestId, ok, resultOrError) {
+        if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+        if (ok) {
+            safeJsonSend(browserWs, { type: 'volumes:response', request_id: requestId, ok: true, result: resultOrError || {} });
+        } else {
+            safeJsonSend(browserWs, { type: 'volumes:response', request_id: requestId, ok: false, error: String(resultOrError || 'Request failed') });
+        }
+    }
+
+    async function getAllAppContainers(applicationUuid) {
+        const namePrefix = `chap-${safeId(applicationUuid)}`.replace(/\s+/g, '');
+        try {
+            const out = await execCommand(
+                `docker ps -a --filter "name=${namePrefix}" --format "{{.ID}}|{{.Names}}|{{.Status}}"`
+            );
+            const lines = out.trim().split('\n').filter(Boolean);
+            return lines
+                .map((line) => {
+                    const [id, name, statusRaw] = line.split('|');
+                    const idTrim = (id || '').trim();
+                    const nameTrim = (name || '').trim();
+                    const status = normalizeStatus(statusRaw);
+                    return { id: idTrim, name: nameTrim, status };
+                })
+                .filter((c) => c.id && c.name);
+        } catch {
+            return [];
+        }
+    }
+
+    async function listVolumesForApp(applicationUuid) {
+        const containers = await getAllAppContainers(applicationUuid);
+        const byName = new Map();
+
+        for (const c of containers) {
+            const mounts = await runDockerInspectMountDetails(c.id);
+            for (const m of mounts) {
+                if (!m || m.Type !== 'volume') continue;
+                const volName = String(m.Name || '').trim();
+                if (!volName) continue;
+                const dest = String(m.Destination || '').trim();
+                const key = volName;
+                if (!byName.has(key)) {
+                    byName.set(key, {
+                        name: volName,
+                        type: 'volume',
+                        mounts: new Set(),
+                        used_by: new Set(),
+                    });
+                }
+                const entry = byName.get(key);
+                if (dest) entry.mounts.add(dest);
+                entry.used_by.add(c.name);
+            }
+        }
+
+        const vols = Array.from(byName.values()).map((v) => ({
+            name: v.name,
+            type: v.type,
+            mounts: Array.from(v.mounts).sort(),
+            used_by: Array.from(v.used_by).sort(),
+        }));
+        vols.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        return vols;
+    }
+
+    async function ensureVolumeBelongsToApp(browserWs, volumeName) {
+        if (!isSafeVolumeName(volumeName)) return false;
+        const vols = await listVolumesForApp(browserWs.applicationUuid);
+        return vols.some((v) => v.name === volumeName);
+    }
+
+    async function handleVolumesRequest(browserWs, message) {
+        const requestId = typeof message.request_id === 'string' ? message.request_id.trim() : '';
+        const action = typeof message.action === 'string' ? message.action.trim() : '';
+        const payload = message.payload && typeof message.payload === 'object' ? message.payload : {};
+
+        if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+        if (!browserWs.authenticated) return volumesReply(browserWs, requestId, false, 'Not authenticated');
+        if (!requestId || !action) return volumesReply(browserWs, requestId, false, 'Missing request_id or action');
+
+        // Chunk streaming should be bandwidth-limited, not request-count-limited.
+        if (action !== 'replace:chunk' && !checkVolumesRateLimit(browserWs)) {
+            return volumesReply(browserWs, requestId, false, 'Rate limit exceeded');
+        }
+
+        try {
+            if (action === 'list') {
+                const vols = await listVolumesForApp(browserWs.applicationUuid);
+                return volumesReply(browserWs, requestId, true, { volumes: vols });
+            }
+
+            if (action === 'delete') {
+                const name = String(payload.name || '').trim();
+                if (!await ensureVolumeBelongsToApp(browserWs, name)) return volumesReply(browserWs, requestId, false, 'Volume not found for application');
+
+                const proc = spawn('docker', ['volume', 'rm', '--force', name], { stdio: ['ignore', 'pipe', 'pipe'] });
+                let stderr = '';
+                proc.stderr.on('data', (c) => { stderr += c.toString(); });
+                proc.on('close', (code) => {
+                    if ((code ?? 0) !== 0) {
+                        return volumesReply(browserWs, requestId, false, (stderr || '').trim() || 'Failed to delete volume');
+                    }
+                    return volumesReply(browserWs, requestId, true, {});
+                });
+                proc.on('error', () => volumesReply(browserWs, requestId, false, 'Failed to delete volume'));
+                return;
+            }
+
+            if (action === 'download') {
+                const name = String(payload.name || '').trim();
+                if (!await ensureVolumeBelongsToApp(browserWs, name)) return volumesReply(browserWs, requestId, false, 'Volume not found for application');
+
+                const transferId = `vdl_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+                const filename = `${name}.tar.gz`;
+
+                // Best-effort approximate bytes (uncompressed) for a progress indicator.
+                let approxTotalBytes = 0;
+                try {
+                    const sizeProc = spawn('docker', [
+                        'run', '--rm',
+                        '-v', `${name}:/volume:ro`,
+                        VOLUME_HELPER_IMAGE,
+                        'sh', '-c', 'k=$(du -sk /volume 2>/dev/null | cut -f1 || echo 0); echo $((k*1024))',
+                    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+                    let out = '';
+                    sizeProc.stdout.on('data', (c) => { out += c.toString(); });
+                    await new Promise((resolve) => sizeProc.on('close', resolve));
+                    const n = parseInt(String(out || '').trim(), 10);
+                    approxTotalBytes = Number.isFinite(n) && n > 0 ? n : 0;
+                } catch {
+                    approxTotalBytes = 0;
+                }
+
+                safeJsonSend(browserWs, {
+                    type: 'volumes:download:start',
+                    transfer_id: transferId,
+                    name: filename,
+                    mime: 'application/gzip',
+                    approx_total_bytes: approxTotalBytes || undefined,
+                });
+
+                const proc = spawn('docker', [
+                    'run', '--rm',
+                    '-v', `${name}:/volume:ro`,
+                    VOLUME_HELPER_IMAGE,
+                    'sh', '-c', 'tar -czf - -C /volume .',
+                ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+                let sent = 0;
+                proc.stdout.on('data', (chunk) => {
+                    if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+                    sent += chunk.length;
+                    if (sent > VOLUMES_LIMIT.maxDownloadBytes) {
+                        try { proc.kill(); } catch {}
+                        safeJsonSend(browserWs, { type: 'error', error: 'Volume download too large' });
+                        return;
+                    }
+                    for (let i = 0; i < chunk.length; i += VOLUMES_LIMIT.chunkBytes) {
+                        const part = chunk.subarray(i, i + VOLUMES_LIMIT.chunkBytes);
+                        safeJsonSend(browserWs, {
+                            type: 'volumes:download:chunk',
+                            transfer_id: transferId,
+                            data_b64: part.toString('base64'),
+                            sent_bytes: sent,
+                        });
+                    }
+                });
+
+                let err = '';
+                proc.stderr.on('data', (c) => { err += c.toString(); });
+                proc.on('close', (code) => {
+                    if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+                    if ((code ?? 0) !== 0) {
+                        safeJsonSend(browserWs, { type: 'error', error: (err || '').trim() || 'Volume download failed' });
+                        return;
+                    }
+                    safeJsonSend(browserWs, { type: 'volumes:download:done', transfer_id: transferId, name: filename });
+                });
+                proc.on('error', () => {
+                    if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+                    safeJsonSend(browserWs, { type: 'error', error: 'Volume download failed to start' });
+                });
+
+                return volumesReply(browserWs, requestId, true, { transfer_id: transferId });
+            }
+
+            if (action === 'replace:init') {
+                const name = String(payload.name || '').trim();
+                const size = parseInt(String(payload.size || '0'), 10);
+                if (!await ensureVolumeBelongsToApp(browserWs, name)) return volumesReply(browserWs, requestId, false, 'Volume not found for application');
+                if (!Number.isFinite(size) || size <= 0 || size > VOLUMES_LIMIT.maxUploadBytes) {
+                    return volumesReply(browserWs, requestId, false, `Upload too large (max ${VOLUMES_LIMIT.maxUploadBytes} bytes)`);
+                }
+
+                // Stream tar.gz into a helper container that wipes then restores.
+                const transferId = `vup_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+                const script = [
+                    'set -e',
+                    'find /volume -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true',
+                    'tar -xzf - -C /volume',
+                ].join(' && ');
+
+                const proc = spawn('docker', [
+                    'run', '--rm', '-i',
+                    '-v', `${name}:/volume`,
+                    VOLUME_HELPER_IMAGE,
+                    'sh', '-c', script,
+                ], { stdio: ['pipe', 'ignore', 'pipe'] });
+
+                let stderr = '';
+                proc.stderr.on('data', (c) => { stderr += c.toString(); });
+                proc.on('close', (code) => {
+                    const t = volumeReplacements.get(transferId);
+                    if (t) t.exitCode = code ?? 0;
+                    if ((code ?? 0) !== 0) {
+                        // If browser is still connected, surface an error.
+                        if (browserWs && browserWs.readyState === WebSocket.OPEN) {
+                            safeJsonSend(browserWs, { type: 'error', error: (stderr || '').trim() || 'Volume replace failed' });
+                        }
+                    }
+                    volumeReplacements.delete(transferId);
+                });
+                proc.on('error', () => {
+                    volumeReplacements.delete(transferId);
+                });
+
+                volumeReplacements.set(transferId, { volumeName: name, size, received: 0, proc, startedAt: Date.now() });
+                return volumesReply(browserWs, requestId, true, { transfer_id: transferId, chunk_size: VOLUMES_LIMIT.uploadChunkBytes });
+            }
+
+            if (action === 'replace:chunk') {
+                const transferId = String(payload.transfer_id || '');
+                const offset = parseInt(String(payload.offset || '0'), 10);
+                const dataB64 = String(payload.data_b64 || '');
+                const t = volumeReplacements.get(transferId);
+                if (!t || !t.proc) return volumesReply(browserWs, requestId, false, 'Invalid transfer');
+                if (!Number.isFinite(offset) || offset !== t.received) return volumesReply(browserWs, requestId, false, 'Invalid offset');
+
+                let buf;
+                try { buf = Buffer.from(dataB64, 'base64'); } catch { return volumesReply(browserWs, requestId, false, 'Invalid base64'); }
+
+                if (!checkVolumesStreamRateLimit(browserWs, buf.length)) {
+                    return volumesReply(browserWs, requestId, false, 'Rate limit exceeded');
+                }
+
+                t.received += buf.length;
+                if (t.received > t.size || t.received > VOLUMES_LIMIT.maxUploadBytes) {
+                    try { t.proc.kill('SIGKILL'); } catch {}
+                    volumeReplacements.delete(transferId);
+                    return volumesReply(browserWs, requestId, false, 'Upload too large');
+                }
+
+                try {
+                    const ok = t.proc.stdin.write(buf);
+                    if (!ok) {
+                        // Backpressure: wait for drain.
+                        await new Promise((resolve) => t.proc.stdin.once('drain', resolve));
+                    }
+                } catch {
+                    try { t.proc.kill('SIGKILL'); } catch {}
+                    volumeReplacements.delete(transferId);
+                    return volumesReply(browserWs, requestId, false, 'Failed to stream upload');
+                }
+
+                return volumesReply(browserWs, requestId, true, {});
+            }
+
+            if (action === 'replace:commit') {
+                const transferId = String(payload.transfer_id || '');
+                const t = volumeReplacements.get(transferId);
+                if (!t || !t.proc) return volumesReply(browserWs, requestId, false, 'Invalid transfer');
+                if (t.received !== t.size) return volumesReply(browserWs, requestId, false, 'Upload incomplete');
+
+                // Finish stdin and await completion.
+                const proc = t.proc;
+                try { proc.stdin.end(); } catch {}
+
+                const ok = await new Promise((resolve) => {
+                    let done = false;
+                    const finish = (success) => {
+                        if (done) return;
+                        done = true;
+                        resolve(success);
+                    };
+                    proc.on('close', (code) => finish((code ?? 0) === 0));
+                    proc.on('error', () => finish(false));
+                });
+
+                volumeReplacements.delete(transferId);
+                if (!ok) return volumesReply(browserWs, requestId, false, 'Volume replace failed');
+                return volumesReply(browserWs, requestId, true, {});
+            }
+
+            return volumesReply(browserWs, requestId, false, 'Unknown action');
+        } catch (e) {
+            return volumesReply(browserWs, requestId, false, e && e.message ? e.message : 'Error');
+        }
+    }
 
     function filesReply(browserWs, requestId, ok, resultOrError) {
         if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
@@ -1075,6 +1456,9 @@ function createLiveLogsWs(deps) {
                 break;
             case 'files:request':
                 handleFilesRequest(browserWs, message);
+                break;
+            case 'volumes:request':
+                handleVolumesRequest(browserWs, message);
                 break;
             case 'exec:request':
                 handleBrowserExec(browserWs, message);

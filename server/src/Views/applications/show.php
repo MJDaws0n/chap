@@ -81,6 +81,13 @@ $allocatedPorts = array_values(array_map('intval', is_array($allocatedPorts) ? $
                     Files
                 </a>
 
+                <a href="/applications/<?= e($application->uuid) ?>/volumes" class="btn btn-secondary">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
+                    </svg>
+                    Volumes
+                </a>
+
                 <?php if (($application->status ?? '') === 'running'): ?>
                     <form method="POST" action="/applications/<?= e($application->uuid) ?>/restart" class="inline-block">
                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
