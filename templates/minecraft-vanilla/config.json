@@ -8,7 +8,7 @@
   "env_variables": {
     "EULA": "TRUE",
     "MINECRAFT_VERSION": "latest",
-    "MEMORY": "2G",
+    "MEMORY": "{ram}M",
     "MINECRAFT_PORT": "{port[0]}",
     "JAVA_EXTRA_ARGS": ""
   },

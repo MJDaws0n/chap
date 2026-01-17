@@ -281,10 +281,19 @@ class TemplateController extends BaseController
             $reservedPorts = PortAllocation::portsForReservation($reservationUuid, (int)$node->id);
         }
         
-        try {
-            DynamicEnv::validate($envVars, $reservedPorts);
-        } catch (\Exception $e) {
-            $_SESSION['_errors']['environment_variables'] = $e->getMessage();
+        $cpuForCtx = $cpuMillicores === -1 ? -1 : ResourceHierarchy::cpuToCoresString($cpuMillicores);
+        $ctx = [
+            'name' => (string)$name,
+            'node' => (string)$node->name,
+            'repo' => '',
+            'repo_brach' => 'main',
+            'repo_branch' => 'main',
+            'cpu' => $cpuForCtx,
+            'ram' => $ramMb,
+        ];
+        $dynErrors = DynamicEnv::validate($envVars, $reservedPorts, $ctx);
+        if (!empty($dynErrors)) {
+            $_SESSION['_errors']['environment_variables'] = 'One or more variables reference unavailable dynamic values. Allocate ports first or fix {port[i]} indices, or adjust other placeholders.';
             $_SESSION['_old_input'] = $_POST;
             $this->redirect('/templates/' . urlencode($slug));
             return;

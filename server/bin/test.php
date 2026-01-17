@@ -181,14 +181,14 @@ try {
     
     $teams = $db->query("SELECT * FROM teams")->fetchAll();
     assert_not_empty($teams, "At least one team exists");
-    
-    $templates = $db->query("SELECT * FROM templates WHERE is_official = 1")->fetchAll();
-    assert_greater_than(4, count($templates), "At least 5 official templates exist");
-    
+
+    \Chap\Services\TemplateRegistry::syncToDatabase();
+
+    $templates = $db->query("SELECT * FROM templates WHERE is_active = 1")->fetchAll();
+    assert_not_empty($templates, "At least one active template exists");
+
     $slugs = array_column($templates, 'slug');
-    assert_contains('nginx', $slugs, "Nginx template exists");
-    assert_contains('mysql', $slugs, "MySQL template exists");
-    assert_contains('postgresql', $slugs, "PostgreSQL template exists");
+    assert_contains('minecraft-vanilla', $slugs, "Minecraft Vanilla template exists");
     
 } catch (Exception $e) {
     assert_true(false, "Seeded data check failed: " . $e->getMessage());
@@ -221,12 +221,14 @@ try {
     assert_true(!isset($userArray['password_hash']), "User toArray excludes password_hash");
     
     // Template model
-    $templates = Template::all();
-    assert_not_empty($templates, "Template::all() returns templates");
-    
-    $nginx = Template::findBySlug('nginx');
-    assert_not_null($nginx, "Template::findBySlug works");
-    assert_equals('Nginx', $nginx->name, "Template name is correct");
+    \Chap\Services\TemplateRegistry::syncToDatabase();
+
+    $templates = Template::where('is_active', true);
+    assert_not_empty($templates, "Template::where('is_active', true) returns templates");
+
+    $mc = Template::findBySlug('minecraft-vanilla');
+    assert_not_null($mc, "Template::findBySlug works");
+    assert_equals('Minecraft (Vanilla)', $mc->name, "Template name is correct");
     
 } catch (Exception $e) {
     assert_true(false, "Model test failed: " . $e->getMessage());

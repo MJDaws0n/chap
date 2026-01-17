@@ -8,6 +8,7 @@
 const WebSocket = require('ws');
 const { WebSocketServer } = require('ws');
 const { spawn } = require('child_process');
+const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const security = require('./security');
@@ -236,6 +237,67 @@ function runDockerExec(containerId, argv, opts = {}) {
                 // ignore
             }
         }
+    });
+}
+
+function getDockerSocketPath() {
+    const raw = String(process.env.DOCKER_HOST || '').trim();
+    if (raw.startsWith('unix://')) {
+        const p = raw.slice('unix://'.length).trim();
+        if (p) return p;
+    }
+    return '/var/run/docker.sock';
+}
+
+function openDockerHijackedConnection({ method, pathAndQuery }) {
+    return new Promise((resolve, reject) => {
+        const socketPath = getDockerSocketPath();
+        const socket = net.createConnection({ path: socketPath });
+
+        let headerBuf = Buffer.alloc(0);
+        let done = false;
+
+        const fail = (err) => {
+            if (done) return;
+            done = true;
+            try { socket.destroy(); } catch {}
+            reject(err);
+        };
+
+        socket.on('error', fail);
+
+        socket.on('connect', () => {
+            try {
+                const req =
+                    `${method} ${pathAndQuery} HTTP/1.1\r\n` +
+                    `Host: docker\r\n` +
+                    `Connection: Upgrade\r\n` +
+                    `Upgrade: tcp\r\n` +
+                    `\r\n`;
+                socket.write(req);
+            } catch (e) {
+                fail(e);
+            }
+        });
+
+        socket.on('data', (chunk) => {
+            if (done) return;
+            headerBuf = Buffer.concat([headerBuf, Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))]);
+            const marker = headerBuf.indexOf('\r\n\r\n');
+            if (marker === -1) return;
+
+            const headerText = headerBuf.slice(0, marker).toString('utf8');
+            const statusLine = headerText.split('\r\n')[0] || '';
+            const m = statusLine.match(/HTTP\/1\.[01]\s+(\d+)/i);
+            const statusCode = m ? parseInt(m[1], 10) : 0;
+            if (statusCode !== 101 && statusCode !== 200) {
+                return fail(new Error(`Docker API attach failed (${statusCode}): ${statusLine}`));
+            }
+
+            done = true;
+            // Ignore any leftover bytes (stream output) by default; we only need stdin.
+            resolve({ socket });
+        });
     });
 }
 
@@ -2304,81 +2366,61 @@ function createLiveLogsWs(deps) {
         browserWs._consoleSessions = browserWs._consoleSessions || new Map();
         let session = browserWs._consoleSessions.get(canonicalContainerId);
 
-        if (!session || !session.proc) {
-            // Start an attach session so we can write to stdin.
-            // This requires the container to be started with stdin open (docker run -i or compose stdin_open).
-            const proc = spawn('docker', ['attach', '--sig-proxy=false', canonicalContainerId], {
-                stdio: ['pipe', 'pipe', 'pipe'],
-            });
-
-            const emit = (stream) => (line) => {
-                if (!line) return;
-                safeJsonSend(browserWs, {
-                    type: 'console:output',
-                    stream,
-                    container: target.name,
-                    container_id: canonicalContainerId,
-                    content: line,
-                    timestamp: Date.now(),
+        if (!session || !session.socket || session.socket.destroyed) {
+            try {
+                // Use Docker Engine API attach (hijacked HTTP) instead of `docker attach` CLI.
+                // This avoids the common CLI error from a non-TTY Node process: "the input device is not a TTY".
+                const { socket } = await openDockerHijackedConnection({
+                    method: 'POST',
+                    pathAndQuery: `/containers/${canonicalContainerId}/attach?stream=1&stdin=1&stdout=0&stderr=0&logs=0`,
                 });
-            };
 
-            const emitStdout = createLineEmitter(emit('stdout'));
-            const emitStderr = createLineEmitter(emit('stderr'));
+                session = { socket, containerName: target.name };
+                browserWs._consoleSessions.set(canonicalContainerId, session);
 
-            proc.stdout.on('data', (chunk) => {
-                const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-                emitStdout(buf.subarray(0, CONSOLE_LIMIT.maxChunkBytes));
-            });
-            proc.stderr.on('data', (chunk) => {
-                const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-                emitStderr(buf.subarray(0, CONSOLE_LIMIT.maxChunkBytes));
-            });
-
-            proc.on('error', (err) => {
-                safeJsonSend(browserWs, {
-                    type: 'console:error',
-                    request_id: requestId,
-                    container: target.name,
-                    container_id: canonicalContainerId,
-                    error: err.message,
-                    timestamp: Date.now(),
+                socket.on('close', () => {
+                    const s = browserWs._consoleSessions && browserWs._consoleSessions.get(canonicalContainerId);
+                    if (s && s.socket === socket) {
+                        s.socket = null;
+                    }
+                    safeJsonSend(browserWs, {
+                        type: 'console:status',
+                        container: target.name,
+                        container_id: canonicalContainerId,
+                        status: 'disconnected',
+                        timestamp: Date.now(),
+                    });
                 });
-            });
 
-            proc.on('close', (code, signal) => {
-                const s = browserWs._consoleSessions && browserWs._consoleSessions.get(canonicalContainerId);
-                if (s) {
-                    s.proc = null;
-                }
+                socket.on('error', (err) => {
+                    safeJsonSend(browserWs, {
+                        type: 'console:error',
+                        request_id: requestId,
+                        container: target.name,
+                        container_id: canonicalContainerId,
+                        error: err.message,
+                        timestamp: Date.now(),
+                    });
+                });
+
                 safeJsonSend(browserWs, {
                     type: 'console:status',
                     container: target.name,
                     container_id: canonicalContainerId,
-                    status: 'disconnected',
-                    exit_code: typeof code === 'number' ? code : null,
-                    signal: signal || null,
+                    status: 'connected',
                     timestamp: Date.now(),
                 });
-            });
-
-            session = { proc, containerName: target.name };
-            browserWs._consoleSessions.set(canonicalContainerId, session);
-
-            safeJsonSend(browserWs, {
-                type: 'console:status',
-                container: target.name,
-                container_id: canonicalContainerId,
-                status: 'connected',
-                timestamp: Date.now(),
-            });
+            } catch (e) {
+                return reject(e && e.message ? e.message : 'Failed to connect to container console');
+            }
         }
 
-        // Send the command to stdin of the attached process.
+        // For TTY containers, terminal line discipline expects Enter as CR.
+        const lineEnd = stdinCfg && stdinCfg.tty ? '\r' : '\n';
         try {
-            session.proc.stdin.write(command + '\n');
-        } catch (e) {
-            return reject('Failed to write to container console (is stdin open?)');
+            session.socket.write(command + lineEnd);
+        } catch {
+            return reject('Failed to write to container console (connection closed)');
         }
 
         safeJsonSend(browserWs, {
@@ -2655,8 +2697,8 @@ function createLiveLogsWs(deps) {
 
                 if (browserWs._consoleSessions && browserWs._consoleSessions.size) {
                     for (const [, s] of browserWs._consoleSessions) {
-                        if (!s || !s.proc) continue;
-                        try { s.proc.kill('SIGKILL'); } catch {}
+                        if (!s || !s.socket) continue;
+                        try { s.socket.destroy(); } catch {}
                     }
                     try { browserWs._consoleSessions.clear(); } catch {}
                 }

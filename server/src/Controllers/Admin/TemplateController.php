@@ -13,7 +13,8 @@ class TemplateController extends BaseController
     {
         TemplateRegistry::syncToDatabase();
 
-        $templates = Template::all();
+        // Default to only active templates (deactivated templates are typically stale/removed from disk).
+        $templates = Template::where('is_active', true);
         usort($templates, function($a, $b) {
             $ao = !empty($a->is_official) ? 0 : 1;
             $bo = !empty($b->is_official) ? 0 : 1;

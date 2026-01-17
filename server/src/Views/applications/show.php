@@ -375,7 +375,7 @@ $canEditResourceLimits = $canEditResourceLimits ?? false;
                     <div id="ports-error" class="text-sm text-red mb-3 hidden"></div>
                     <div id="ports-list" class="flex flex-col gap-2"></div>
                     <div id="ports-empty" class="text-muted text-sm hidden">No ports allocated.</div>
-                    <p class="text-xs text-tertiary mt-3">Ports are system-managed. Use <code>{port[0]}</code>, <code>{port[1]}</code>, … in environment variables (zero-based).</p>
+                    <p class="text-xs text-tertiary mt-3">Ports are system-managed. Dynamic vars: <code>{port[0]}</code>, <code>{port[1]}</code>, … (zero-based) and <code>{name}</code>, <code>{node}</code>, <code>{repo}</code>, <code>{repo_brach}</code>, <code>{cpu}</code>, <code>{ram}</code>.</p>
                 </div>
             </div>
 
@@ -389,7 +389,7 @@ $canEditResourceLimits = $canEditResourceLimits ?? false;
                     </div>
                 </div>
                 <div class="card-body">
-                    <p class="text-xs text-tertiary mb-3">Dynamic vars: use <code>{port[0]}</code>, <code>{port[1]}</code>, … to reference allocated ports (zero-based). Saving will fail if an index doesn’t exist.</p>
+                    <p class="text-xs text-tertiary mb-3">Dynamic vars: <code>{port[0]}</code>, <code>{port[1]}</code>, … (zero-based) plus <code>{name}</code>, <code>{node}</code>, <code>{repo}</code>, <code>{repo_brach}</code>, <code>{cpu}</code>, <code>{ram}</code>. Saving will fail if a referenced value isn’t available.</p>
                     <form method="POST" action="/applications/<?= $application->uuid ?>" id="env-form">
                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                         <input type="hidden" name="_method" value="PUT">

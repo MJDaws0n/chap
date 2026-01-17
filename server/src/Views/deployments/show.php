@@ -304,6 +304,7 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
 <script>
 (function() {
     const logsContainer = document.getElementById('logs-container');
+    const liveLogsUrl = '/applications/<?= e($application->uuid) ?>/logs';
     let lastLogCount = <?= count($logs) ?>;
     let pollInterval = null;
 
@@ -339,7 +340,13 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
             // Check if deployment finished
             if (data.status && !['queued', 'building', 'deploying'].includes(data.status)) {
                 clearInterval(pollInterval);
-                setTimeout(() => location.reload(), 1000);
+
+                // Success-like states: deployment completed and app is running.
+                if (data.status === 'success' || data.status === 'running') {
+                    setTimeout(() => { window.location.href = liveLogsUrl; }, 800);
+                } else {
+                    setTimeout(() => location.reload(), 1000);
+                }
             }
         } catch (e) {
             console.error('Failed to fetch logs:', e);
@@ -359,6 +366,16 @@ $isInProgress = in_array($deployment->status, ['queued', 'building', 'deploying'
     
     // Initial scroll to bottom
     logsContainer.scrollTop = logsContainer.scrollHeight;
+})();
+</script>
+<?php endif; ?>
+
+<?php if ($deployment->status === 'success' || $deployment->status === 'running'): ?>
+<script>
+(function() {
+    // If the page is loaded after completion (e.g. post-reload), still auto-jump to Live Logs.
+    const liveLogsUrl = '/applications/<?= e($application->uuid) ?>/logs';
+    setTimeout(() => { window.location.href = liveLogsUrl; }, 800);
 })();
 </script>
 <?php endif; ?>

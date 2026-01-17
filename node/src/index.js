@@ -674,6 +674,60 @@ async function deployCompose(deploymentId, appConfig) {
     
     let dockerCompose = appConfig.docker_compose || appConfig.dockerCompose;
     const envVars = appConfig.environment_variables || appConfig.environmentVariables || {};
+
+    // Template-based deploys may include additional files (e.g. Dockerfile, entrypoint.sh)
+    // that must be written into the compose directory.
+    const writeExtraFiles = (filesMap) => {
+        if (!filesMap || typeof filesMap !== 'object') return;
+
+        const maxFiles = 500;
+        const maxBytesPerFile = 1024 * 1024; // 1MB
+        const maxBytesTotal = 20 * 1024 * 1024; // 20MB
+
+        let count = 0;
+        let total = 0;
+
+        for (const [relRaw, contentRaw] of Object.entries(filesMap)) {
+            if (count >= maxFiles) break;
+
+            const rel = String(relRaw || '').replace(/\\/g, '/').replace(/^\/+/, '');
+            if (!rel || rel.includes('..')) continue;
+
+            const content = String(contentRaw ?? '');
+            const bytes = Buffer.byteLength(content, 'utf8');
+            if (bytes <= 0 || bytes > maxBytesPerFile) continue;
+            if (total + bytes > maxBytesTotal) break;
+
+            // Ensure resolved path stays within composeDir
+            const abs = path.resolve(composeDir, rel);
+            const root = path.resolve(composeDir);
+            if (!abs.startsWith(root + path.sep) && abs !== root) continue;
+
+            fs.mkdirSync(path.dirname(abs), { recursive: true });
+            fs.writeFileSync(abs, content, 'utf8');
+
+            // Best-effort: make shell scripts executable
+            const lower = rel.toLowerCase();
+            if (lower.endsWith('.sh') || lower.endsWith('.bash') || lower.includes('entrypoint')) {
+                try { fs.chmodSync(abs, 0o755); } catch (_) {}
+            }
+
+            count++;
+            total += bytes;
+        }
+
+        if (count > 0) {
+            console.log(`[Agent] ✓ Wrote ${count} extra template file(s) to compose dir`);
+            sendLog(deploymentId, `✓ Wrote ${count} extra template file(s)`, 'info');
+        }
+    };
+
+    const extraFiles = appConfig.extra_files || appConfig.extraFiles || null;
+    if (extraFiles) {
+        console.log('[Agent] 📦 Writing extra template files');
+        sendLog(deploymentId, '📦 Writing extra template files', 'info');
+        writeExtraFiles(extraFiles);
+    }
     
     // Security: Sanitize environment variables
     const safeEnvVars = security.sanitizeEnvVars(envVars);

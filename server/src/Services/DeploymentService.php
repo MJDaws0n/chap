@@ -30,23 +30,45 @@ class DeploymentService
             throw new \Exception('The assigned node no longer exists. Please assign a valid node.');
         }
 
-        // Update application status
-        $db->update('applications', ['status' => 'deploying'], 'id = ?', [$application->id]);
+        $previousStatus = (string)($application->status ?? 'stopped');
 
-        // Create deployment record
-        $deployment = Deployment::create([
-            'application_id' => $application->id,
-            'node_id' => $application->node_id,
-            'git_commit_sha' => $commitSha ?? $application->git_commit_sha,
-            'status' => 'queued',
-            'triggered_by' => $context['triggered_by'] ?? null,
-            'triggered_by_name' => $context['triggered_by_name'] ?? null,
-        ]);
+        try {
+            // Update application status
+            $db->update('applications', ['status' => 'deploying'], 'id = ?', [$application->id]);
 
-        // Queue the deployment task
-        self::queueDeployment($deployment, $application);
+            // Create deployment record
+            $deployment = Deployment::create([
+                'application_id' => $application->id,
+                'node_id' => $application->node_id,
+                'git_commit_sha' => $commitSha ?? $application->git_commit_sha,
+                'status' => 'queued',
+                'triggered_by' => $context['triggered_by'] ?? null,
+                'triggered_by_name' => $context['triggered_by_name'] ?? null,
+            ]);
 
-        return $deployment;
+            // Queue the deployment task (may throw if payload validation fails)
+            self::queueDeployment($deployment, $application);
+
+            return $deployment;
+        } catch (\Throwable $e) {
+            // Avoid leaving applications stuck in deploying when task queueing fails.
+            try {
+                $db->update('applications', ['status' => $previousStatus ?: 'stopped'], 'id = ?', [$application->id]);
+            } catch (\Throwable $ignored) {
+                // ignore
+            }
+
+            // Best-effort: mark any created deployment as failed so the UI isn't stuck.
+            try {
+                if (isset($deployment) && $deployment instanceof Deployment) {
+                    $deployment->markFailed('Failed to queue deployment: ' . $e->getMessage());
+                }
+            } catch (\Throwable $ignored) {
+                // ignore
+            }
+
+            throw $e;
+        }
     }
 
     /**

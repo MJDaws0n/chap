@@ -144,7 +144,7 @@ if (is_array($portsMeta)) {
                     <div class="card-body">
                         <div id="ports-list" class="flex flex-col gap-2"></div>
                         <div id="ports-empty" class="text-muted text-sm">No ports allocated.</div>
-                        <p class="form-hint mt-md">Use <code>{port[0]}</code>, <code>{port[1]}</code>, … in environment variables.</p>
+                        <p class="form-hint mt-md">Dynamic vars: <code>{port[0]}</code>, <code>{port[1]}</code>, … and <code>{name}</code>, <code>{node}</code>, <code>{repo}</code>, <code>{repo_brach}</code>, <code>{cpu}</code>, <code>{ram}</code>.</p>
                     </div>
                 </div>
 

@@ -8,6 +8,7 @@ use Chap\Services\DeploymentService;
 use Chap\Services\DynamicEnv;
 use Chap\Services\ResourceHierarchy;
 use Chap\Services\PortAllocator;
+use Chap\Services\TemplateRegistry;
 use Chap\Models\PortAllocation;
 
 /**
@@ -174,7 +175,37 @@ class Application extends BaseModel
     {
         $value = $this->template_extra_files;
         if ($value === null || $value === '') {
-            return [];
+            // Back-compat: older applications may not have template_extra_files stored.
+            // Fall back to the current Template record (which is sourced from templates/<slug>/files/*).
+            $slug = trim((string)($this->template_slug ?? ''));
+            if ($slug === '') {
+                return [];
+            }
+
+            try {
+                TemplateRegistry::syncToDatabase();
+            } catch (\Throwable $e) {
+                // ignore
+            }
+
+            $template = Template::findBySlug($slug);
+            if (!$template) {
+                return [];
+            }
+
+            $files = $template->getExtraFiles();
+            if (empty($files)) {
+                return [];
+            }
+
+            // Best-effort persist so future deploys don't need the fallback.
+            try {
+                $this->update(['template_extra_files' => json_encode($files)]);
+            } catch (\Throwable $e) {
+                // ignore
+            }
+
+            return $files;
         }
         if (is_array($value)) {
             /** @var array<string,string> */
@@ -299,10 +330,41 @@ class Application extends BaseModel
         // Resolve effective limits (including -1 auto-split) at deploy time.
         $effective = ResourceHierarchy::effectiveApplicationLimits($this);
 
+        $nodeName = '';
+        if (!empty($this->node_id)) {
+            $node = Node::find((int)$this->node_id);
+            if ($node) {
+                $nodeName = (string)$node->name;
+            }
+        }
+
+        $ramMb = (int)($effective['ram_mb'] ?? -1);
+        if ($ramMb === -1) {
+            $ramMb = ResourceHierarchy::parseDockerMemoryToMb((string)($this->memory_limit ?? ''));
+        }
+
+        $cpuMillicores = (int)($effective['cpu_millicores'] ?? -1);
+        if ($cpuMillicores === -1) {
+            $cpuMillicores = ResourceHierarchy::parseCpuMillicores((string)($this->cpu_limit ?? ''));
+        }
+        $cpuCores = $cpuMillicores === -1 ? -1 : ResourceHierarchy::cpuToCoresString($cpuMillicores);
+
+        $dynContext = [
+            'name' => (string)$this->name,
+            'node' => $nodeName,
+            'repo' => (string)($this->git_repository ?? ''),
+            // User-requested key (typo) and a correct alias
+            'repo_brach' => (string)($this->git_branch ?? ''),
+            'repo_branch' => (string)($this->git_branch ?? ''),
+            'cpu' => $cpuCores,
+            // RAM in MB as a plain number (no suffix)
+            'ram' => $ramMb,
+        ];
+
         $allocatedPorts = $this->allocatedPorts();
 
         $envVars = $this->getEnvironmentVariables();
-        $resolved = DynamicEnv::resolve($envVars, $allocatedPorts);
+        $resolved = DynamicEnv::resolve($envVars, $allocatedPorts, $dynContext);
         if (!empty($resolved['errors'])) {
             $details = [];
             foreach ($resolved['errors'] as $k => $msg) {

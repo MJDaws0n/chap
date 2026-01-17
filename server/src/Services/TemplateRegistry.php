@@ -2,6 +2,7 @@
 
 namespace Chap\Services;
 
+use Chap\App;
 use Chap\Models\Template;
 
 final class TemplateRegistry
@@ -20,7 +21,11 @@ final class TemplateRegistry
 
         $scanned = 0;
         $upserted = 0;
+        $deactivated = 0;
         $errors = [];
+
+        /** @var array<string,bool> */
+        $seenSlugs = [];
 
         foreach ($roots as $root) {
             $base = (string)$root['path'];
@@ -49,6 +54,11 @@ final class TemplateRegistry
                     $scanned++;
                     $attrs = $pkg->toTemplateAttributes();
 
+                    $slug = (string)($attrs['slug'] ?? '');
+                    if ($slug !== '') {
+                        $seenSlugs[$slug] = true;
+                    }
+
                     $existing = Template::findBySlug((string)$attrs['slug']);
                     if ($existing) {
                         $existing->update($attrs);
@@ -63,7 +73,24 @@ final class TemplateRegistry
             }
         }
 
-        return ['scanned' => $scanned, 'upserted' => $upserted, 'errors' => $errors];
+        // Deactivate templates that no longer exist on disk.
+        // This removes previously-seeded "built-in" templates that aren't backed by a template directory.
+        try {
+            $db = App::db();
+            $rows = $db->fetchAll("SELECT id, slug FROM templates WHERE is_active = 1");
+            foreach ($rows as $row) {
+                $slug = (string)($row['slug'] ?? '');
+                if ($slug === '' || isset($seenSlugs[$slug])) {
+                    continue;
+                }
+                $db->update('templates', ['is_active' => 0], 'id = ?', [(int)$row['id']]);
+                $deactivated++;
+            }
+        } catch (\Throwable $e) {
+            $errors[] = 'deactivation: ' . $e->getMessage();
+        }
+
+        return ['scanned' => $scanned, 'upserted' => $upserted, 'deactivated' => $deactivated, 'errors' => $errors];
     }
 
     private static function loadPackageFromDirectory(string $dir, bool $defaultIsOfficial): ?TemplatePackage

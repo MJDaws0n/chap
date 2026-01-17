@@ -543,9 +543,29 @@ class ApplicationController extends BaseController
         if ($reservationUuid !== '' && isset($node) && $node) {
             $reservedPorts = PortAllocation::portsForReservation($reservationUuid, (int)$node->id);
         }
-        $dynErrors = DynamicEnv::validate($envVars, $reservedPorts);
+
+        $ramMbForCtx = $ramMbLimit;
+        if ($ramMbForCtx === -1) {
+            $ramMbForCtx = ResourceHierarchy::parseDockerMemoryToMb((string)($data['memory_limit'] ?? ''));
+        }
+        $cpuMillicoresForCtx = $cpuMillicoresLimit;
+        if ($cpuMillicoresForCtx === -1) {
+            $cpuMillicoresForCtx = ResourceHierarchy::parseCpuMillicores((string)($data['cpu_limit'] ?? ''));
+        }
+        $cpuForCtx = $cpuMillicoresForCtx === -1 ? -1 : ResourceHierarchy::cpuToCoresString($cpuMillicoresForCtx);
+        $ctx = [
+            'name' => (string)($data['name'] ?? ''),
+            'node' => isset($node) && $node ? (string)$node->name : '',
+            'repo' => $template ? '' : (string)($data['git_repository'] ?? ''),
+            'repo_brach' => (string)($data['git_branch'] ?? 'main'),
+            'repo_branch' => (string)($data['git_branch'] ?? 'main'),
+            'cpu' => $cpuForCtx,
+            'ram' => $ramMbForCtx,
+        ];
+
+        $dynErrors = DynamicEnv::validate($envVars, $reservedPorts, $ctx);
         if (!empty($dynErrors)) {
-            $errors['environment_variables'] = 'One or more variables reference missing allocated ports. Allocate ports first or fix {port[i]} indices.';
+            $errors['environment_variables'] = 'One or more variables reference unavailable dynamic values. Allocate ports first or fix {port[i]} indices, or adjust other placeholders.';
         }
 
         if (!empty($errors)) {
@@ -762,11 +782,40 @@ class ApplicationController extends BaseController
         // If moving nodes, existing allocations will be released and ports must be re-allocated on the new node.
         $isMovingNodes = ((string)$oldNodeId !== (string)$nodeId);
         $portsForValidation = $isMovingNodes ? [] : PortAllocation::portsForApplication((int)$application->id);
-        $dynErrors = DynamicEnv::validate($envVars, $portsForValidation);
+
+        $nodeNameForCtx = '';
+        if (!empty($nodeId)) {
+            $n = Node::find((int)$nodeId);
+            if ($n) {
+                $nodeNameForCtx = (string)$n->name;
+            }
+        }
+
+        $ramMbForCtx = $ramMbLimit;
+        if ($ramMbForCtx === -1) {
+            $ramMbForCtx = ResourceHierarchy::parseDockerMemoryToMb((string)($memoryLimitInput ?? ''));
+        }
+        $cpuMillicoresForCtx = $cpuMillicoresLimit;
+        if ($cpuMillicoresForCtx === -1) {
+            $cpuMillicoresForCtx = ResourceHierarchy::parseCpuMillicores((string)($cpuLimitInput ?? ''));
+        }
+        $cpuForCtx = $cpuMillicoresForCtx === -1 ? -1 : ResourceHierarchy::cpuToCoresString($cpuMillicoresForCtx);
+
+        $ctx = [
+            'name' => (string)($application->name ?? ''),
+            'node' => $nodeNameForCtx,
+            'repo' => (string)($application->git_repository ?? ''),
+            'repo_brach' => (string)($application->git_branch ?? ''),
+            'repo_branch' => (string)($application->git_branch ?? ''),
+            'cpu' => $cpuForCtx,
+            'ram' => $ramMbForCtx,
+        ];
+
+        $dynErrors = DynamicEnv::validate($envVars, $portsForValidation, $ctx);
         if (!empty($dynErrors)) {
             $errors['environment_variables'] = $isMovingNodes
                 ? 'Your environment variables reference {port[i]} but the application is changing nodes. Move the app first, then allocate new ports, then update {port[i]} indices.'
-                : 'One or more variables reference missing allocated ports. Allocate ports first or fix {port[i]} indices.';
+                : 'One or more variables reference unavailable dynamic values. Allocate ports first or fix {port[i]} indices, or adjust other placeholders.';
         }
 
         // Validate configured resource limits against parent environment effective totals (fixed allocations only).
