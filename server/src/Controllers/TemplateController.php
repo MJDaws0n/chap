@@ -8,8 +8,13 @@ use Chap\Models\Environment;
 use Chap\Models\Node;
 use Chap\Models\Project;
 use Chap\Models\Template;
+use Chap\Models\PortAllocation;
 use Chap\Services\NodeAccess;
 use Chap\Services\TemplateRegistry;
+use Chap\Services\DynamicEnv;
+use Chap\Services\ResourceAllocator;
+use Chap\Services\ResourceHierarchy;
+use Chap\Services\PortAllocator;
 
 /**
  * Template Controller
@@ -185,6 +190,66 @@ class TemplateController extends BaseController
             $name = $template->name;
         }
 
+        // Parse and validate resource limits
+        $cpuLimitInput = trim((string)$this->input('cpu_limit', ''));
+        $memoryLimitInput = trim((string)$this->input('memory_limit', ''));
+        
+        $cpuMillicores = -1;
+        $ramMb = -1;
+        
+        if ($cpuLimitInput !== '') {
+            try {
+                $cpuMillicores = ResourceHierarchy::parseCpuMillicores($cpuLimitInput);
+            } catch (\Exception $e) {
+                $_SESSION['_errors']['cpu_limit'] = $e->getMessage();
+                $_SESSION['_old_input'] = $_POST;
+                $this->redirect('/templates/' . urlencode($slug));
+                return;
+            }
+        }
+        
+        if ($memoryLimitInput !== '') {
+            try {
+                $ramMb = ResourceHierarchy::parseDockerMemoryToMb($memoryLimitInput);
+            } catch (\Exception $e) {
+                $_SESSION['_errors']['memory_limit'] = $e->getMessage();
+                $_SESSION['_old_input'] = $_POST;
+                $this->redirect('/templates/' . urlencode($slug));
+                return;
+            }
+        }
+        
+        // Validate against environment limits
+        if ($cpuMillicores !== -1 || $ramMb !== -1) {
+            $parent = ResourceHierarchy::effectiveEnvironmentLimits($environment);
+            $siblings = Application::forEnvironment((int)$environment->id);
+            
+            $cpuMap = [];
+            $ramMap = [];
+            foreach ($siblings as $a) {
+                $cpuMap[(int)$a->id] = (int)$a->cpu_millicores_limit;
+                $ramMap[(int)$a->id] = (int)$a->ram_mb_limit;
+            }
+            
+            // Synthetic child id 0 for the new application
+            $cpuMap[0] = $cpuMillicores;
+            $ramMap[0] = $ramMb;
+            
+            if ($cpuMillicores !== -1 && !ResourceAllocator::validateDoesNotOverallocate((int)$parent['cpu_millicores'], $cpuMap)) {
+                $_SESSION['_errors']['cpu_limit'] = 'CPU allocations exceed the environment\'s remaining limit';
+                $_SESSION['_old_input'] = $_POST;
+                $this->redirect('/templates/' . urlencode($slug));
+                return;
+            }
+            
+            if ($ramMb !== -1 && !ResourceAllocator::validateDoesNotOverallocate((int)$parent['ram_mb'], $ramMap)) {
+                $_SESSION['_errors']['memory_limit'] = 'RAM allocations exceed the environment\'s remaining limit';
+                $_SESSION['_old_input'] = $_POST;
+                $this->redirect('/templates/' . urlencode($slug));
+                return;
+            }
+        }
+
         // Merge template env defaults + required keys + user overrides
         $envVars = $template->getDefaultEnvironmentVariables();
         $required = $template->getRequiredEnvironmentVariables();
@@ -208,6 +273,22 @@ class TemplateController extends BaseController
                 $envVars[$k] = trim($v);
             }
         }
+        
+        // Validate dynamic environment variables with port reservations
+        $reservationUuid = trim((string)$this->input('port_reservation_uuid', ''));
+        $reservedPorts = [];
+        if ($reservationUuid !== '') {
+            $reservedPorts = PortAllocation::portsForReservation($reservationUuid, (int)$node->id);
+        }
+        
+        try {
+            DynamicEnv::validate($envVars, $reservedPorts);
+        } catch (\Exception $e) {
+            $_SESSION['_errors']['environment_variables'] = $e->getMessage();
+            $_SESSION['_old_input'] = $_POST;
+            $this->redirect('/templates/' . urlencode($slug));
+            return;
+        }
 
         $application = Application::create([
             'environment_id' => $environment->id,
@@ -218,10 +299,10 @@ class TemplateController extends BaseController
             'git_repository' => null,
             'git_branch' => 'main',
             'environment_variables' => !empty($envVars) ? json_encode($envVars) : null,
-            'memory_limit' => '512m',
-            'cpu_limit' => '1',
-            'cpu_millicores_limit' => -1,
-            'ram_mb_limit' => -1,
+            'memory_limit' => $memoryLimitInput !== '' ? $memoryLimitInput : '512m',
+            'cpu_limit' => $cpuLimitInput !== '' ? $cpuLimitInput : '1',
+            'cpu_millicores_limit' => $cpuMillicores,
+            'ram_mb_limit' => $ramMb,
             'storage_mb_limit' => -1,
             'port_limit' => -1,
             'bandwidth_mbps_limit' => -1,
@@ -233,6 +314,11 @@ class TemplateController extends BaseController
             'template_docker_compose' => $template->docker_compose,
             'template_extra_files' => !empty($template->extra_files) ? (is_string($template->extra_files) ? $template->extra_files : json_encode($template->extra_files)) : null,
         ]);
+        
+        // Attach port reservation if provided
+        if ($reservationUuid !== '' && $application->node_id) {
+            PortAllocator::attachReservationToApplication($reservationUuid, (int)$application->node_id, (int)$application->id);
+        }
 
         flash('success', 'Application created from template');
         $this->redirect('/applications/' . $application->uuid);

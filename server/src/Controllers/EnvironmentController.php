@@ -6,6 +6,7 @@ use Chap\Models\Environment;
 use Chap\Models\Project;
 use Chap\Models\Node;
 use Chap\Services\NodeAccess;
+use Chap\Services\ApplicationCleanupService;
 use Chap\Services\ResourceAllocator;
 use Chap\Services\ResourceHierarchy;
 
@@ -325,6 +326,9 @@ class EnvironmentController extends BaseController
         }
 
         $projectUuid = $project->uuid;
+            // Ensure applications are stopped and removed on their nodes before
+            // we delete the environment (DB cascades alone won't notify nodes).
+            ApplicationCleanupService::deleteAllForEnvironment($environment);
         $environment->delete();
 
         if ($this->isApiRequest()) {

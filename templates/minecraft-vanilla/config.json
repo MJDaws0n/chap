@@ -1,36 +1,17 @@
 {
   "name": "Minecraft (Vanilla)",
+  "version": "1.0.0",
   "slug": "minecraft-vanilla",
   "description": "A vanilla Minecraft server using Docker Compose.",
   "category": "Minecraft",
-  "icon": "⛏️",
-  "documentation_url": "https://minecraft.wiki/Java_Edition_server",
-  "source_url": "https://github.com/max/chap/tree/main/templates/minecraft-vanilla",
-  "default_environment_variables": {
+  "doc_url": "https://minecraft.wiki/Java_Edition_server",
+  "env_variables": {
     "EULA": "TRUE",
     "MINECRAFT_VERSION": "latest",
     "MEMORY": "2G",
     "MINECRAFT_PORT": "{port[0]}",
     "JAVA_EXTRA_ARGS": ""
   },
-  "required_environment_variables": [
-    "EULA"
-  ],
-  "ports": [
-    {
-      "container": 25565,
-      "protocol": "tcp",
-      "description": "Minecraft server"
-    }
-  ],
-  "volumes": [
-    {
-      "name": "minecraft-data",
-      "mount": "/data",
-      "description": "World data and configuration"
-    }
-  ],
-  "version": "1.0.0",
-  "is_official": true,
-  "is_active": true
+  "default_ports_required": 1,
+  "is_official": true
 }

@@ -7,6 +7,7 @@ use Chap\Auth\TeamPermissions;
 use Chap\Auth\TeamRoleSeeder;
 use Chap\Models\Team;
 use Chap\Models\User;
+use Chap\Services\ApplicationCleanupService;
 use Chap\Services\ResourceHierarchy;
 use Chap\Services\NodeAccess;
 use Chap\Services\ResourceAllocator;
@@ -321,6 +322,10 @@ class TeamController extends BaseController
             redirect('/teams/' . $id);
             return;
         }
+
+        // Ensure applications are stopped and removed on their nodes before
+        // we delete the team (DB cascades alone won't notify nodes).
+        ApplicationCleanupService::deleteAllForTeam($team);
 
         $team->delete();
 

@@ -6,7 +6,7 @@ RUN apt-get update \
 
 WORKDIR /data
 
-COPY entrypoint.sh /entrypoint.sh
+COPY files/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 25565

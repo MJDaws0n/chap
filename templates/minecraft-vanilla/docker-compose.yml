@@ -1,8 +1,8 @@
-version: "3.8"
-
 services:
   minecraft:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
       EULA: "${EULA:-FALSE}"
       MINECRAFT_VERSION: "${MINECRAFT_VERSION:-latest}"

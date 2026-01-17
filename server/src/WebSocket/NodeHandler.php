@@ -149,6 +149,23 @@ class NodeHandler implements MessageComponentInterface {
                 $taskId = $payload['task_id'] ?? '';
                 if ($data['type'] === 'application:deleted') {
                     echo "Application deleted on node: {$applicationUuid} task_id={$taskId}\n";
+
+                    // Best-effort: remove any tracked container rows for this app.
+                    // The application row may already be gone (e.g. deleted via cascade),
+                    // so also match by container name containing the UUID.
+                    try {
+                        $db = \Chap\App::db();
+                        $nodeId = $from->nodeId ?? null;
+                        if ($nodeId && $applicationUuid) {
+                            $appRow = $db->fetch("SELECT id FROM applications WHERE uuid = ?", [$applicationUuid]);
+                            if ($appRow && !empty($appRow['id'])) {
+                                $db->query("DELETE FROM containers WHERE application_id = ?", [(int)$appRow['id']]);
+                            }
+                            $db->query("DELETE FROM containers WHERE node_id = ? AND name LIKE ?", [(int)$nodeId, '%' . $applicationUuid . '%']);
+                        }
+                    } catch (\Throwable $e) {
+                        // ignore
+                    }
                 } else {
                     $error = $payload['error'] ?? 'Unknown error';
                     echo "Application delete failed on node: {$applicationUuid} task_id={$taskId} error={$error}\n";

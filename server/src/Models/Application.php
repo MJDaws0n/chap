@@ -7,6 +7,7 @@ use Chap\WebSocket\Server as WebSocketServer;
 use Chap\Services\DeploymentService;
 use Chap\Services\DynamicEnv;
 use Chap\Services\ResourceHierarchy;
+use Chap\Services\PortAllocator;
 use Chap\Models\PortAllocation;
 
 /**
@@ -246,6 +247,16 @@ class Application extends BaseModel
      */
     public function delete(): bool
     {
+        // Best-effort: release any allocated ports in DB (some installs may not have
+        // the FK cascade on port_allocations.application_id).
+        try {
+            if (!empty($this->id)) {
+                PortAllocator::releaseForApplication((int)$this->id);
+            }
+        } catch (\Throwable) {
+            // ignore
+        }
+
         // Send delete command to node to remove containers
         if ($this->node_id) {
             $node = Node::find($this->node_id);

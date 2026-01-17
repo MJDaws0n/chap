@@ -544,6 +544,98 @@ function createLiveLogsWs(deps) {
     // Volume replace (streaming) transfer: transferId -> { volumeName, size, received, proc, startedAt }
     const volumeReplacements = new Map();
 
+    // Volume file upload (streaming) transfer: transferId -> { volumeName, size, received, proc, startedAt }
+    const volumeFileUploads = new Map();
+
+    // Pool helper containers per (app, volume) to avoid paying docker run startup on every page load.
+    // key -> { id, name, inUse, lastUsed, removeTimer }
+    const volumeFsHelperPool = new Map();
+    const VOLUME_FS_HELPER_IDLE_MS = 90 * 1000;
+
+    async function ensureVolumeFsHelper(browserWs, volumeName) {
+        if (!browserWs) throw new Error('Invalid connection');
+        const vol = String(volumeName || '').trim();
+        if (!vol) throw new Error('Invalid volume');
+        const appUuid = String(browserWs.applicationUuid || '').trim();
+        if (!appUuid) throw new Error('Invalid application');
+
+        if (!browserWs._volFsHelperKeys) browserWs._volFsHelperKeys = new Set();
+        const poolKey = `${appUuid}:${vol}`;
+
+        const existing = volumeFsHelperPool.get(poolKey);
+        if (existing && existing.id) {
+            try {
+                // Cancel any pending removal when reused.
+                if (existing.removeTimer) {
+                    clearTimeout(existing.removeTimer);
+                    existing.removeTimer = null;
+                }
+
+                const ping = await runDockerExec(existing.id, ['sh', '-c', 'true'], { maxBytes: 16, maxErrBytes: 64 });
+                if ((ping.code ?? 0) === 0) {
+                    existing.lastUsed = Date.now();
+                    if (!browserWs._volFsHelperKeys.has(poolKey)) {
+                        browserWs._volFsHelperKeys.add(poolKey);
+                        existing.inUse = (existing.inUse || 0) + 1;
+                    }
+                    return existing.id;
+                }
+            } catch {
+                // recreate below
+            }
+
+            try { await execCommand(`docker rm -f ${existing.id}`); } catch {}
+            volumeFsHelperPool.delete(poolKey);
+        }
+
+        const appPart = appUuid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'app';
+        const volPart = vol.replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 32) || 'vol';
+        const suffix = Math.random().toString(36).slice(2, 10);
+        const cname = `chap-volfs-${appPart}-${volPart}-${suffix}`;
+
+        const res = await runDockerRun([
+            'run', '-d', '--rm',
+            '--name', cname,
+            '-v', `${vol}:/volume`,
+            VOLUME_HELPER_IMAGE,
+            'sh', '-c', 'tail -f /dev/null',
+        ], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+
+        if ((res.code ?? 0) !== 0) {
+            throw new Error((res.stderr || '').trim() || 'Failed to start volume helper');
+        }
+        const id = String(res.stdout || '').trim().split('\n').pop().trim();
+        if (!id) throw new Error('Failed to start volume helper');
+
+        const entry = { id, name: cname, inUse: 0, lastUsed: Date.now(), removeTimer: null };
+        volumeFsHelperPool.set(poolKey, entry);
+        if (!browserWs._volFsHelperKeys.has(poolKey)) {
+            browserWs._volFsHelperKeys.add(poolKey);
+            entry.inUse += 1;
+        }
+        return id;
+    }
+
+    async function cleanupVolumeFsHelpers(browserWs) {
+        const keys = browserWs && browserWs._volFsHelperKeys;
+        if (!keys || !keys.size) return;
+        for (const poolKey of keys) {
+            const entry = volumeFsHelperPool.get(poolKey);
+            if (!entry) continue;
+            entry.inUse = Math.max(0, (entry.inUse || 0) - 1);
+            entry.lastUsed = Date.now();
+            if (entry.inUse === 0 && !entry.removeTimer) {
+                entry.removeTimer = setTimeout(async () => {
+                    const cur = volumeFsHelperPool.get(poolKey);
+                    if (!cur || cur.inUse !== 0) return;
+                    try { await execCommand(`docker rm -f ${cur.id}`); } catch {}
+                    volumeFsHelperPool.delete(poolKey);
+                }, VOLUME_FS_HELPER_IDLE_MS);
+            }
+        }
+        try { keys.clear(); } catch {}
+    }
+
     function volumesReply(browserWs, requestId, ok, resultOrError) {
         if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
         if (ok) {
@@ -747,7 +839,7 @@ function createLiveLogsWs(deps) {
         if (!requestId || !action) return volumesReply(browserWs, requestId, false, 'Missing request_id or action');
 
         // Chunk streaming should be bandwidth-limited, not request-count-limited.
-        if (action !== 'replace:chunk' && !checkVolumesRateLimit(browserWs)) {
+        if (action !== 'replace:chunk' && action !== 'fs:upload:chunk' && !checkVolumesRateLimit(browserWs)) {
             return volumesReply(browserWs, requestId, false, 'Rate limit exceeded');
         }
 
@@ -979,9 +1071,21 @@ function createLiveLogsWs(deps) {
 
                 // Permission mapping
                 const fsAction = action.slice(3);
-                if (fsAction === 'list' || fsAction === 'read') {
+                if (fsAction === 'list' || fsAction === 'read' || fsAction === 'download') {
                     if (!requirePerm('volume_files', 'read')) return;
-                } else if (fsAction === 'write' || fsAction === 'mkdir' || fsAction === 'touch') {
+                } else if (
+                    fsAction === 'write' ||
+                    fsAction === 'mkdir' ||
+                    fsAction === 'touch' ||
+                    fsAction === 'rename' ||
+                    fsAction === 'move' ||
+                    fsAction === 'copy' ||
+                    fsAction === 'archive' ||
+                    fsAction === 'unarchive' ||
+                    fsAction === 'upload:init' ||
+                    fsAction === 'upload:chunk' ||
+                    fsAction === 'upload:commit'
+                ) {
                     if (!requirePerm('volume_files', 'write')) return;
                 } else if (fsAction === 'delete') {
                     if (!requirePerm('volume_files', 'execute')) return;
@@ -991,36 +1095,26 @@ function createLiveLogsWs(deps) {
                     const dirUser = String(payload.path || '/');
                     if (!isSafePathValue(dirUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
                     const dir = toVolumeFullPath(dirUser);
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
 
-                    const listScript = [
+                    // Single exec for list+stat to avoid extra roundtrips.
+                    const script = [
                         'set -e',
                         'dir="$1"',
                         'if [ ! -d "$dir" ]; then exit 2; fi',
-                        'if command -v find >/dev/null 2>&1; then',
-                        '  find "$dir" -mindepth 1 -maxdepth 1 -print',
-                        'else',
-                        '  ls -A1 "$dir" 2>/dev/null | while IFS= read -r n; do printf "%s\n" "$dir/$n"; done',
-                        'fi',
-                    ].join('\n');
-
-                    const listRes = await runDockerRun([
-                        'run', '--rm',
-                        '-v', `${name}:/volume:ro`,
-                        VOLUME_HELPER_IMAGE,
-                        'sh', '-c', listScript, 'sh', dir,
-                    ], { maxBytes: 1024 * 1024, maxErrBytes: 64 * 1024 });
-
-                    if (listRes.code !== 0) {
-                        return volumesReply(browserWs, requestId, false, (listRes.stderr || '').trim() || 'Failed to list directory');
-                    }
-
-                    const paths = listRes.stdout.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 2000);
-
-                    const statScript = [
-                        'set -e',
-                        'dir="$1"',
-                        'shift',
-                        'for p in "$@"; do',
+                        'max=2000',
+                        'count=0',
+                        'list_paths() {',
+                        '  if command -v find >/dev/null 2>&1; then',
+                        '    find "$dir" -mindepth 1 -maxdepth 1 -print',
+                        '  else',
+                        '    ls -A1 "$dir" 2>/dev/null | while IFS= read -r n; do printf "%s\n" "$dir/$n"; done',
+                        '  fi',
+                        '}',
+                        'list_paths | while IFS= read -r p; do',
+                        '  [ -n "$p" ] || continue',
+                        '  count=$((count+1))',
+                        '  if [ "$count" -gt "$max" ]; then break; fi',
                         '  name=${p##*/}',
                         '  type=file',
                         '  if [ -d "$p" ]; then type=dir; fi',
@@ -1030,26 +1124,24 @@ function createLiveLogsWs(deps) {
                         '    size=$(stat -c %s "$p" 2>/dev/null || true)',
                         '    mtime=$(stat -c %Y "$p" 2>/dev/null || true)',
                         '  fi',
-                        '  printf "%s\t%s\t%s\t%s\t%s\n" "$name" "$type" "$size" "$mtime" "$p"',
+                        '  printf "%s\t%s\t%s\t%s\n" "$name" "$type" "$size" "$mtime"',
                         'done',
                     ].join('\n');
 
-                    const statRes = await runDockerRun([
-                        'run', '--rm',
-                        '-v', `${name}:/volume:ro`,
-                        VOLUME_HELPER_IMAGE,
-                        'sh', '-c', statScript, 'sh', dir, ...paths,
-                    ], { maxBytes: 2 * 1024 * 1024, maxErrBytes: 64 * 1024 });
+                    const res = await runDockerExec(helperId, ['sh', '-c', script, 'sh', dir], {
+                        maxBytes: 2 * 1024 * 1024,
+                        maxErrBytes: 64 * 1024,
+                    });
 
-                    if (statRes.code !== 0) {
-                        return volumesReply(browserWs, requestId, false, (statRes.stderr || '').trim() || 'Failed to stat directory entries');
+                    if ((res.code ?? 0) !== 0) {
+                        return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to list directory');
                     }
 
                     const entries = [];
-                    for (const line of statRes.stdout.split('\n')) {
+                    for (const line of res.stdout.split('\n')) {
                         if (!line.trim()) continue;
                         const parts = line.split('\t');
-                        if (parts.length < 5) continue;
+                        if (parts.length < 4) continue;
                         const [entryName, entryType, sizeRaw, mtimeRaw] = parts;
                         const mtimeNum = mtimeRaw ? parseInt(mtimeRaw, 10) : null;
                         const sizeNum = sizeRaw ? parseInt(sizeRaw, 10) : null;
@@ -1073,6 +1165,7 @@ function createLiveLogsWs(deps) {
                     const pUser = String(payload.path || '');
                     if (!isSafePathValue(pUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
                     const p = toVolumeFullPath(pUser);
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
                     const limit = FILES_LIMIT.maxReadBytes;
                     const readScript = [
                         'set -e',
@@ -1082,12 +1175,7 @@ function createLiveLogsWs(deps) {
                         `head -c ${limit + 1} "$p"`,
                     ].join('\n');
 
-                    const res = await runDockerRun([
-                        'run', '--rm',
-                        '-v', `${name}:/volume:ro`,
-                        VOLUME_HELPER_IMAGE,
-                        'sh', '-c', readScript, 'sh', p,
-                    ], { maxBytes: limit + 1, maxErrBytes: 64 * 1024 });
+                    const res = await runDockerExec(helperId, ['sh', '-c', readScript, 'sh', p], { maxBytes: limit + 1, maxErrBytes: 64 * 1024 });
 
                     if (res.code === 3) return volumesReply(browserWs, requestId, false, 'Not a regular file');
                     if (res.code === 4) return volumesReply(browserWs, requestId, false, 'File is not readable');
@@ -1104,12 +1192,8 @@ function createLiveLogsWs(deps) {
                         return volumesReply(browserWs, requestId, false, `Content too large (>${FILES_LIMIT.maxWriteBytes} bytes)`);
                     }
                     const p = toVolumeFullPath(pUser);
-                    const res = await runDockerRun([
-                        'run', '--rm', '-i',
-                        '-v', `${name}:/volume`,
-                        VOLUME_HELPER_IMAGE,
-                        'sh', '-c', 'cat > "$1"', 'sh', p,
-                    ], {
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
+                    const res = await runDockerExec(helperId, ['sh', '-c', 'cat > "$1"', 'sh', p], {
                         stdin: Buffer.from(content, 'utf8'),
                         maxBytes: 1024,
                         maxErrBytes: 64 * 1024,
@@ -1123,12 +1207,8 @@ function createLiveLogsWs(deps) {
                     const entry = String(payload.entry || payload.name || payload.folder || '').trim();
                     if (!isSafePathValue(dirUser) || !isSafeNameSegment(entry)) return volumesReply(browserWs, requestId, false, 'Invalid path');
                     const dir = toVolumeFullPath(dirUser);
-                    const res = await runDockerRun([
-                        'run', '--rm',
-                        '-v', `${name}:/volume`,
-                        VOLUME_HELPER_IMAGE,
-                        'sh', '-c', 'mkdir -p -- "$1/$2"', 'sh', dir, entry,
-                    ], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
+                    const res = await runDockerExec(helperId, ['sh', '-c', 'mkdir -p -- "$1/$2"', 'sh', dir, entry], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
                     if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to create folder');
                     return volumesReply(browserWs, requestId, true, {});
                 }
@@ -1138,29 +1218,346 @@ function createLiveLogsWs(deps) {
                     const entry = String(payload.entry || payload.name || payload.filename || '').trim();
                     if (!isSafePathValue(dirUser) || !isSafeNameSegment(entry)) return volumesReply(browserWs, requestId, false, 'Invalid path');
                     const dir = toVolumeFullPath(dirUser);
-                    const res = await runDockerRun([
-                        'run', '--rm',
-                        '-v', `${name}:/volume`,
-                        VOLUME_HELPER_IMAGE,
-                        'sh', '-c', ': > "$1/$2"', 'sh', dir, entry,
-                    ], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
+                    const res = await runDockerExec(helperId, ['sh', '-c', ': > "$1/$2"', 'sh', dir, entry], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
                     if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to create file');
                     return volumesReply(browserWs, requestId, true, {});
                 }
 
+                if (fsAction === 'rename') {
+                    const pUser = String(payload.path || '');
+                    const newName = String(payload.new_name || '').trim();
+                    if (!isSafePathValue(pUser) || !isSafeNameSegment(newName)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                    if (pUser === '/' || pUser === '.') return volumesReply(browserWs, requestId, false, 'Refusing to rename root');
+                    const parts = pUser.split('/');
+                    parts[parts.length - 1] = newName;
+                    const destUser = parts.join('/');
+                    if (!isSafePathValue(destUser)) return volumesReply(browserWs, requestId, false, 'Invalid destination');
+                    const src = toVolumeFullPath(pUser);
+                    const dest = toVolumeFullPath(destUser);
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
+                    const res = await runDockerExec(helperId, ['sh', '-c', 'mv -f -- "$1" "$2"', 'sh', src, dest], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to rename');
+                    return volumesReply(browserWs, requestId, true, {});
+                }
+
+                if (fsAction === 'move') {
+                    const destDirUser = String(payload.dest_dir || '/');
+                    if (!isSafePathValue(destDirUser)) return volumesReply(browserWs, requestId, false, 'Invalid destination');
+                    const destDir = toVolumeFullPath(destDirUser);
+
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
+
+                    const pathsRaw = Array.isArray(payload.paths) ? payload.paths : null;
+                    if (pathsRaw) {
+                        const paths = pathsRaw.map((x) => String(x || '')).filter(Boolean);
+                        if (!paths.length) return volumesReply(browserWs, requestId, false, 'No paths provided');
+                        if (paths.length > 200) return volumesReply(browserWs, requestId, false, 'Too many paths');
+                        for (const pUser of paths) {
+                            if (!isSafePathValue(pUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                            if (pUser === '/' || pUser === '.') return volumesReply(browserWs, requestId, false, 'Refusing to move root');
+                        }
+                        const fullPaths = paths.map(toVolumeFullPath);
+                        const script = [
+                            'set -e',
+                            'dest="$1"',
+                            'shift',
+                            'mkdir -p -- "$dest"',
+                            'for p in "$@"; do',
+                            '  base=$(basename "$p")',
+                            '  mv -f -- "$p" "$dest/$base"',
+                            'done',
+                        ].join('\n');
+                        const res = await runDockerExec(helperId, ['sh', '-c', script, 'sh', destDir, ...fullPaths], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                        if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to move');
+                        return volumesReply(browserWs, requestId, true, {});
+                    }
+
+                    const pUser = String(payload.path || '');
+                    if (!isSafePathValue(pUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                    if (pUser === '/' || pUser === '.') return volumesReply(browserWs, requestId, false, 'Refusing to move root');
+                    const src = toVolumeFullPath(pUser);
+                    const res = await runDockerExec(helperId, ['sh', '-c', 'dest="$2"; mkdir -p -- "$dest"; base=$(basename "$1"); mv -f -- "$1" "$dest/$base"', 'sh', src, destDir], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to move');
+                    return volumesReply(browserWs, requestId, true, {});
+                }
+
+                if (fsAction === 'copy') {
+                    const destDirUser = String(payload.dest_dir || '');
+                    const destPathUser = String(payload.dest_path || '');
+
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
+
+                    const pathsRaw = Array.isArray(payload.paths) ? payload.paths : null;
+                    if (pathsRaw) {
+                        if (!isSafePathValue(destDirUser)) return volumesReply(browserWs, requestId, false, 'Invalid destination');
+                        const destDir = toVolumeFullPath(destDirUser);
+                        const paths = pathsRaw.map((x) => String(x || '')).filter(Boolean);
+                        if (!paths.length) return volumesReply(browserWs, requestId, false, 'No paths provided');
+                        if (paths.length > 200) return volumesReply(browserWs, requestId, false, 'Too many paths');
+                        for (const pUser of paths) {
+                            if (!isSafePathValue(pUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                            if (pUser === '/' || pUser === '.') return volumesReply(browserWs, requestId, false, 'Refusing to copy root');
+                        }
+                        const fullPaths = paths.map(toVolumeFullPath);
+                        const script = [
+                            'set -e',
+                            'dest="$1"',
+                            'shift',
+                            'mkdir -p -- "$dest"',
+                            'for p in "$@"; do',
+                            '  base=$(basename "$p")',
+                            '  cp -a -- "$p" "$dest/$base"',
+                            'done',
+                        ].join('\n');
+                        const res = await runDockerExec(helperId, ['sh', '-c', script, 'sh', destDir, ...fullPaths], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                        if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to copy');
+                        return volumesReply(browserWs, requestId, true, {});
+                    }
+
+                    const pUser = String(payload.path || '');
+                    if (!isSafePathValue(pUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                    if (pUser === '/' || pUser === '.') return volumesReply(browserWs, requestId, false, 'Refusing to copy root');
+                    const src = toVolumeFullPath(pUser);
+
+                    if (destPathUser) {
+                        if (!isSafePathValue(destPathUser)) return volumesReply(browserWs, requestId, false, 'Invalid destination');
+                        const dest = toVolumeFullPath(destPathUser);
+                        const res = await runDockerExec(helperId, ['sh', '-c', 'cp -a -- "$1" "$2"', 'sh', src, dest], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                        if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to copy');
+                        return volumesReply(browserWs, requestId, true, {});
+                    }
+
+                    if (!isSafePathValue(destDirUser)) return volumesReply(browserWs, requestId, false, 'Invalid destination');
+                    const destDir = toVolumeFullPath(destDirUser);
+                    const res = await runDockerExec(helperId, ['sh', '-c', 'dest="$2"; mkdir -p -- "$dest"; base=$(basename "$1"); cp -a -- "$1" "$dest/$base"', 'sh', src, destDir], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to copy');
+                    return volumesReply(browserWs, requestId, true, {});
+                }
+
+                if (fsAction === 'archive') {
+                    const namesRaw = Array.isArray(payload.names) ? payload.names : null;
+                    const dirUser = String(payload.dir || '');
+                    const outDirUser = String(payload.out_dir || '/');
+                    const outName = String(payload.out_name || 'archive.tar.gz');
+
+                    if (!namesRaw) return volumesReply(browserWs, requestId, false, 'Missing names');
+                    if (!isSafePathValue(dirUser) || !isSafePathValue(outDirUser) || !isSafeNameSegment(outName)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+
+                    const names = namesRaw.map((x) => String(x || '')).filter(Boolean);
+                    if (!names.length) return volumesReply(browserWs, requestId, false, 'No items provided');
+                    if (names.length > 200) return volumesReply(browserWs, requestId, false, 'Too many items');
+                    for (const n of names) {
+                        if (!isSafeNameSegment(n)) return volumesReply(browserWs, requestId, false, 'Invalid name');
+                    }
+
+                    const dir = toVolumeFullPath(dirUser);
+                    const outDir = toVolumeFullPath(outDirUser);
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
+                    const script = [
+                        'set -e',
+                        'dir="$1"',
+                        'out_dir="$2"',
+                        'out_name="$3"',
+                        'out="$out_dir/$out_name"',
+                        'shift 3',
+                        'mkdir -p -- "$out_dir"',
+                        'tar -czf "$out" -C "$dir" -- "$@"',
+                    ].join('\n');
+                    const res = await runDockerExec(helperId, ['sh', '-c', script, 'sh', dir, outDir, outName, ...names], { maxBytes: 1024, maxErrBytes: 128 * 1024 });
+                    if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to archive (tar required)');
+                    return volumesReply(browserWs, requestId, true, {});
+                }
+
+                if (fsAction === 'unarchive') {
+                    const pUser = String(payload.path || '');
+                    const destDirUser = String(payload.dest_dir || '/');
+                    if (!isSafePathValue(pUser) || !isSafePathValue(destDirUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                    const p = toVolumeFullPath(pUser);
+                    const destDir = toVolumeFullPath(destDirUser);
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
+                    const res = await runDockerExec(helperId, ['sh', '-c', 'mkdir -p "$2" && tar -xzf "$1" -C "$2"', 'sh', p, destDir], { maxBytes: 1024, maxErrBytes: 128 * 1024 });
+                    if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to unarchive (tar required)');
+                    return volumesReply(browserWs, requestId, true, {});
+                }
+
+                if (fsAction === 'upload:init') {
+                    if (!requirePerm('volume_files', 'write')) return;
+                    const dirUser = String(payload.dir || '/');
+                    const entry = String(payload.name || '').trim();
+                    const size = parseInt(String(payload.size || '0'), 10);
+                    if (!isSafePathValue(dirUser) || !isSafeNameSegment(entry)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                    if (!Number.isFinite(size) || size < 0 || size > VOLUMES_LIMIT.maxUploadBytes) {
+                        return volumesReply(browserWs, requestId, false, `Upload too large (max ${VOLUMES_LIMIT.maxUploadBytes} bytes)`);
+                    }
+
+                    const transferId = `vfu_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+                    const destUser = dirUser === '/' ? `/${entry}` : `${dirUser.replace(/\/+$/, '')}/${entry}`;
+                    if (!isSafePathValue(destUser)) return volumesReply(browserWs, requestId, false, 'Invalid destination');
+                    const dest = toVolumeFullPath(destUser);
+
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
+                    const proc = spawn('docker', [
+                        'exec', '-i', helperId,
+                        'sh', '-c', 'cat > "$1"', 'sh', dest,
+                    ], { stdio: ['pipe', 'ignore', 'pipe'] });
+
+                    let stderr = '';
+                    proc.stderr.on('data', (c) => { stderr += c.toString(); });
+                    proc.on('close', (code) => {
+                        const t = volumeFileUploads.get(transferId);
+                        if (t) t.exitCode = code ?? 0;
+                        if ((code ?? 0) !== 0) {
+                            if (browserWs && browserWs.readyState === WebSocket.OPEN) {
+                                safeJsonSend(browserWs, { type: 'error', error: (stderr || '').trim() || 'Upload failed' });
+                            }
+                        }
+                        volumeFileUploads.delete(transferId);
+                    });
+                    proc.on('error', () => {
+                        volumeFileUploads.delete(transferId);
+                    });
+
+                    volumeFileUploads.set(transferId, { volumeName: name, size, received: 0, proc, startedAt: Date.now() });
+                    return volumesReply(browserWs, requestId, true, { transfer_id: transferId, chunk_size: VOLUMES_LIMIT.uploadChunkBytes });
+                }
+
+                if (fsAction === 'upload:chunk') {
+                    const transferId = String(payload.transfer_id || '');
+                    const offset = parseInt(String(payload.offset || '0'), 10);
+                    const dataB64 = String(payload.data_b64 || '');
+                    const t = volumeFileUploads.get(transferId);
+                    if (!t || !t.proc || t.volumeName !== name) return volumesReply(browserWs, requestId, false, 'Invalid transfer');
+                    if (!Number.isFinite(offset) || offset !== t.received) return volumesReply(browserWs, requestId, false, 'Invalid offset');
+
+                    let buf;
+                    try { buf = Buffer.from(dataB64, 'base64'); } catch { return volumesReply(browserWs, requestId, false, 'Invalid base64'); }
+
+                    if (!checkVolumesStreamRateLimit(browserWs, buf.length)) {
+                        return volumesReply(browserWs, requestId, false, 'Rate limit exceeded');
+                    }
+
+                    t.received += buf.length;
+                    if (t.received > t.size || t.received > VOLUMES_LIMIT.maxUploadBytes) {
+                        try { t.proc.kill('SIGKILL'); } catch {}
+                        volumeFileUploads.delete(transferId);
+                        return volumesReply(browserWs, requestId, false, 'Upload too large');
+                    }
+
+                    try {
+                        const ok = t.proc.stdin.write(buf);
+                        if (!ok) {
+                            await new Promise((resolve) => t.proc.stdin.once('drain', resolve));
+                        }
+                    } catch {
+                        try { t.proc.kill('SIGKILL'); } catch {}
+                        volumeFileUploads.delete(transferId);
+                        return volumesReply(browserWs, requestId, false, 'Failed to stream upload');
+                    }
+
+                    return volumesReply(browserWs, requestId, true, {});
+                }
+
+                if (fsAction === 'upload:commit') {
+                    const transferId = String(payload.transfer_id || '');
+                    const t = volumeFileUploads.get(transferId);
+                    if (!t || !t.proc || t.volumeName !== name) return volumesReply(browserWs, requestId, false, 'Invalid transfer');
+                    if (t.received !== t.size) return volumesReply(browserWs, requestId, false, 'Upload incomplete');
+
+                    const proc = t.proc;
+                    try { proc.stdin.end(); } catch {}
+
+                    const ok = await new Promise((resolve) => {
+                        let done = false;
+                        const finish = (success) => {
+                            if (done) return;
+                            done = true;
+                            resolve(success);
+                        };
+                        proc.on('close', (code) => finish((code ?? 0) === 0));
+                        proc.on('error', () => finish(false));
+                    });
+
+                    volumeFileUploads.delete(transferId);
+                    if (!ok) return volumesReply(browserWs, requestId, false, 'Upload failed');
+                    return volumesReply(browserWs, requestId, true, {});
+                }
+
+                if (fsAction === 'download') {
+                    const pUser = String(payload.path || '');
+                    if (!isSafePathValue(pUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                    const p = toVolumeFullPath(pUser);
+
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
+
+                    const sizeRes = await runDockerExec(helperId, ['sh', '-c', 'stat -c %s "$1" 2>/dev/null || echo -1', 'sh', p], { maxBytes: 1024, maxErrBytes: 1024 });
+                    const size = parseInt((sizeRes.stdout || '').trim(), 10);
+                    if (Number.isFinite(size) && size > VOLUMES_LIMIT.maxDownloadBytes) {
+                        return volumesReply(browserWs, requestId, false, `File too large to download (>${VOLUMES_LIMIT.maxDownloadBytes} bytes)`);
+                    }
+
+                    const transferId = `vfdl_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+                    const filename = pUser.split('/').pop() || 'download';
+                    safeJsonSend(browserWs, { type: 'volume_files:download:start', transfer_id: transferId, name: filename, mime: 'application/octet-stream' });
+
+                    const proc = spawn('docker', ['exec', helperId, 'cat', '--', p], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+                    let sent = 0;
+                    proc.stdout.on('data', (chunk) => {
+                        if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+                        sent += chunk.length;
+                        if (sent > VOLUMES_LIMIT.maxDownloadBytes) {
+                            try { proc.kill(); } catch {}
+                            return;
+                        }
+                        for (let i = 0; i < chunk.length; i += VOLUMES_LIMIT.chunkBytes) {
+                            const part = chunk.subarray(i, i + VOLUMES_LIMIT.chunkBytes);
+                            safeJsonSend(browserWs, { type: 'volume_files:download:chunk', transfer_id: transferId, data_b64: part.toString('base64') });
+                        }
+                    });
+
+                    proc.on('close', (code) => {
+                        if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+                        if ((code ?? 0) !== 0) {
+                            safeJsonSend(browserWs, { type: 'error', error: 'Download failed' });
+                            return;
+                        }
+                        safeJsonSend(browserWs, { type: 'volume_files:download:done', transfer_id: transferId, name: filename });
+                    });
+
+                    proc.on('error', () => {
+                        if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+                        safeJsonSend(browserWs, { type: 'error', error: 'Download failed to start' });
+                    });
+
+                    return volumesReply(browserWs, requestId, true, { transfer_id: transferId });
+                }
+
                 if (fsAction === 'delete') {
+                    const pathsRaw = Array.isArray(payload.paths) ? payload.paths : null;
+                    if (pathsRaw) {
+                        const pathsUser = pathsRaw.map((x) => String(x || '')).filter(Boolean);
+                        if (!pathsUser.length) return volumesReply(browserWs, requestId, false, 'No paths provided');
+                        if (pathsUser.length > 200) return volumesReply(browserWs, requestId, false, 'Too many paths');
+                        for (const pUser of pathsUser) {
+                            if (!isSafePathValue(pUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                            if (pUser === '/' || pUser === '.') return volumesReply(browserWs, requestId, false, 'Refusing to delete root');
+                        }
+                        const paths = pathsUser.map(toVolumeFullPath);
+                        const helperId = await ensureVolumeFsHelper(browserWs, name);
+                        const res = await runDockerExec(helperId, ['sh', '-c', 'rm -rf -- "$@"', 'sh', ...paths], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                        if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to delete');
+                        return volumesReply(browserWs, requestId, true, {});
+                    }
+
                     const pUser = String(payload.path || '');
                     const type = String(payload.type || 'file');
                     if (!isSafePathValue(pUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
                     if (pUser === '/' || pUser === '.') return volumesReply(browserWs, requestId, false, 'Refusing to delete root');
                     const p = toVolumeFullPath(pUser);
                     const cmd = type === 'dir' ? 'rm -rf -- "$1"' : 'rm -f -- "$1"';
-                    const res = await runDockerRun([
-                        'run', '--rm',
-                        '-v', `${name}:/volume`,
-                        VOLUME_HELPER_IMAGE,
-                        'sh', '-c', cmd, 'sh', p,
-                    ], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
+                    const res = await runDockerExec(helperId, ['sh', '-c', cmd, 'sh', p], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
                     if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to delete');
                     return volumesReply(browserWs, requestId, true, {});
                 }
@@ -2263,6 +2660,10 @@ function createLiveLogsWs(deps) {
                     }
                     try { browserWs._consoleSessions.clear(); } catch {}
                 }
+
+                // Stop per-connection helper containers (volume filesystem).
+                cleanupVolumeFsHelpers(browserWs).catch(() => {});
+
                 stopAllLogProcesses(browserWs);
                 if (browserWs._containerDiscoveryTimer) {
                     clearInterval(browserWs._containerDiscoveryTimer);

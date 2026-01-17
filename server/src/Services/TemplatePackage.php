@@ -54,6 +54,20 @@ final class TemplatePackage
             ? (bool)$this->config['is_active']
             : true;
 
+        $documentationUrl = $this->config['documentation_url']
+            ?? ($this->config['doc_url'] ?? ($this->config['documentation'] ?? null));
+
+        $defaultEnv = $this->config['default_environment_variables']
+            ?? ($this->config['env_variables'] ?? ($this->config['env'] ?? null));
+
+        $requiredEnv = $this->config['required_environment_variables']
+            ?? ($this->config['required_env_variables'] ?? null);
+
+        $portsConfig = $this->config['ports'] ?? null;
+        if ($portsConfig === null && array_key_exists('default_ports_required', $this->config)) {
+            $portsConfig = ['required_count' => (int)$this->config['default_ports_required']];
+        }
+
         return [
             'name' => $this->name(),
             'slug' => $this->slug(),
@@ -63,13 +77,13 @@ final class TemplatePackage
             'docker_compose' => $this->dockerCompose,
             // Treat documentation as a URL (config key: documentation_url).
             // Back-compat: fall back to `documentation` if provided.
-            'documentation' => $this->nullableString($this->config['documentation_url'] ?? ($this->config['documentation'] ?? null)),
+            'documentation' => $this->nullableString($documentationUrl),
             // Optional template source/repository URL.
             // Back-compat: accept a couple of common aliases.
             'source_url' => $this->nullableString($this->config['source_url'] ?? ($this->config['repo_url'] ?? ($this->config['repository_url'] ?? null))),
-            'default_environment_variables' => $this->encodeJson($this->config['default_environment_variables'] ?? null),
-            'required_environment_variables' => $this->encodeJson($this->config['required_environment_variables'] ?? null),
-            'ports' => $this->encodeJson($this->config['ports'] ?? null),
+            'default_environment_variables' => $this->encodeJson($defaultEnv),
+            'required_environment_variables' => $this->encodeJson($requiredEnv),
+            'ports' => $this->encodeJson($portsConfig),
             'volumes' => $this->encodeJson($this->config['volumes'] ?? null),
             'version' => $this->nullableString($this->config['version'] ?? null),
             'is_official' => $isOfficial ? 1 : 0,

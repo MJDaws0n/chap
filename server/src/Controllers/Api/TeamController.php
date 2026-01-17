@@ -3,6 +3,7 @@
 namespace Chap\Controllers\Api;
 
 use Chap\Models\Team;
+use Chap\Services\ApplicationCleanupService;
 
 /**
  * API Team Controller
@@ -113,6 +114,7 @@ class TeamController extends BaseApiController
             return;
         }
 
+        ApplicationCleanupService::deleteAllForTeam($team);
         $team->delete();
 
         $this->success(['message' => 'Team deleted']);

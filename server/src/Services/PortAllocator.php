@@ -217,6 +217,47 @@ final class PortAllocator
         $db->query('DELETE FROM port_allocations WHERE application_id = ?', [$applicationId]);
     }
 
+    /**
+     * Best-effort cleanup for allocations that can permanently block ports:
+     * - orphaned allocations where application_id points to a deleted application
+     * - orphaned allocations where node_id points to a deleted node
+     * - expired (or missing expiry) reservations
+     *
+     * @return array{expired_reservations:int, orphaned_app_allocations:int, orphaned_node_allocations:int, total:int}
+     */
+    public static function cleanupOrphanedAllocations(bool $clearAllReservations = false): array
+    {
+        $db = App::db();
+
+        // Reservation rows should not block ports forever.
+        // By default: only clear expired (or missing expiry). Optionally, clear all.
+        $sql = $clearAllReservations
+            ? 'DELETE FROM port_allocations WHERE application_id IS NULL AND reservation_uuid IS NOT NULL'
+            : 'DELETE FROM port_allocations WHERE application_id IS NULL AND reservation_uuid IS NOT NULL AND (expires_at IS NULL OR expires_at < NOW())';
+
+        $stmt = $db->query($sql);
+        $expired = (int)$stmt->rowCount();
+
+        // Orphaned allocations (app deleted but allocation row remains).
+        $stmt = $db->query(
+            'DELETE pa FROM port_allocations pa LEFT JOIN applications a ON a.id = pa.application_id WHERE pa.application_id IS NOT NULL AND a.id IS NULL'
+        );
+        $orphanApps = (int)$stmt->rowCount();
+
+        // Orphaned allocations (node deleted but allocation row remains).
+        $stmt = $db->query(
+            'DELETE pa FROM port_allocations pa LEFT JOIN nodes n ON n.id = pa.node_id WHERE n.id IS NULL'
+        );
+        $orphanNodes = (int)$stmt->rowCount();
+
+        return [
+            'expired_reservations' => $expired,
+            'orphaned_app_allocations' => $orphanApps,
+            'orphaned_node_allocations' => $orphanNodes,
+            'total' => $expired + $orphanApps + $orphanNodes,
+        ];
+    }
+
     public static function releasePortForApplication(int $applicationId, int $nodeId, int $port): bool
     {
         $db = App::db();

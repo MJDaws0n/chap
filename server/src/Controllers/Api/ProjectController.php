@@ -3,6 +3,7 @@
 namespace Chap\Controllers\Api;
 
 use Chap\Models\Project;
+use Chap\Services\ApplicationCleanupService;
 
 /**
  * API Project Controller
@@ -108,7 +109,8 @@ class ProjectController extends BaseApiController
             return;
         }
 
-        $project->delete();
+    ApplicationCleanupService::deleteAllForProject($project);
+    $project->delete();
 
         $this->success(['message' => 'Project deleted']);
     }

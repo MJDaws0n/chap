@@ -5,6 +5,7 @@ namespace Chap\Controllers;
 use Chap\Models\Project;
 use Chap\Models\ActivityLog;
 use Chap\Models\Node;
+use Chap\Services\ApplicationCleanupService;
 use Chap\Services\NodeAccess;
 use Chap\Services\ResourceAllocator;
 use Chap\Services\ResourceHierarchy;
@@ -282,7 +283,6 @@ class ProjectController extends BaseController
     public function destroy(string $uuid): void
     {
         $project = Project::findByUuid($uuid);
-    $this->requireTeamPermission('projects', 'write', (int)$project->team_id);
 
         if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
@@ -292,6 +292,12 @@ class ProjectController extends BaseController
                 $this->redirect('/projects');
             }
         }
+
+        $this->requireTeamPermission('projects', 'write', (int)$project->team_id);
+
+        // Ensure applications are stopped and removed on their nodes before
+        // we delete the project (DB cascades alone won't notify nodes).
+        ApplicationCleanupService::deleteAllForProject($project);
 
         $projectName = $project->name;
         $project->delete();

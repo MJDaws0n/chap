@@ -28,6 +28,20 @@ foreach ($environments as $env) {
     ];
 }
 $envOptionsJson = json_encode($envOptions);
+if (!is_string($envOptionsJson) || $envOptionsJson === '') {
+    $envOptionsJson = '[]';
+}
+
+$defaultPortsRequired = 0;
+$portsMeta = $template->getPorts();
+if (is_array($portsMeta)) {
+    if (isset($portsMeta['required_count'])) {
+        $defaultPortsRequired = max(0, (int)$portsMeta['required_count']);
+    } else {
+        // Back-compat: if ports is a list, treat its length as the required count.
+        $defaultPortsRequired = max(0, count($portsMeta));
+    }
+}
 ?>
 
 <div class="flex flex-col gap-6">
@@ -248,45 +262,333 @@ $envOptionsJson = json_encode($envOptions);
 (function() {
     'use strict';
 
+    // Config from PHP
+    const config = {
+        environments: <?= $envOptionsJson ?>,
+        initialEnvB64: '<?= e($initialEnvB64) ?>',
+        initialProject: '<?= e($selectedProjectUuid) ?>',
+        initialEnv: '<?= e($selectedEnvironmentUuid) ?>',
+        initialNode: '<?= e($selectedNodeUuid) ?>',
+        defaultPortsRequired: <?= (int)$defaultPortsRequired ?>
+    };
+
+    // State
+    const state = {
+        envRows: [],
+        reservationUuid: '',
+        ports: [],
+        lastEnvUuid: config.initialEnv,
+        lastNodeUuid: config.initialNode
+    };
+
     const els = {
         project: document.getElementById('project_uuid'),
         env: document.getElementById('environment_uuid'),
+        node: document.getElementById('node_uuid'),
         envRows: document.getElementById('env-rows'),
         envEmpty: document.getElementById('env-empty'),
         envSerialized: document.getElementById('env-serialized'),
         addEnvBtn: document.getElementById('add-env-btn'),
         bulkEditBtn: document.getElementById('bulk-edit-btn'),
+        reservationUuid: document.getElementById('port_reservation_uuid'),
+        portsList: document.getElementById('ports-list'),
+        portsEmpty: document.getElementById('ports-empty'),
+        addPortBtn: document.getElementById('add-port-btn'),
+        form: document.getElementById('templateDeployForm')
     };
 
-    // Filter env dropdown by project
-    function applyEnvFilter() {
-        if (!els.project || !els.env) return;
-        const p = (els.project.value || '').trim();
-        let firstVisible = '';
-        Array.from(els.env.options).forEach((opt) => {
-            if (!opt.value) return;
-            const proj = opt.getAttribute('data-project') || '';
-            const visible = !p || proj === p;
-            opt.hidden = !visible;
-            if (visible && !firstVisible) firstVisible = opt.value;
+    function syncEnhancedSelect(selectEl) {
+        if (!(selectEl instanceof HTMLSelectElement)) return;
+
+        const dropdown = selectEl.closest('.select-dropdown');
+        if (!dropdown) return; // not enhanced
+
+        const trigger = dropdown.querySelector('.select-trigger');
+        const triggerLabel = dropdown.querySelector('.select-trigger-label');
+        const menu = dropdown.querySelector('.dropdown-menu');
+        const itemsWrap = menu ? menu.querySelector('.dropdown-items') : null;
+
+        if (trigger) {
+            trigger.disabled = !!selectEl.disabled;
+            trigger.setAttribute('aria-disabled', selectEl.disabled ? 'true' : 'false');
+        }
+
+        const selectedOption = selectEl.selectedOptions && selectEl.selectedOptions[0]
+            ? selectEl.selectedOptions[0]
+            : selectEl.options[selectEl.selectedIndex];
+        const label = selectedOption ? (selectedOption.textContent || '').trim() : '';
+        if (triggerLabel) {
+            triggerLabel.textContent = label || 'Select...';
+        }
+
+        if (!itemsWrap) return;
+
+        // Remove existing items
+        itemsWrap.querySelectorAll('.dropdown-item').forEach((n) => n.remove());
+
+        // Ensure empty placeholder exists
+        let empty = itemsWrap.querySelector('.dropdown-empty');
+        if (!empty) {
+            empty = document.createElement('div');
+            empty.className = 'dropdown-empty hidden';
+            empty.textContent = 'No results';
+            itemsWrap.insertBefore(empty, itemsWrap.firstChild);
+        }
+
+        const options = Array.from(selectEl.options);
+        const optionButtons = [];
+
+        options.forEach((option, index) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'dropdown-item';
+            btn.dataset.value = option.value;
+            btn.dataset.index = String(index);
+            btn.dataset.label = (option.textContent || '').trim();
+            btn.textContent = (option.textContent || '').trim() || option.value;
+            btn.setAttribute('role', 'option');
+
+            if (option.disabled) {
+                btn.classList.add('disabled');
+                btn.disabled = true;
+            }
+
+            btn.addEventListener('click', () => {
+                if (option.disabled) return;
+                selectEl.selectedIndex = index;
+                selectEl.value = option.value;
+                selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+
+                optionButtons.forEach(({ b, o }) => {
+                    const isSelected = o.selected;
+                    b.classList.toggle('active', isSelected);
+                    b.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+                });
+
+                const nowSelected = selectEl.selectedOptions && selectEl.selectedOptions[0]
+                    ? selectEl.selectedOptions[0]
+                    : selectEl.options[selectEl.selectedIndex];
+                const nowLabel = nowSelected ? (nowSelected.textContent || '').trim() : '';
+                if (triggerLabel) triggerLabel.textContent = nowLabel || 'Select...';
+            });
+
+            optionButtons.push({ b: btn, o: option });
+            itemsWrap.appendChild(btn);
         });
 
-        const selected = (els.env.value || '').trim();
-        const selectedOpt = selected ? els.env.querySelector('option[value="' + CSS.escape(selected) + '"]') : null;
-        if (selectedOpt && selectedOpt.hidden) {
-            els.env.value = firstVisible || '';
+        // Mark selection
+        optionButtons.forEach(({ b, o }) => {
+            const isSelected = o.selected;
+            b.classList.toggle('active', isSelected);
+            b.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+        });
+
+        // Hide empty placeholder when we have options
+        const visibleCount = optionButtons.filter(({ o }) => !o.disabled).length;
+        empty.classList.toggle('hidden', visibleCount !== 0);
+    }
+
+    // Rebuild environment dropdown for selected project (strict filtering)
+    function rebuildEnvironments() {
+        if (!els.project || !els.env) return;
+        
+        const projectUuid = (els.project.value || '').trim();
+        const currentEnvUuid = (els.env.value || '').trim();
+        const desiredEnvUuid = currentEnvUuid || (config.initialEnv || '').trim();
+        
+        // Get envs for selected project
+        const filtered = projectUuid
+            ? config.environments.filter(e => e.project_uuid === projectUuid)
+            : [];
+        
+        // Rebuild dropdown options
+        els.env.innerHTML = '<option value="">Select an environment…</option>' +
+            filtered.map(e => 
+                `<option value="${escapeAttr(e.uuid)}">${escapeHtml(e.project_name + ' / ' + e.name)}</option>`
+            ).join('');
+        
+        // Prefer: current selection -> initial selection -> first available
+        const desiredValid = desiredEnvUuid ? filtered.find(e => e.uuid === desiredEnvUuid) : null;
+        if (desiredValid) {
+            els.env.value = desiredEnvUuid;
+        } else if (filtered.length > 0) {
+            els.env.value = filtered[0].uuid;
+        }
+
+        // Disable env select until a project is selected
+        els.env.disabled = !projectUuid || filtered.length === 0;
+        syncEnhancedSelect(els.env);
+
+        // Once we've applied initial env, don't keep forcing it.
+        config.initialEnv = '';
+    }
+
+    async function ensureDefaultPortsAllocated() {
+        const required = (config.defaultPortsRequired || 0) | 0;
+        if (required <= 0) return;
+
+        const envUuid = (els.env && els.env.value || '').trim();
+        const nodeUuid = (els.node && els.node.value || '').trim();
+        if (!envUuid || !nodeUuid) return;
+
+        while ((state.ports || []).length < required) {
+            // allocateReservedPort updates state.ports
+            // eslint-disable-next-line no-await-in-loop
+            await allocateReservedPort();
+            if ((state.ports || []).length === 0) break;
         }
     }
 
-    if (els.project) {
-        els.project.addEventListener('change', applyEnvFilter);
-        applyEnvFilter();
+    // Generate/ensure reservation UUID
+    function ensureReservationUuid() {
+        if (state.reservationUuid) return state.reservationUuid;
+        
+        const generated = (window.crypto && typeof window.crypto.randomUUID === 'function')
+            ? window.crypto.randomUUID()
+            : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        
+        if (els.reservationUuid) els.reservationUuid.value = generated;
+        state.reservationUuid = generated;
+        return generated;
     }
 
-    // Environment Variables editor (copied from application create UX)
-    const state = { envRows: [] };
-    const config = { initialEnvB64: '<?= e($initialEnvB64) ?>' };
+    function reserveUrl(envUuid, nodeUuid) {
+        return `/environments/${encodeURIComponent(envUuid)}/nodes/${encodeURIComponent(nodeUuid)}/ports/reserve`;
+    }
 
+    function releaseUrl(envUuid, nodeUuid) {
+        return `/environments/${encodeURIComponent(envUuid)}/nodes/${encodeURIComponent(nodeUuid)}/ports/release`;
+    }
+
+    function renderPorts() {
+        const ports = state.ports || [];
+        if (!ports.length) {
+            if (els.portsEmpty) els.portsEmpty.classList.remove('hidden');
+            if (els.portsList) els.portsList.innerHTML = '';
+            return;
+        }
+
+        if (els.portsEmpty) els.portsEmpty.classList.add('hidden');
+        if (els.portsList) {
+            els.portsList.innerHTML = ports.map((p, idx) => `
+                <div class="flex items-center justify-between gap-3 p-2 rounded-md border border-primary">
+                    <div class="min-w-0">
+                        <div class="font-medium">${escapeHtml(String(p))}</div>
+                        <div class="text-xs text-tertiary">Use {port[${idx}]}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+    }
+
+    async function allocateReservedPort() {
+        const envUuid = (els.env && els.env.value || '').trim();
+        const nodeUuid = (els.node && els.node.value || '').trim();
+        
+        if (!envUuid) {
+            if (window.Toast) window.Toast.error('Select an environment first');
+            return;
+        }
+        if (!nodeUuid) {
+            if (window.Toast) window.Toast.error('Select a node first');
+            return;
+        }
+
+        const reservationUuid = ensureReservationUuid();
+        try {
+            if (!window.Chap || !window.Chap.ajax || typeof window.Chap.ajax.request !== 'function') {
+                throw new Error('API client not available');
+            }
+            const res = await window.Chap.ajax.request(reserveUrl(envUuid, nodeUuid), {
+                method: 'POST',
+                body: { reservation_uuid: reservationUuid }
+            });
+            state.ports = res.ports || [];
+            state.lastEnvUuid = envUuid;
+            state.lastNodeUuid = nodeUuid;
+            renderPorts();
+            if (window.Toast) window.Toast.success('Port reserved');
+        } catch (e) {
+            if (window.Toast) window.Toast.error(e.message || 'Failed to allocate port');
+        }
+    }
+
+    async function releaseReservation(envUuid, nodeUuid) {
+        const reservationUuid = ensureReservationUuid();
+        try {
+            if (!window.Chap || !window.Chap.ajax || typeof window.Chap.ajax.request !== 'function') {
+                return;
+            }
+            await window.Chap.ajax.request(releaseUrl(envUuid, nodeUuid), {
+                method: 'POST',
+                body: { reservation_uuid: reservationUuid }
+            });
+        } catch (e) {
+            // best-effort cleanup
+        }
+    }
+
+    async function onEnvOrNodeChanged() {
+        const currentEnvUuid = (els.env && els.env.value || '').trim();
+        const currentNodeUuid = (els.node && els.node.value || '').trim();
+        
+        // If env or node changed and we have allocated ports, release them
+        if (state.ports.length > 0) {
+            if (state.lastEnvUuid && state.lastNodeUuid &&
+                (state.lastEnvUuid !== currentEnvUuid || state.lastNodeUuid !== currentNodeUuid)) {
+                await releaseReservation(state.lastEnvUuid, state.lastNodeUuid);
+                state.ports = [];
+                state.lastEnvUuid = currentEnvUuid;
+                state.lastNodeUuid = currentNodeUuid;
+                renderPorts();
+            }
+        }
+    }
+
+    // Bind project/env/node change events
+    if (els.project) {
+        els.project.addEventListener('change', () => {
+            rebuildEnvironments();
+            onEnvOrNodeChanged();
+            ensureDefaultPortsAllocated();
+        });
+        rebuildEnvironments();
+        ensureDefaultPortsAllocated();
+    }
+    
+    if (els.env) {
+        els.env.addEventListener('change', () => {
+            onEnvOrNodeChanged();
+            ensureDefaultPortsAllocated();
+        });
+    }
+    
+    if (els.node) {
+        els.node.addEventListener('change', () => {
+            onEnvOrNodeChanged();
+            ensureDefaultPortsAllocated();
+        });
+    }
+    
+    if (els.addPortBtn) {
+        els.addPortBtn.addEventListener('click', allocateReservedPort);
+    }
+
+    // Environment Variables editor
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+    
     function updateEnvSerialized() {
         const serialized = state.envRows
             .filter(r => r.key)
@@ -425,6 +727,11 @@ $envOptionsJson = json_encode($envOptions);
     }
     if (els.bulkEditBtn) {
         els.bulkEditBtn.addEventListener('click', openBulkEditor);
+    }
+    
+    // On form submit, ensure env is serialized
+    if (els.form) {
+        els.form.addEventListener('submit', updateEnvSerialized);
     }
 })();
 </script>

@@ -4,6 +4,7 @@ namespace Chap\Controllers\Api;
 
 use Chap\Models\Environment;
 use Chap\Models\Project;
+use Chap\Services\ApplicationCleanupService;
 
 /**
  * API Environment Controller
@@ -138,7 +139,10 @@ class EnvironmentController extends BaseApiController
             return;
         }
 
-        $environment->delete();
+    // Ensure applications are stopped and removed on their nodes before
+    // we delete the environment (DB cascades alone won't notify nodes).
+    ApplicationCleanupService::deleteAllForEnvironment($environment);
+    $environment->delete();
 
         $this->success(['message' => 'Environment deleted']);
     }

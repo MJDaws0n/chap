@@ -37,7 +37,7 @@ $wsUrl = $browserWebsocketUrl ?? '';
                     </div>
                     <div class="min-w-0">
                         <h1 class="page-header-title">Volume filesystem</h1>
-                        <p class="page-header-description truncate">Browse and edit files inside <code><?= e($volumeName ?? '') ?></code> (no running container required).</p>
+                        <p class="page-header-description truncate">Browse and manage files inside <code><?= e($volumeName ?? '') ?></code> (no running container required).</p>
                     </div>
                 </div>
             </div>
@@ -52,6 +52,7 @@ $wsUrl = $browserWebsocketUrl ?? '';
         <div class="card">
             <div class="card-body">
                 <p class="text-danger">This application’s node does not have a Browser WebSocket URL configured.</p>
+                <p class="text-secondary">Set <code>logs_websocket_url</code> for the node to enable WebSocket features.</p>
             </div>
         </div>
     <?php else: ?>
@@ -59,41 +60,171 @@ $wsUrl = $browserWebsocketUrl ?? '';
             <div class="card-header">
                 <div class="flex items-center justify-between gap-4 flex-wrap">
                     <div class="flex items-center gap-3 flex-wrap">
-                        <span class="badge badge-default" id="vfm-status">Connecting…</span>
-                        <span class="text-sm text-secondary" id="vfm-path-label"></span>
+                        <div class="flex items-center gap-2 text-sm text-secondary" id="fm-connection-status">
+                            <span class="badge badge-default" id="fm-status">Connecting…</span>
+                        </div>
+                        <span class="text-sm text-secondary" id="fm-root">Root: /</span>
+                        <span class="text-sm text-secondary" id="fm-volume">Volume: <?= e($volumeName ?? '') ?></span>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">
-                        <button type="button" class="btn btn-secondary btn-sm" id="vfm-up">Up</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="vfm-refresh">Refresh</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="vfm-new-file">New file</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="vfm-new-folder">New folder</button>
+                        <input type="file" id="fm-upload-input" class="hidden" multiple>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-upload-btn" title="Upload" aria-label="Upload">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M7 9l5-5 5 5"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M20 20H4"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-new-folder" title="New folder" aria-label="New folder">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 11v6m-3-3h6"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-new-file" title="New file" aria-label="New file">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M7 3h7l5 5v13a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M14 3v6h6"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 11v6m-3-3h6"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-rename" title="Rename" aria-label="Rename">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 4h10"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 8h7"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 20h4l10-10-4-4L4 16v4z"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-move" title="Move" aria-label="Move">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 12h13"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 7l5 5-5 5"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-copy" title="Copy" aria-label="Copy">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M8 8h12v12H8z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16V4h12"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-download" title="Download" aria-label="Download">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v10"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M7 10l5 5 5-5"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M20 20H4"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-archive" title="Archive" aria-label="Archive">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M21 8v13a2 2 0 01-2 2H5a2 2 0 01-2-2V8"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l2-5h14l2 5H3z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M10 12h4"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm fm-icon-btn" id="fm-unarchive" title="Unarchive" aria-label="Unarchive">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M21 8v13a2 2 0 01-2 2H5a2 2 0 01-2-2V8"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l2-5h14l2 5H3z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 12v6"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 15l3-3 3 3"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn btn-danger btn-sm fm-icon-btn" id="fm-delete" title="Delete" aria-label="Delete">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M8 6V4h8v2"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 6l-1 16H6L5 6"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M10 11v6"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M14 11v6"/>
+                            </svg>
+                        </button>
                     </div>
                 </div>
-                <div class="flex items-center gap-2 mt-3">
-                    <label class="text-sm text-secondary" for="vfm-path">Path</label>
-                    <input class="input input-sm" id="vfm-path" value="/" style="min-width: 220px;" />
-                    <button type="button" class="btn btn-secondary btn-sm" id="vfm-go">Go</button>
-                </div>
             </div>
+
             <div class="card-body">
-                <div style="overflow-x:auto;">
-                    <table class="table" id="vfm-table">
-                        <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th style="width: 140px;" class="text-right">Size</th>
-                            <th style="width: 220px;">Modified</th>
-                            <th style="width: 160px;">Actions</th>
-                        </tr>
-                        </thead>
-                        <tbody id="vfm-rows"></tbody>
-                    </table>
+                <div class="flex items-center justify-between gap-3 flex-wrap">
+                    <div class="flex items-center gap-2 flex-wrap" id="fm-breadcrumb"></div>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <button type="button" class="btn btn-secondary btn-sm" id="fm-manual-location">Manual Location</button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="fm-refresh">Refresh</button>
+                    </div>
                 </div>
-                <div class="text-sm text-tertiary mt-2" id="vfm-empty" style="display:none;">No files found.</div>
+
+                <div class="mt-4 fm-dropzone" id="fm-dropzone">
+                    <div class="fm-table-wrap">
+                        <table class="table" id="fm-table">
+                            <thead>
+                            <tr>
+                                <th style="width: 56px;">
+                                    <input type="checkbox" class="fm-checkbox" id="fm-select-all" aria-label="Select all">
+                                </th>
+                                <th>Name</th>
+                                <th style="width: 120px;">Type</th>
+                                <th style="width: 140px;">Size</th>
+                                <th style="width: 140px;">Modified</th>
+                                <th style="width: 96px;">Actions</th>
+                            </tr>
+                            </thead>
+                            <tbody id="fm-rows"></tbody>
+                        </table>
+                    </div>
+                    <div class="text-sm text-tertiary mt-2">Tip: drag & drop files here to upload.</div>
+                </div>
             </div>
         </div>
 
         <?php $vfmVer = @filemtime(__DIR__ . '/../../../public/js/volumeFileManager.js') ?: time(); ?>
         <script src="/js/volumeFileManager.js?v=<?= e((string) $vfmVer) ?>"></script>
+
+        <style>
+            .fm-dropzone.dragover { outline: 2px dashed var(--border-strong); outline-offset: 4px; }
+            .fm-name { display:flex; align-items:center; gap: 10px; min-width: 0; }
+            .fm-icon { width: 18px; height: 18px; color: var(--text-tertiary); }
+            .fm-row.selected { background: var(--bg-secondary); }
+            .fm-row { cursor: pointer; }
+            .fm-row:hover { background: var(--bg-secondary); }
+            .fm-table-wrap { overflow-x: auto; }
+            #fm-table th, #fm-table td { padding-top: 10px; padding-bottom: 10px; }
+            #fm-table td { font-size: 13px; }
+            .fm-icon-btn { padding-left: 10px; padding-right: 10px; }
+            .fm-icon-btn .icon { width: 16px; height: 16px; }
+            .fm-row-actions .btn { padding-left: 10px; padding-right: 10px; }
+            .fm-select-cell { text-align: left; }
+            .fm-mtime { max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .fm-row-actions .dropdown-menu { min-width: 200px; }
+
+            .fm-checkbox {
+                appearance: none;
+                -webkit-appearance: none;
+                width: 16px;
+                height: 16px;
+                border-radius: var(--radius-sm);
+                border: 1px solid var(--border-primary);
+                background: var(--bg-secondary);
+                display: inline-grid;
+                place-content: center;
+                cursor: pointer;
+            }
+            .fm-checkbox:focus-visible {
+                outline: 2px solid var(--accent-blue);
+                outline-offset: 2px;
+            }
+            .fm-checkbox:checked {
+                background: var(--accent-blue);
+                border-color: var(--accent-blue);
+            }
+            .fm-checkbox:checked::after {
+                content: '';
+                width: 9px;
+                height: 5px;
+                border: 2px solid rgba(255, 255, 255, 0.95);
+                border-top: 0;
+                border-right: 0;
+                transform: rotate(-45deg);
+                margin-top: -1px;
+            }
+            #fm-select-all { margin-left: 2px; }
+        </style>
     <?php endif; ?>
 </div>
