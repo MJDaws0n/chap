@@ -5,6 +5,7 @@ namespace Chap\WebSocket;
 use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
 use Chap\Models\Node;
+use Chap\Auth\TeamPermissionService;
 use Chap\Services\DeploymentService;
 use Chap\WebSocket\Server;
 
@@ -760,13 +761,22 @@ class NodeHandler implements MessageComponentInterface {
 
             // Session is valid and user has access
             error_log("[handleSessionValidate] Session valid, user {$session['user_id']} authorized for app {$applicationUuid}");
+
+            $effectivePerms = [];
+            try {
+                $effectivePerms = TeamPermissionService::effectivePermissions((int)$teamId, (int)$session['user_id']);
+            } catch (\Throwable $e) {
+                $effectivePerms = [];
+            }
+
             $this->send($from, [
                 'type' => 'session:validate:response',
                 'request_id' => $requestId,
                 'authorized' => true,
                 'user_id' => $session['user_id'],
                 'team_id' => $teamId,
-                'application_id' => $application['id']
+                'application_id' => $application['id'],
+                'perms' => $effectivePerms,
             ]);
 
         } catch (\Exception $e) {

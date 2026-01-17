@@ -87,6 +87,7 @@
                                 <?php
                                 $statusBadge = [
                                     'running' => 'badge-success',
+                                    'restarting' => 'badge-warning',
                                     'stopped' => 'badge-neutral',
                                     'deploying' => 'badge-warning',
                                     'error' => 'badge-danger',

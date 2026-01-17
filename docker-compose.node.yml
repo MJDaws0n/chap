@@ -15,8 +15,6 @@
 #   1. Go to Nodes → Add Node
 #   2. Copy the generated credentials
 
-version: '3.8'
-
 services:
   node:
     image: ghcr.io/mjdaws0n/chap-node:latest

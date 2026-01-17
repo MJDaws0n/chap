@@ -5,6 +5,7 @@
  */
 $statusColors = [
     'running' => 'badge-success',
+    'restarting' => 'badge-warning',
     'stopped' => 'badge-neutral',
     'building' => 'badge-warning',
     'deploying' => 'badge-info',
@@ -29,6 +30,12 @@ $incomingWebhooks = $incomingWebhooks ?? [];
 $incomingWebhookReveals = $incomingWebhookReveals ?? [];
 $allocatedPorts = $allocatedPorts ?? [];
 $allocatedPorts = array_values(array_map('intval', is_array($allocatedPorts) ? $allocatedPorts : []));
+
+$errors = $_SESSION['_errors'] ?? [];
+$old = $_SESSION['_old_input'] ?? [];
+unset($_SESSION['_errors'], $_SESSION['_old_input']);
+
+$canEditResourceLimits = $canEditResourceLimits ?? false;
 ?>
 
 <div class="flex flex-col gap-6">
@@ -78,7 +85,7 @@ $allocatedPorts = array_values(array_map('intval', is_array($allocatedPorts) ? $
                     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
                     </svg>
-                    Files
+                    Container filesystem
                 </a>
 
                 <a href="/applications/<?= e($application->uuid) ?>/volumes" class="btn btn-secondary">
@@ -88,7 +95,7 @@ $allocatedPorts = array_values(array_map('intval', is_array($allocatedPorts) ? $
                     Volumes
                 </a>
 
-                <?php if (($application->status ?? '') === 'running'): ?>
+                <?php if (in_array(($application->status ?? ''), ['running', 'restarting'], true)): ?>
                     <form method="POST" action="/applications/<?= e($application->uuid) ?>/stop" class="inline-block">
                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                         <button type="submit" class="btn btn-secondary">Stop</button>
@@ -98,7 +105,7 @@ $allocatedPorts = array_values(array_map('intval', is_array($allocatedPorts) ? $
                 <form method="POST" action="/applications/<?= e($application->uuid) ?>/deploy" class="inline-block" data-deploy-form>
                     <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                     <button type="submit" class="btn btn-primary" <?= $isDeploying ? 'disabled aria-disabled="true"' : '' ?>>
-                        <?= $isDeploying ? 'Deploying…' : ((($application->status ?? '') === 'running') ? 'Redeploy' : 'Deploy') ?>
+                        <?= $isDeploying ? 'Deploying…' : (in_array(($application->status ?? ''), ['running', 'restarting'], true) ? 'Redeploy' : 'Deploy') ?>
                     </button>
                 </form>
             </div>
@@ -198,6 +205,48 @@ $allocatedPorts = array_values(array_map('intval', is_array($allocatedPorts) ? $
                                 <select name="build_pack" id="build_pack" class="select">
                                     <option value="docker-compose" <?= $application->build_pack === 'docker-compose' ? 'selected' : '' ?>>Docker Compose</option>
                                 </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="cpu_limit">CPU Limit</label>
+                                <input
+                                    type="text"
+                                    name="cpu_limit"
+                                    id="cpu_limit"
+                                    value="<?= e($canEditResourceLimits ? ($old['cpu_limit'] ?? $application->cpu_limit) : $application->cpu_limit) ?>"
+                                    class="input"
+                                    placeholder="e.g. 1"
+                                    <?= !$canEditResourceLimits ? 'disabled aria-disabled="true"' : '' ?>
+                                >
+                                <?php if (!empty($errors['cpu_limit'])): ?><p class="form-error"><?= e($errors['cpu_limit']) ?></p><?php endif; ?>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="memory_limit">Memory Limit</label>
+                                <input
+                                    type="text"
+                                    name="memory_limit"
+                                    id="memory_limit"
+                                    value="<?= e($canEditResourceLimits ? ($old['memory_limit'] ?? $application->memory_limit) : $application->memory_limit) ?>"
+                                    class="input"
+                                    placeholder="e.g. 512m"
+                                    <?= !$canEditResourceLimits ? 'disabled aria-disabled="true"' : '' ?>
+                                >
+                                <?php if (!empty($errors['memory_limit'])): ?><p class="form-error"><?= e($errors['memory_limit']) ?></p><?php endif; ?>
+                            </div>
+
+                            <div class="md:col-span-2">
+                                <div class="alert alert-warning">
+                                    <svg class="alert-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                    </svg>
+                                    <span>
+                                        Changing CPU/Memory limits triggers an automatic redeploy.
+                                        <?php if (!$canEditResourceLimits): ?>
+                                            You don't have permission to edit resource limits.
+                                        <?php endif; ?>
+                                    </span>
+                                </div>
                             </div>
                         </div>
 

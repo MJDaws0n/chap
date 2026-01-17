@@ -181,6 +181,13 @@
 
                 actionsTd.appendChild(dl);
 
+                const fsLink = document.createElement('a');
+                fsLink.className = 'btn btn-ghost btn-sm';
+                fsLink.textContent = 'Filesystem';
+                fsLink.href = `/applications/${encodeURIComponent(appUuid)}/volumes/${encodeURIComponent(v.name)}/files`;
+                fsLink.addEventListener('click', (e) => { e.stopPropagation(); });
+                actionsTd.appendChild(fsLink);
+
                 tr.appendChild(cbTd);
                 tr.appendChild(nameTd);
                 tr.appendChild(typeTd);

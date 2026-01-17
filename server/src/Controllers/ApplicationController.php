@@ -2,6 +2,7 @@
 
 namespace Chap\Controllers;
 
+use Chap\Auth\TeamPermissionService;
 use Chap\Models\Application;
 use Chap\Models\IncomingWebhook;
 use Chap\Models\Environment;
@@ -9,6 +10,7 @@ use Chap\Models\Node;
 use Chap\Models\Deployment;
 use Chap\Models\ActivityLog;
 use Chap\Models\PortAllocation;
+use Chap\Models\Template;
 use Chap\Services\DeploymentService;
 use Chap\Services\GitCredentialResolver;
 use Chap\Services\NodeAccess;
@@ -16,6 +18,7 @@ use Chap\Services\DynamicEnv;
 use Chap\Services\ResourceAllocator;
 use Chap\Services\ResourceHierarchy;
 use Chap\Services\PortAllocator;
+use Chap\Services\TemplateRegistry;
 
 /**
  * Application Controller
@@ -137,11 +140,19 @@ class ApplicationController extends BaseController
         $allowedNodeIds = $this->user ? NodeAccess::allowedNodeIds($this->user, $team, $project, $environment) : [];
         $nodes = Node::onlineForTeamAllowed((int)$project->team_id, $allowedNodeIds);
 
+        // Templates for template-mode create flows
+        TemplateRegistry::syncToDatabase();
+        $templates = Template::where('is_active', true);
+        $selectedTemplateSlug = trim((string)$this->input('template_slug', ''));
+        $selectedTemplate = $selectedTemplateSlug !== '' ? Template::findBySlug($selectedTemplateSlug) : null;
+
         $this->view('applications/create', [
             'title' => 'New Application',
             'environment' => $environment,
             'project' => $project,
             'nodes' => $nodes,
+            'templates' => $templates,
+            'selectedTemplate' => $selectedTemplate,
         ]);
     }
 
@@ -395,6 +406,24 @@ class ApplicationController extends BaseController
 
         $data = $this->all();
 
+        $templateSlug = trim((string)($data['template_slug'] ?? ''));
+        $template = null;
+        if ($templateSlug !== '') {
+            TemplateRegistry::syncToDatabase();
+            $template = Template::findBySlug($templateSlug);
+            if (!$template) {
+                $errors = ['template_slug' => 'Template not found'];
+                if ($this->isApiRequest()) {
+                    $this->json(['errors' => $errors], 422);
+                } else {
+                    $_SESSION['_errors'] = $errors;
+                    $_SESSION['_old_input'] = $data;
+                    $this->redirect('/environments/' . $envUuid . '/applications/create');
+                }
+                return;
+            }
+        }
+
         // Parse legacy UI fields into configured hierarchy limits.
         $cpuMillicoresLimit = ResourceHierarchy::parseCpuMillicores((string)($data['cpu_limit'] ?? '-1'));
         $ramMbLimit = ResourceHierarchy::parseDockerMemoryToMb((string)($data['memory_limit'] ?? '-1'));
@@ -493,6 +522,21 @@ class ApplicationController extends BaseController
             }
         }
 
+        // Template mode: merge defaults + required keys + user overrides
+        if ($template) {
+            $defaults = $template->getDefaultEnvironmentVariables();
+            $required = $template->getRequiredEnvironmentVariables();
+            foreach ($required as $k) {
+                $key = trim((string)$k);
+                if ($key === '') continue;
+                if (!array_key_exists($key, $defaults)) {
+                    $defaults[$key] = '';
+                }
+            }
+            // User-posted vars override defaults
+            $envVars = array_merge($defaults, $envVars);
+        }
+
         // Validate dynamic port variables against any reserved ports (create flow).
         $reservationUuid = (string)($data['port_reservation_uuid'] ?? '');
         $reservedPorts = [];
@@ -519,7 +563,7 @@ class ApplicationController extends BaseController
             'node_id' => isset($node) ? $node->id : null,
             'name' => $data['name'],
             'description' => $data['description'] ?? null,
-            'git_repository' => $data['git_repository'] ?? null,
+            'git_repository' => $template ? null : ($data['git_repository'] ?? null),
             'git_branch' => $data['git_branch'] ?? 'main',
             'build_pack' => 'docker-compose',
             'port' => !empty($data['port']) ? (int)$data['port'] : null,
@@ -536,6 +580,12 @@ class ApplicationController extends BaseController
             // When the UI doesn't post health-check fields, keep defaults enabled.
             'health_check_enabled' => array_key_exists('health_check_enabled', $data) ? (!empty($data['health_check_enabled']) ? 1 : 0) : 1,
             'health_check_path' => $data['health_check_path'] ?? '/',
+            'template_slug' => $template ? $template->slug : null,
+            'template_version' => $template ? $template->version : null,
+            'template_docker_compose' => $template ? $template->docker_compose : null,
+            'template_extra_files' => $template && !empty($template->extra_files)
+                ? (is_string($template->extra_files) ? $template->extra_files : json_encode($template->extra_files))
+                : null,
         ]);
 
         // Attach any reserved ports from the create flow to the new application.
@@ -573,6 +623,9 @@ class ApplicationController extends BaseController
         $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
         $this->requireTeamPermission('applications', 'read', $teamId);
 
+    $userId = (int) ($this->user?->id ?? 0);
+    $canEditResourceLimits = admin_view_all() || ($userId > 0 && TeamPermissionService::can($teamId, $userId, 'applications.resources', 'write'));
+
         $deployments = Deployment::forApplication($application->id, 10);
         $project = $application->environment()?->project();
         $nodes = [];
@@ -603,6 +656,7 @@ class ApplicationController extends BaseController
                 'incomingWebhooks' => $incomingWebhooks,
                 'incomingWebhookReveals' => $incomingWebhookReveals,
                 'allocatedPorts' => $allocatedPorts,
+                'canEditResourceLimits' => $canEditResourceLimits,
             ]);
         }
     }
@@ -629,13 +683,41 @@ class ApplicationController extends BaseController
         $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
         $this->requireTeamPermission('applications', 'write', $teamId);
 
+        if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid CSRF token');
+            $this->redirect('/applications/' . $uuid);
+            return;
+        }
+
+        $userId = (int) ($this->user?->id ?? 0);
+        $canEditResourceLimits = admin_view_all() || ($userId > 0 && TeamPermissionService::can($teamId, $userId, 'applications.resources', 'write'));
+
+        $oldCpuLimit = (string) ($application->cpu_limit ?? '');
+        $oldMemoryLimit = (string) ($application->memory_limit ?? '');
+
         $data = $this->all();
 
     $errors = [];
 
+        if (!$canEditResourceLimits) {
+            if (array_key_exists('cpu_limit', $data) && (trim((string)$data['cpu_limit']) !== trim($oldCpuLimit))) {
+                $errors['cpu_limit'] = 'You do not have permission to edit CPU limits';
+            }
+            if (array_key_exists('memory_limit', $data) && (trim((string)$data['memory_limit']) !== trim($oldMemoryLimit))) {
+                $errors['memory_limit'] = 'You do not have permission to edit memory limits';
+            }
+        }
+
         // Parse legacy UI fields into configured hierarchy limits.
-        $cpuMillicoresLimit = ResourceHierarchy::parseCpuMillicores((string)($data['cpu_limit'] ?? (string)$application->cpu_limit));
-        $ramMbLimit = ResourceHierarchy::parseDockerMemoryToMb((string)($data['memory_limit'] ?? (string)$application->memory_limit));
+        $cpuLimitInput = $canEditResourceLimits
+            ? (string)($data['cpu_limit'] ?? (string)$application->cpu_limit)
+            : (string)$application->cpu_limit;
+        $memoryLimitInput = $canEditResourceLimits
+            ? (string)($data['memory_limit'] ?? (string)$application->memory_limit)
+            : (string)$application->memory_limit;
+
+        $cpuMillicoresLimit = ResourceHierarchy::parseCpuMillicores($cpuLimitInput);
+        $ramMbLimit = ResourceHierarchy::parseDockerMemoryToMb($memoryLimitInput);
         $storageMbLimit = ResourceHierarchy::parseMb((string)($data['storage_mb_limit'] ?? (string)$application->storage_mb_limit));
         $portLimit = ResourceHierarchy::parseIntOrAuto((string)($data['port_limit'] ?? (string)$application->port_limit));
         $bandwidthLimit = ResourceHierarchy::parseIntOrAuto((string)($data['bandwidth_mbps_limit'] ?? (string)$application->bandwidth_mbps_limit));
@@ -752,8 +834,8 @@ class ApplicationController extends BaseController
             'port' => isset($data['port']) && $data['port'] !== '' ? (int)$data['port'] : $application->port,
             'domains' => $data['domains'] ?? $application->domains,
             'environment_variables' => !empty($envVars) ? json_encode($envVars) : null,
-            'memory_limit' => $data['memory_limit'] ?? $application->memory_limit,
-            'cpu_limit' => $data['cpu_limit'] ?? $application->cpu_limit,
+            'memory_limit' => $memoryLimitInput,
+            'cpu_limit' => $cpuLimitInput,
             'cpu_millicores_limit' => $cpuMillicoresLimit,
             'ram_mb_limit' => $ramMbLimit,
             'storage_mb_limit' => $storageMbLimit,
@@ -771,9 +853,34 @@ class ApplicationController extends BaseController
             PortAllocator::releaseForApplication((int)$application->id);
         }
 
+        $limitsChanged = (trim($oldCpuLimit) !== trim((string)$cpuLimitInput)) || (trim($oldMemoryLimit) !== trim((string)$memoryLimitInput));
+        $shouldAutoRedeploy = $canEditResourceLimits
+            && $limitsChanged
+            && !$isMovingNodes
+            && in_array((string)($application->status ?? ''), ['running', 'restarting'], true);
+
         if ($this->isApiRequest()) {
             $this->json(['application' => $application->toArray()]);
         } else {
+            if ($shouldAutoRedeploy) {
+                try {
+                    $deployment = DeploymentService::create($application, null, [
+                        'triggered_by' => $this->user ? 'user' : 'manual',
+                        'triggered_by_name' => $this->user?->displayName(),
+                    ]);
+                } catch (\Throwable $e) {
+                    DeploymentService::stop($application);
+                    $application->update(['status' => 'stopped']);
+                    flash('error', 'Resource limits updated but redeploy failed. Application was stopped. ' . $e->getMessage());
+                    $this->redirect('/applications/' . $uuid);
+                    return;
+                }
+
+                flash('success', 'Resource limits updated. Redeploy started.');
+                $this->redirect('/deployments/' . $deployment->uuid);
+                return;
+            }
+
             flash('success', 'Application updated');
             $this->redirect('/applications/' . $uuid);
         }
@@ -1027,8 +1134,7 @@ class ApplicationController extends BaseController
         }
 
         $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
-        // Volumes can be destructive; use the same permission gate as Files.
-        $this->requireTeamPermission('files', 'read', $teamId);
+        $this->requireTeamPermission('volumes', 'read', $teamId);
 
         if ($this->isApiRequest()) {
             $this->json(['error' => 'Volumes manager requires WebSocket'], 400);
@@ -1050,6 +1156,97 @@ class ApplicationController extends BaseController
             'project' => $application->environment()->project(),
             'browserWebsocketUrl' => $browserWebsocketUrl,
             'sessionId' => session_id(),
+        ]);
+    }
+
+    /**
+     * Volume filesystem browser (works even when the app is powered off).
+     */
+    public function volumeFiles(string $uuid, string $volume): void
+    {
+        $team = $this->currentTeam();
+        $application = Application::findByUuid($uuid);
+
+        if (!$this->canAccessApplication($application, $team)) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Application not found'], 404);
+            } else {
+                flash('error', 'Application not found');
+                $this->redirect('/projects');
+            }
+            return;
+        }
+
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('volume_files', 'read', $teamId);
+
+        if ($this->isApiRequest()) {
+            $this->json(['error' => 'Volume filesystem requires WebSocket'], 400);
+            return;
+        }
+
+        $node = $application->node();
+        if (!$node && $application->node_id) {
+            $node = \Chap\Models\Node::find($application->node_id);
+        }
+        $browserWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
+
+        $this->view('applications/volume_files', [
+            'title' => 'Volume Files - ' . $application->name,
+            'application' => $application,
+            'environment' => $application->environment(),
+            'project' => $application->environment()->project(),
+            'browserWebsocketUrl' => $browserWebsocketUrl,
+            'sessionId' => session_id(),
+            'volumeName' => $volume,
+        ]);
+    }
+
+    /**
+     * Dedicated volume file editor page (loads file via node WebSocket).
+     */
+    public function volumeFileEditor(string $uuid, string $volume): void
+    {
+        $team = $this->currentTeam();
+        $application = Application::findByUuid($uuid);
+
+        if (!$this->canAccessApplication($application, $team)) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Application not found'], 404);
+            } else {
+                flash('error', 'Application not found');
+                $this->redirect('/projects');
+            }
+            return;
+        }
+
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('volume_files', 'write', $teamId);
+
+        if ($this->isApiRequest()) {
+            $this->json(['error' => 'Volume file editor requires WebSocket'], 400);
+            return;
+        }
+
+        $path = isset($_GET['path']) ? (string) $_GET['path'] : '';
+        $dir = isset($_GET['dir']) ? (string) $_GET['dir'] : '';
+
+        $node = $application->node();
+        if (!$node && $application->node_id) {
+            $node = \Chap\Models\Node::find($application->node_id);
+        }
+        $browserWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
+
+        $this->view('applications/volume_file_editor', [
+            'title' => 'Edit Volume File - ' . $application->name,
+            'application' => $application,
+            'environment' => $application->environment(),
+            'project' => $application->environment()->project(),
+            'browserWebsocketUrl' => $browserWebsocketUrl,
+            'sessionId' => session_id(),
+            'volumeName' => $volume,
+            'path' => $path,
+            'dir' => $dir,
         ]);
     }
 

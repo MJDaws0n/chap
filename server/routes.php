@@ -106,6 +106,8 @@ Route::middleware(['auth'], function() {
     Route::get('/applications/{id}/logs', 'ApplicationController@logs');
     Route::get('/applications/{id}/files', 'ApplicationController@files');
     Route::get('/applications/{id}/volumes', 'ApplicationController@volumes');
+    Route::get('/applications/{id}/volumes/{volume}/files', 'ApplicationController@volumeFiles');
+    Route::get('/applications/{id}/volumes/{volume}/files/edit', 'ApplicationController@volumeFileEditor');
     Route::get('/applications/{id}/files/edit', 'ApplicationController@fileEditor');
     Route::get('/applications/{id}/environment', 'ApplicationController@environment');
     Route::post('/applications/{id}/environment', 'ApplicationController@updateEnvironment');
@@ -142,6 +144,7 @@ Route::middleware(['auth'], function() {
     // Templates
     Route::get('/templates', 'TemplateController@index');
     Route::get('/templates/{slug}', 'TemplateController@show');
+    Route::post('/templates/{slug}/deploy', 'TemplateController@deploy');
     
     // Git Sources
     Route::get('/git-sources', 'GitSourceController@index');
@@ -188,6 +191,10 @@ Route::middleware(['auth', 'admin'], function() {
 
     // Admin activity logs
     Route::get('/admin/activity', 'Admin\\ActivityController@index');
+
+    // Admin templates
+    Route::get('/admin/templates', 'Admin\\TemplateController@index');
+    Route::post('/admin/templates/upload', 'Admin\\TemplateController@upload');
 });
 
 // API routes

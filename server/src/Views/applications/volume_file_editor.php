@@ -1,33 +1,28 @@
 <?php
 /**
- * Application File Editor View
+ * Application Volume File Editor View
  */
 $wsUrl = $browserWebsocketUrl ?? '';
 $path = $path ?? '';
 $dir = $dir ?? '';
-$containerId = $containerId ?? '';
+$volumeName = $volumeName ?? '';
 
 $backDir = is_string($dir) && $dir !== '' ? $dir : (is_string($path) && $path !== '' ? dirname($path) : '/');
 if (!is_string($backDir) || $backDir === '' || $backDir[0] !== '/') {
     $backDir = '/';
 }
 
-$backParams = ['path' => $backDir];
-if (!empty($containerId)) {
-    $backParams['container'] = $containerId;
-}
-
-$backUrl = '/applications/' . $application->uuid . '/files';
-if (!empty($backParams)) {
-    $backUrl .= '?' . http_build_query($backParams);
+$backUrl = '/applications/' . $application->uuid . '/volumes/' . rawurlencode($volumeName) . '/files';
+if (!empty($backDir)) {
+    $backUrl .= '?' . http_build_query(['path' => $backDir]);
 }
 ?>
 
-<div class="flex flex-col gap-6" id="file-editor"
+<div class="flex flex-col gap-6" id="volume-file-editor"
      data-ws-url="<?= e($wsUrl) ?>"
      data-session-id="<?= e($sessionId ?? '') ?>"
      data-application-uuid="<?= e($application->uuid) ?>"
-     data-container-id="<?= e($containerId) ?>"
+     data-volume-name="<?= e($volumeName) ?>"
      data-path="<?= e($path) ?>">
 
     <div class="page-header">
@@ -42,7 +37,7 @@ if (!empty($backParams)) {
                     <span class="breadcrumb-separator">/</span>
                     <span class="breadcrumb-item"><a href="/applications/<?= e($application->uuid) ?>"><?= e($application->name) ?></a></span>
                     <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="<?= e($backUrl) ?>">Container filesystem</a></span>
+                    <span class="breadcrumb-item"><a href="<?= e($backUrl) ?>">Volume filesystem</a></span>
                     <span class="breadcrumb-separator">/</span>
                     <span class="breadcrumb-current">Edit</span>
                 </nav>
@@ -103,7 +98,7 @@ if (!empty($backParams)) {
                         </div>
                     </div>
                     <div class="flex items-center gap-2">
-                        <a class="btn btn-secondary btn-sm" href="<?= e($backUrl) ?>" title="Back to container filesystem" aria-label="Back to container filesystem">
+                        <a class="btn btn-secondary btn-sm" href="<?= e($backUrl) ?>" title="Back to volume files" aria-label="Back to volume files">
                             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M15 18l-6-6 6-6" />
                             </svg>
@@ -138,8 +133,8 @@ if (!empty($backParams)) {
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/mode/loadmode.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/meta.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
-        <?php $feVer = @filemtime(__DIR__ . '/../../../public/js/fileEditor.js') ?: time(); ?>
-        <script src="/js/fileEditor.js?v=<?= e((string) $feVer) ?>"></script>
+        <?php $vfeVer = @filemtime(__DIR__ . '/../../../public/js/volumeFileEditor.js') ?: time(); ?>
+        <script src="/js/volumeFileEditor.js?v=<?= e((string) $vfeVer) ?>"></script>
 
         <style>
             .CodeMirror {
@@ -155,41 +150,41 @@ if (!empty($backParams)) {
                 word-break: break-word;
                 overflow-wrap: anywhere;
             }
-            #file-editor .card-body { overflow: hidden; }
+            #volume-file-editor .card-body { overflow: hidden; }
 
             /* Light mode: keep token colors aligned to design tokens.
                Dark mode: use CodeMirror's built-in theme (material-darker). */
             :root:not([data-theme]),
             :root[data-theme="light"] {
-                #file-editor .CodeMirror {
+                #volume-file-editor .CodeMirror {
                     background: var(--bg-secondary);
                     color: var(--text-primary);
                 }
-                #file-editor .CodeMirror-gutters {
+                #volume-file-editor .CodeMirror-gutters {
                     background: var(--bg-secondary);
                     border-right: 1px solid var(--border-primary);
                 }
-                #file-editor .CodeMirror-linenumber { color: var(--text-tertiary); }
-                #file-editor .CodeMirror-cursor { border-left: 1px solid var(--text-primary); }
-                #file-editor .CodeMirror-selected { background: var(--accent-blue-subtle) !important; }
-                #file-editor .CodeMirror-activeline-background { background: var(--bg-tertiary); }
+                #volume-file-editor .CodeMirror-linenumber { color: var(--text-tertiary); }
+                #volume-file-editor .CodeMirror-cursor { border-left: 1px solid var(--text-primary); }
+                #volume-file-editor .CodeMirror-selected { background: var(--accent-blue-subtle) !important; }
+                #volume-file-editor .CodeMirror-activeline-background { background: var(--bg-tertiary); }
 
                 /* Token colors using existing theme accents */
-                #file-editor .cm-keyword { color: var(--accent-purple); }
-                #file-editor .cm-atom, #file-editor .cm-number { color: var(--accent-orange); }
-                #file-editor .cm-def, #file-editor .cm-property { color: var(--accent-blue); }
-                #file-editor .cm-string { color: var(--accent-green); }
-                #file-editor .cm-comment { color: var(--text-tertiary); }
-                #file-editor .cm-variable, #file-editor .cm-variable-2, #file-editor .cm-variable-3 { color: var(--text-primary); }
-                #file-editor .cm-operator { color: var(--text-secondary); }
-                #file-editor .cm-meta, #file-editor .cm-qualifier { color: var(--accent-gray); }
-                #file-editor .cm-tag { color: var(--accent-red); }
-                #file-editor .cm-attribute { color: var(--accent-orange); }
-                #file-editor .cm-builtin { color: var(--accent-teal); }
-                #file-editor .cm-error { color: var(--accent-red); }
+                #volume-file-editor .cm-keyword { color: var(--accent-purple); }
+                #volume-file-editor .cm-atom, #volume-file-editor .cm-number { color: var(--accent-orange); }
+                #volume-file-editor .cm-def, #volume-file-editor .cm-property { color: var(--accent-blue); }
+                #volume-file-editor .cm-string { color: var(--accent-green); }
+                #volume-file-editor .cm-comment { color: var(--text-tertiary); }
+                #volume-file-editor .cm-variable, #volume-file-editor .cm-variable-2, #volume-file-editor .cm-variable-3 { color: var(--text-primary); }
+                #volume-file-editor .cm-operator { color: var(--text-secondary); }
+                #volume-file-editor .cm-meta, #volume-file-editor .cm-qualifier { color: var(--accent-gray); }
+                #volume-file-editor .cm-tag { color: var(--accent-red); }
+                #volume-file-editor .cm-attribute { color: var(--accent-orange); }
+                #volume-file-editor .cm-builtin { color: var(--accent-teal); }
+                #volume-file-editor .cm-error { color: var(--accent-red); }
             }
 
-            #file-editor .icon { width: 18px; height: 18px; }
+            #volume-file-editor .icon { width: 18px; height: 18px; }
         </style>
     <?php endif; ?>
 </div>

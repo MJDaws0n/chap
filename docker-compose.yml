@@ -9,8 +9,6 @@
 #   - docker-compose.server.yml (on your central server)
 #   - docker-compose.node.yml (on each deployment server)
 
-version: '3.8'
-
 services:
   # MySQL Database
   mysql:

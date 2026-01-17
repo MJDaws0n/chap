@@ -8,6 +8,55 @@
 const path = require('path');
 const yaml = require('yaml');
 
+function parseDockerMemoryToBytes(value) {
+    if (value === null || value === undefined) return null;
+    const s = String(value).trim();
+    if (s === '') return null;
+
+    const m = s.match(/^([0-9]+(?:\.[0-9]+)?)\s*([kmgt])?b?$/i);
+    if (!m) return null;
+
+    const num = parseFloat(m[1]);
+    if (!Number.isFinite(num) || num <= 0) return null;
+
+    const unit = (m[2] || '').toLowerCase();
+    const mul = unit === 't' ? 1024 ** 4
+        : unit === 'g' ? 1024 ** 3
+        : unit === 'm' ? 1024 ** 2
+        : unit === 'k' ? 1024
+        : 1;
+
+    return Math.floor(num * mul);
+}
+
+function bytesToDockerMemory(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+        return '0m';
+    }
+
+    const gb = 1024 ** 3;
+    const mb = 1024 ** 2;
+    if (bytes % gb === 0) return `${bytes / gb}g`;
+    if (bytes % mb === 0) return `${bytes / mb}m`;
+    return `${Math.ceil(bytes / mb)}m`;
+}
+
+function clampDockerMemory(requested, maxAllowed) {
+    const maxBytes = parseDockerMemoryToBytes(maxAllowed);
+    const reqBytes = parseDockerMemoryToBytes(requested);
+
+    if (!maxBytes) {
+        // If max isn't parseable, fall back to the configured value.
+        return String(maxAllowed);
+    }
+
+    if (!reqBytes) {
+        return bytesToDockerMemory(maxBytes);
+    }
+
+    return bytesToDockerMemory(Math.min(reqBytes, maxBytes));
+}
+
 /**
  * Security configuration
  */
@@ -165,7 +214,7 @@ function buildSecureDockerArgs(applicationId, deploymentId, options = {}) {
     
     // Security: Resource limits
     const cpuLimit = Math.min(parseFloat(options.cpuLimit) || SECURITY_CONFIG.maxCpus, SECURITY_CONFIG.maxCpus);
-    const memoryLimit = options.memoryLimit || SECURITY_CONFIG.maxMemory;
+    const memoryLimit = clampDockerMemory(options.memoryLimit || SECURITY_CONFIG.maxMemory, SECURITY_CONFIG.maxMemory);
     args.push('--cpus', cpuLimit.toString());
     args.push('--memory', memoryLimit);
     args.push('--memory-swap', memoryLimit); // Prevent swap abuse
@@ -375,6 +424,12 @@ function sanitizeComposeFile(composeContent) {
             if (!service || typeof service !== 'object') {
                 continue;
             }
+
+            // Enable stdin by default so the browser console can send input via `docker attach`.
+            // If a service explicitly sets stdin_open, respect it.
+            if (service.stdin_open === undefined) {
+                service.stdin_open = true;
+            }
             
             // Remove blocked options
             for (const blockedOption of BLOCKED_COMPOSE_OPTIONS.service) {
@@ -426,7 +481,7 @@ function sanitizeComposeFile(composeContent) {
             service.deploy.resources.limits.cpus = Math.min(currentCpus, SECURITY_CONFIG.maxCpus).toString();
             
             const currentMemory = service.deploy.resources.limits.memory || SECURITY_CONFIG.maxMemory;
-            service.deploy.resources.limits.memory = currentMemory; // TODO: parse and compare
+            service.deploy.resources.limits.memory = clampDockerMemory(currentMemory, SECURITY_CONFIG.maxMemory);
             
             service.deploy.resources.limits.pids = SECURITY_CONFIG.maxPids;
         }

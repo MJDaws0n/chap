@@ -23,7 +23,7 @@ $wsUrl = $browserWebsocketUrl ?? '';
                     <span class="breadcrumb-separator">/</span>
                     <span class="breadcrumb-item"><a href="/applications/<?= e($application->uuid) ?>"><?= e($application->name) ?></a></span>
                     <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-current">Files</span>
+                    <span class="breadcrumb-current">Container filesystem</span>
                 </nav>
 
                 <div class="flex items-center gap-4 mt-4">
@@ -33,7 +33,7 @@ $wsUrl = $browserWebsocketUrl ?? '';
                         </svg>
                     </div>
                     <div class="min-w-0">
-                        <h1 class="page-header-title">Files</h1>
+                        <h1 class="page-header-title">Container filesystem</h1>
                         <p class="page-header-description truncate">Browse and manage files inside the running container.</p>
                     </div>
                 </div>

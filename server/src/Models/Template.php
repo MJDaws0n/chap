@@ -11,45 +11,46 @@ class Template extends BaseModel
 {
     protected static string $table = 'templates';
     protected static array $fillable = [
-        'name', 'slug', 'description', 'documentation_url', 'logo_url',
-        'category', 'tags', 'compose_content', 'environment_schema',
-        'min_version', 'default_port', 'is_official'
+        'name',
+        'slug',
+        'description',
+        'category',
+        'icon',
+        'docker_compose',
+        'documentation',
+        'source_url',
+        'default_environment_variables',
+        'required_environment_variables',
+        'ports',
+        'volumes',
+        'version',
+        'is_official',
+        'is_active',
+        'extra_files'
     ];
 
     public string $name = '';
     public string $slug = '';
     public ?string $description = null;
-    public ?string $documentation_url = null;
-    public ?string $logo_url = null;
     public ?string $category = null;
-    public ?string $tags = null;
-    public string $compose_content = '';
-    public ?string $environment_schema = null;
-    public ?string $min_version = null;
-    public ?int $default_port = null;
+    public ?string $icon = null;
+
+    // Template configuration
+    public string $docker_compose = '';
+    public ?string $documentation = null;
+    public mixed $default_environment_variables = null;
+    public mixed $required_environment_variables = null;
+    public mixed $ports = null;
+    public mixed $volumes = null;
+
+    // Optional additional files (e.g. Dockerfile, scripts) to be written into compose dir
+    public mixed $extra_files = null;
+
+    // Metadata
+    public ?string $version = null;
+    public ?string $source_url = null;
     public bool $is_official = false;
-
-    /**
-     * Get tags as array
-     */
-    public function getTags(): array
-    {
-        if (!$this->tags) {
-            return [];
-        }
-        return json_decode($this->tags, true) ?: [];
-    }
-
-    /**
-     * Get environment schema as array
-     */
-    public function getEnvironmentSchema(): array
-    {
-        if (!$this->environment_schema) {
-            return [];
-        }
-        return json_decode($this->environment_schema, true) ?: [];
-    }
+    public bool $is_active = true;
 
     /**
      * Find by slug
@@ -60,11 +61,43 @@ class Template extends BaseModel
     }
 
     /**
-     * Get templates by category
+     * Get default environment variables as array
      */
-    public static function byCategory(string $category): array
+    public function getDefaultEnvironmentVariables(): array
     {
-        return self::where('category', $category);
+        return self::decodeJsonValue($this->default_environment_variables);
+    }
+
+    /**
+     * Get required environment variables as array
+     */
+    public function getRequiredEnvironmentVariables(): array
+    {
+        return self::decodeJsonValue($this->required_environment_variables);
+    }
+
+    /**
+     * Get ports as array
+     */
+    public function getPorts(): array
+    {
+        return self::decodeJsonValue($this->ports);
+    }
+
+    /**
+     * Get volumes as array
+     */
+    public function getVolumes(): array
+    {
+        return self::decodeJsonValue($this->volumes);
+    }
+
+    /**
+     * Get extra files as array
+     */
+    public function getExtraFiles(): array
+    {
+        return self::decodeJsonValue($this->extra_files);
     }
 
     /**
@@ -73,42 +106,8 @@ class Template extends BaseModel
     public static function categories(): array
     {
         $db = App::db();
-        $results = $db->fetchAll(
-            "SELECT DISTINCT category FROM templates WHERE category IS NOT NULL ORDER BY category"
-        );
-        
-        return array_column($results, 'category');
-    }
-
-    /**
-     * Search templates
-     */
-    public static function search(string $query): array
-    {
-        $db = App::db();
-        $searchTerm = "%{$query}%";
-        
-        $results = $db->fetchAll(
-            "SELECT * FROM templates 
-             WHERE name LIKE ? OR description LIKE ? OR tags LIKE ?
-             ORDER BY is_official DESC, name",
-            [$searchTerm, $searchTerm, $searchTerm]
-        );
-        
-        return array_map(fn($data) => self::fromArray($data), $results);
-    }
-
-    /**
-     * Get official templates
-     */
-    public static function official(): array
-    {
-        $db = App::db();
-        $results = $db->fetchAll(
-            "SELECT * FROM templates WHERE is_official = 1 ORDER BY name"
-        );
-        
-        return array_map(fn($data) => self::fromArray($data), $results);
+        $results = $db->fetchAll("SELECT DISTINCT category FROM templates WHERE category IS NOT NULL ORDER BY category");
+        return array_values(array_filter(array_map(fn($r) => (string)($r['category'] ?? ''), $results), fn($x) => $x !== ''));
     }
 
     /**
@@ -120,5 +119,26 @@ class Template extends BaseModel
         $slug = preg_replace('/[^a-z0-9\-]/', '-', $slug);
         $slug = preg_replace('/-+/', '-', $slug);
         return trim($slug, '-');
+    }
+
+    /**
+     * @return array<mixed>
+     */
+    private static function decodeJsonValue(mixed $value): array
+    {
+        if ($value === null || $value === '') {
+            return [];
+        }
+
+        if (is_array($value)) {
+            return $value;
+        }
+
+        if (!is_string($value)) {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? $decoded : [];
     }
 }

@@ -1263,11 +1263,48 @@ function sendSystemInfo() {
  */
 async function sendStatus() {
     try {
+        const parseLabels = (labelsStr) => {
+            const out = {};
+            const raw = String(labelsStr || '').trim();
+            if (!raw) return out;
+            for (const part of raw.split(',')) {
+                const piece = String(part || '').trim();
+                if (!piece) continue;
+                const idx = piece.indexOf('=');
+                if (idx <= 0) continue;
+                const k = piece.slice(0, idx).trim();
+                const v = piece.slice(idx + 1).trim();
+                if (k) out[k] = v;
+            }
+            return out;
+        };
+
+        const extractAppUuid = (labels) => {
+            const chapApp = String(labels['chap.app'] || '').trim();
+            if (chapApp) return chapApp;
+
+            const project = String(labels['com.docker.compose.project'] || '').trim();
+            if (project.startsWith('chap-') && project.length > 5) {
+                return project.slice(5);
+            }
+
+            return '';
+        };
+
         // Get container list (only Chap-managed containers)
-        const containersRaw = await execCommand('docker ps -a --filter "label=chap.managed=true" --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}"');
+        const containersRaw = await execCommand('docker ps -a --filter "label=chap.managed=true" --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}|{{.Labels}}"');
         const containers = containersRaw.trim().split('\n').filter(Boolean).map(line => {
-            const [id, name, image, status, ports] = line.split('|');
-            return { id, name, image, status, ports };
+            const [id, dockerName, image, status, ports, labelsRaw] = line.split('|');
+            const labels = parseLabels(labelsRaw);
+            const appUuid = extractAppUuid(labels);
+
+            // Ensure server-side association works even for fixed container_name templates.
+            let name = dockerName;
+            if (appUuid && name && !name.includes(appUuid)) {
+                name = `${name}-${appUuid}`;
+            }
+
+            return { id, name, image, status, ports, application_uuid: appUuid || undefined };
         });
         
         // Get disk usage for storage

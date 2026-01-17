@@ -19,6 +19,7 @@ class Application extends BaseModel
         'environment_id', 'node_id', 'name', 'description',
         'git_repository', 'git_branch', 'git_commit_sha',
         'build_pack', 'dockerfile_path', 'docker_compose_path', 'build_context',
+        'template_slug', 'template_version', 'template_docker_compose', 'template_extra_files',
         'port', 'domains', 'environment_variables', 'build_args',
         'memory_limit', 'cpu_limit',
         'cpu_millicores_limit', 'ram_mb_limit', 'storage_mb_limit',
@@ -43,6 +44,12 @@ class Application extends BaseModel
     public string $dockerfile_path = 'Dockerfile';
     public string $docker_compose_path = 'docker-compose.yml';
     public string $build_context = '.';
+
+    // Template configuration (optional)
+    public ?string $template_slug = null;
+    public ?string $template_version = null;
+    public ?string $template_docker_compose = null;
+    public mixed $template_extra_files = null;
 
     // Runtime configuration
     public ?int $port = null;
@@ -157,6 +164,26 @@ class Application extends BaseModel
             return [];
         }
         return json_decode($this->build_args, true) ?: [];
+    }
+
+    /**
+     * @return array<string,string>
+     */
+    public function getTemplateExtraFiles(): array
+    {
+        $value = $this->template_extra_files;
+        if ($value === null || $value === '') {
+            return [];
+        }
+        if (is_array($value)) {
+            /** @var array<string,string> */
+            return $value;
+        }
+        if (!is_string($value)) {
+            return [];
+        }
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? $decoded : [];
     }
 
     /**
@@ -287,6 +314,18 @@ class Application extends BaseModel
             'health_check_path' => $this->health_check_path,
             'health_check_interval' => $this->health_check_interval,
         ];
+
+        // Template-based deploy: provide docker_compose + extra_files directly to the node.
+        if (!empty($this->template_docker_compose)) {
+            $payload['docker_compose'] = (string)$this->template_docker_compose;
+            $payload['template_slug'] = $this->template_slug;
+            $payload['template_version'] = $this->template_version;
+
+            $extra = $this->getTemplateExtraFiles();
+            if (!empty($extra)) {
+                $payload['extra_files'] = $extra;
+            }
+        }
 
         // If limits are unlimited, omit them so the node falls back to CHAP_MAX_* defaults.
         if ((int)$effective['ram_mb'] !== -1) {

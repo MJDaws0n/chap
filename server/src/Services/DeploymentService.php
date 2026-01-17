@@ -337,6 +337,7 @@ class DeploymentService
             // Track per-application running state based on this metrics snapshot.
             $seenByAppId = [];
             $runningByAppId = [];
+            $restartingByAppId = [];
             
             foreach ($containers as $containerData) {
                 $dockerId = $containerData['id'] ?? '';
@@ -348,9 +349,17 @@ class DeploymentService
                     continue;
                 }
                 
-                // Parse status to determine if running
-                $isRunning = stripos($status, 'up') !== false;
-                $containerStatus = $isRunning ? 'running' : 'exited';
+                // Parse status to determine runtime state.
+                // Status can be either:
+                // - docker ps-style strings: "Up ...", "Exited (...) ...", "Restarting (...) ..."
+                // - node-normalized strings: "running", "restarting", "exited", "stopped"
+                $statusLower = strtolower((string)$status);
+                $isRestarting = strpos($statusLower, 'restart') !== false;
+                $isRunning = (strpos($statusLower, 'up') !== false) || (strpos($statusLower, 'running') !== false);
+
+                $containerStatus = $isRestarting
+                    ? 'restarting'
+                    : ($isRunning ? 'running' : 'exited');
                 
                 // Check if container exists
                 $existing = $db->fetch(
@@ -397,6 +406,8 @@ class DeploymentService
                     $seenByAppId[$applicationIdForThisContainer] = true;
                     if ($isRunning) {
                         $runningByAppId[$applicationIdForThisContainer] = true;
+                    } elseif ($isRestarting) {
+                        $restartingByAppId[$applicationIdForThisContainer] = true;
                     }
                 }
             }
@@ -416,7 +427,8 @@ class DeploymentService
                 }
 
                 $hasRunning = !empty($runningByAppId[$appId]);
-                $newStatus = $hasRunning ? 'running' : 'stopped';
+                $hasRestarting = !empty($restartingByAppId[$appId]);
+                $newStatus = $hasRunning ? 'running' : ($hasRestarting ? 'restarting' : 'stopped');
 
                 if ($current !== $newStatus) {
                     $db->update('applications', ['status' => $newStatus], 'id = ?', [$appId]);
@@ -491,7 +503,10 @@ class DeploymentService
                 }
                 
                 // Normalize status
-                $containerStatus = (stripos($status, 'running') !== false || stripos($status, 'up') !== false) ? 'running' : 'exited';
+                $statusLower = strtolower((string)$status);
+                $isRestarting = strpos($statusLower, 'restart') !== false;
+                $isRunning = (strpos($statusLower, 'running') !== false || strpos($statusLower, 'up') !== false);
+                $containerStatus = $isRunning ? 'running' : ($isRestarting ? 'restarting' : 'exited');
                 
                 // Check if container exists by docker ID or name
                 $existing = $db->fetch(

@@ -9,6 +9,7 @@ const WebSocket = require('ws');
 const { WebSocketServer } = require('ws');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 const security = require('./security');
 
 const EXEC_LIMIT = {
@@ -238,6 +239,76 @@ function runDockerExec(containerId, argv, opts = {}) {
     });
 }
 
+function runDockerRun(argv, opts = {}) {
+    return new Promise((resolve, reject) => {
+        const proc = spawn('docker', argv, {
+            stdio: [opts.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+        });
+
+        let stdout = Buffer.alloc(0);
+        let stderr = Buffer.alloc(0);
+        let stdoutTruncated = false;
+        let stderrTruncated = false;
+        const max = opts.maxBytes || (256 * 1024);
+        const maxErr = opts.maxErrBytes || (128 * 1024);
+
+        proc.stdout.on('data', (chunk) => {
+            if (stdout.length < max) {
+                const take = Math.min(chunk.length, max - stdout.length);
+                stdout = Buffer.concat([stdout, chunk.subarray(0, take)]);
+                if (take < chunk.length) stdoutTruncated = true;
+            } else {
+                stdoutTruncated = true;
+            }
+        });
+        proc.stderr.on('data', (chunk) => {
+            if (stderr.length < maxErr) {
+                const take = Math.min(chunk.length, maxErr - stderr.length);
+                stderr = Buffer.concat([stderr, chunk.subarray(0, take)]);
+                if (take < chunk.length) stderrTruncated = true;
+            } else {
+                stderrTruncated = true;
+            }
+        });
+
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+            resolve({
+                code: code ?? 0,
+                stdout: stdout.toString('utf8'),
+                stderr: stderr.toString('utf8'),
+                stdoutBytes: stdout.length,
+                stderrBytes: stderr.length,
+                stdoutTruncated,
+                stderrTruncated,
+            });
+        });
+
+        if (opts.stdin) {
+            try {
+                proc.stdin.write(opts.stdin);
+                proc.stdin.end();
+            } catch {
+                // ignore
+            }
+        }
+    });
+}
+
+function hasPerm(browserWs, key, action) {
+    const perms = browserWs && browserWs.perms && typeof browserWs.perms === 'object' ? browserWs.perms : null;
+    if (!perms) return false;
+    const k = perms[key];
+    if (!k || typeof k !== 'object') return false;
+    return !!k[action];
+}
+
+function toVolumeFullPath(userPath) {
+    const p = String(userPath || '/');
+    if (p === '/') return '/volume';
+    return '/volume' + p;
+}
+
 function isSafePrintableCommandChar(ch) {
     // Reject control chars and newlines; allow common printable ASCII.
     const code = ch.charCodeAt(0);
@@ -401,8 +472,15 @@ function clampInt(value, min, max, fallback) {
 function normalizeStatus(statusRaw) {
     const s = String(statusRaw || '').trim();
     if (!s) return 'unknown';
-    if (s.toLowerCase().startsWith('up')) return 'running';
-    if (s.toLowerCase().startsWith('exited')) return 'stopped';
+    const lower = s.toLowerCase();
+    // `docker ps` examples:
+    // - "Up 3 minutes"
+    // - "Restarting (1) 2 seconds ago"
+    // - "Exited (1) 10 seconds ago"
+    if (lower.startsWith('up')) return 'running';
+    if (lower.startsWith('restarting') || lower.includes(' restarting')) return 'restarting';
+    if (lower.startsWith('exited')) return 'stopped';
+    if (lower.startsWith('created')) return 'created';
     return 'unknown';
 }
 
@@ -448,9 +526,10 @@ function parseDockerTimestampLine(line) {
  * @param {() => boolean} deps.isServerConnected
  * @param {(cmd: string, opts?: object) => Promise<string>} deps.execCommand
  * @param {(x: any) => string} deps.safeId
+ * @param {(applicationUuid: string) => string | null | undefined} [deps.getComposeDir]
  */
 function createLiveLogsWs(deps) {
-    const { config, sendToServer, isServerConnected, execCommand, safeId } = deps;
+     const { config, sendToServer, isServerConnected, execCommand, safeId, getComposeDir } = deps;
 
     let browserWss = null;
     let heartbeatInterval = null;
@@ -474,25 +553,146 @@ function createLiveLogsWs(deps) {
         }
     }
 
-    async function getAllAppContainers(applicationUuid) {
-        const namePrefix = `chap-${safeId(applicationUuid)}`.replace(/\s+/g, '');
+    function dockerSafeIdToken(x) {
+        // Docker IDs are hex; keep this strict so we don't accidentally inject args.
+        return String(x || '').trim().replace(/[^a-f0-9]/gi, '');
+    }
+
+    function findContainerById(containers, requestedId) {
+        const id = String(requestedId || '').trim().toLowerCase();
+        if (!id) return null;
+        for (const c of Array.isArray(containers) ? containers : []) {
+            const cid = String(c && c.id ? c.id : '').trim().toLowerCase();
+            if (!cid) continue;
+            if (cid === id) return c;
+            // Support short IDs (prefix matching) in either direction.
+            if (cid.startsWith(id) || id.startsWith(cid)) return c;
+        }
+        return null;
+    }
+
+    async function dockerInspectStdinConfig(containerId) {
         try {
-            const out = await execCommand(
-                `docker ps -a --filter "name=${namePrefix}" --format "{{.ID}}|{{.Names}}|{{.Status}}"`
+            const id = dockerSafeIdToken(containerId);
+            if (!id) return null;
+            const out = await execCommand(`docker inspect --format "{{.Config.OpenStdin}}|{{.Config.Tty}}" ${id}`);
+            const [openStdinRaw, ttyRaw] = String(out || '').trim().split('|');
+            const openStdin = String(openStdinRaw || '').trim().toLowerCase() === 'true';
+            const tty = String(ttyRaw || '').trim().toLowerCase() === 'true';
+            return { openStdin, tty };
+        } catch {
+            return null;
+        }
+    }
+
+    async function dockerPsList({ all, filters }) {
+        const base = all ? 'docker ps -a' : 'docker ps';
+        const fmt = '{{.ID}}|{{.Names}}|{{.Status}}';
+        const flt = (Array.isArray(filters) ? filters : []).filter(Boolean);
+        const cmd = `${base} ${flt.map((f) => `--filter "${f}"`).join(' ')} --format "${fmt}"`;
+        const out = await execCommand(cmd);
+        const lines = String(out || '').trim().split('\n').filter(Boolean);
+        const parsed = lines
+            .map((line) => {
+                const [id, name, statusRaw] = String(line).split('|');
+                const idTrim = (id || '').trim();
+                const nameTrim = (name || '').trim();
+                const status = normalizeStatus(statusRaw);
+                return { id: idTrim, name: nameTrim, status };
+            })
+            .filter((c) => c.id && c.name);
+        parsed.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        return parsed;
+    }
+
+    async function getComposeProjectContainers(applicationUuid, all) {
+        if (typeof getComposeDir !== 'function') return [];
+        const app = safeId(applicationUuid);
+        const composeDir = getComposeDir(app);
+        if (!composeDir) return [];
+        const composePath = path.join(composeDir, 'docker-compose.yml');
+        if (!fs.existsSync(composePath)) return [];
+
+        try {
+            const args = all ? 'ps -a -q' : 'ps -q';
+            const idsOut = await execCommand(`docker compose -p chap-${app} ${args}`, { cwd: composeDir });
+            const ids = String(idsOut || '')
+                .trim()
+                .split('\n')
+                .map((x) => dockerSafeIdToken(x))
+                .filter(Boolean);
+            if (!ids.length) return [];
+
+            // Use docker inspect to fetch stable name/status for each id.
+            // (docker ps filtering by id would also work but is slower per-container)
+            const inspectOut = await execCommand(
+                `docker inspect --format "{{.Id}}|{{.Name}}|{{.State.Status}}|{{.State.Restarting}}" ${ids.join(' ')}`
             );
-            const lines = out.trim().split('\n').filter(Boolean);
-            return lines
+            const lines = String(inspectOut || '').trim().split('\n').filter(Boolean);
+            const containers = lines
                 .map((line) => {
-                    const [id, name, statusRaw] = line.split('|');
-                    const idTrim = (id || '').trim();
-                    const nameTrim = (name || '').trim();
-                    const status = normalizeStatus(statusRaw);
-                    return { id: idTrim, name: nameTrim, status };
+                    const [id, nameRaw, state, restartingRaw] = String(line).split('|');
+                    const idTrim = dockerSafeIdToken(id);
+                    const name = String(nameRaw || '').replace(/^\//, '').trim();
+                    const st = String(state || '').trim().toLowerCase();
+                    const restarting = String(restartingRaw || '').trim().toLowerCase() === 'true';
+                    const status = restarting
+                        ? 'restarting'
+                        : st === 'running'
+                            ? 'running'
+                            : st === 'exited'
+                                ? 'stopped'
+                                : (st || 'unknown');
+                    return { id: idTrim, name, status };
                 })
                 .filter((c) => c.id && c.name);
+            containers.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+            return containers;
         } catch {
             return [];
         }
+    }
+
+    async function getAppContainers(applicationUuid, all) {
+        const app = safeId(applicationUuid);
+
+        // Most robust when composeDir exists (handles fixed container_name reliably).
+        const fromCompose = await getComposeProjectContainers(app, all);
+        if (fromCompose.length) return fromCompose;
+
+        // Preferred: Chap labels (injected into compose on deploy; also used by non-compose runs).
+        try {
+            const byChapLabel = await dockerPsList({
+                all,
+                filters: [`label=chap.managed=true`, `label=chap.app=${app}`],
+            });
+            if (byChapLabel.length) return byChapLabel;
+        } catch {
+            // ignore and fall through
+        }
+
+        // Fallback: docker compose project label.
+        try {
+            const byProject = await dockerPsList({
+                all,
+                filters: [`label=com.docker.compose.project=chap-${app}`],
+            });
+            if (byProject.length) return byProject;
+        } catch {
+            // ignore and fall through
+        }
+
+        // Legacy fallback: name prefix.
+        try {
+            const namePrefix = `chap-${app}`.replace(/\s+/g, '');
+            return await dockerPsList({ all, filters: [`name=${namePrefix}`] });
+        } catch {
+            return [];
+        }
+    }
+
+    async function getAllAppContainers(applicationUuid) {
+        return await getAppContainers(applicationUuid, true);
     }
 
     async function listVolumesForApp(applicationUuid) {
@@ -552,12 +752,22 @@ function createLiveLogsWs(deps) {
         }
 
         try {
+            const requirePerm = (permKey, permAction) => {
+                if (!hasPerm(browserWs, permKey, permAction)) {
+                    volumesReply(browserWs, requestId, false, 'Not authorized');
+                    return false;
+                }
+                return true;
+            };
+
             if (action === 'list') {
+                if (!requirePerm('volumes', 'read')) return;
                 const vols = await listVolumesForApp(browserWs.applicationUuid);
                 return volumesReply(browserWs, requestId, true, { volumes: vols });
             }
 
             if (action === 'delete') {
+                if (!requirePerm('volumes', 'execute')) return;
                 const name = String(payload.name || '').trim();
                 if (!await ensureVolumeBelongsToApp(browserWs, name)) return volumesReply(browserWs, requestId, false, 'Volume not found for application');
 
@@ -575,6 +785,7 @@ function createLiveLogsWs(deps) {
             }
 
             if (action === 'download') {
+                if (!requirePerm('volumes', 'read')) return;
                 const name = String(payload.name || '').trim();
                 if (!await ensureVolumeBelongsToApp(browserWs, name)) return volumesReply(browserWs, requestId, false, 'Volume not found for application');
 
@@ -653,6 +864,7 @@ function createLiveLogsWs(deps) {
             }
 
             if (action === 'replace:init') {
+                if (!requirePerm('volumes', 'execute')) return;
                 const name = String(payload.name || '').trim();
                 const size = parseInt(String(payload.size || '0'), 10);
                 if (!await ensureVolumeBelongsToApp(browserWs, name)) return volumesReply(browserWs, requestId, false, 'Volume not found for application');
@@ -697,6 +909,7 @@ function createLiveLogsWs(deps) {
             }
 
             if (action === 'replace:chunk') {
+                if (!requirePerm('volumes', 'execute')) return;
                 const transferId = String(payload.transfer_id || '');
                 const offset = parseInt(String(payload.offset || '0'), 10);
                 const dataB64 = String(payload.data_b64 || '');
@@ -734,6 +947,7 @@ function createLiveLogsWs(deps) {
             }
 
             if (action === 'replace:commit') {
+                if (!requirePerm('volumes', 'execute')) return;
                 const transferId = String(payload.transfer_id || '');
                 const t = volumeReplacements.get(transferId);
                 if (!t || !t.proc) return volumesReply(browserWs, requestId, false, 'Invalid transfer');
@@ -759,6 +973,201 @@ function createLiveLogsWs(deps) {
                 return volumesReply(browserWs, requestId, true, {});
             }
 
+            if (action.startsWith('fs:')) {
+                const name = String(payload.name || payload.volume || '').trim();
+                if (!await ensureVolumeBelongsToApp(browserWs, name)) return volumesReply(browserWs, requestId, false, 'Volume not found for application');
+
+                // Permission mapping
+                const fsAction = action.slice(3);
+                if (fsAction === 'list' || fsAction === 'read') {
+                    if (!requirePerm('volume_files', 'read')) return;
+                } else if (fsAction === 'write' || fsAction === 'mkdir' || fsAction === 'touch') {
+                    if (!requirePerm('volume_files', 'write')) return;
+                } else if (fsAction === 'delete') {
+                    if (!requirePerm('volume_files', 'execute')) return;
+                }
+
+                if (fsAction === 'list') {
+                    const dirUser = String(payload.path || '/');
+                    if (!isSafePathValue(dirUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                    const dir = toVolumeFullPath(dirUser);
+
+                    const listScript = [
+                        'set -e',
+                        'dir="$1"',
+                        'if [ ! -d "$dir" ]; then exit 2; fi',
+                        'if command -v find >/dev/null 2>&1; then',
+                        '  find "$dir" -mindepth 1 -maxdepth 1 -print',
+                        'else',
+                        '  ls -A1 "$dir" 2>/dev/null | while IFS= read -r n; do printf "%s\n" "$dir/$n"; done',
+                        'fi',
+                    ].join('\n');
+
+                    const listRes = await runDockerRun([
+                        'run', '--rm',
+                        '-v', `${name}:/volume:ro`,
+                        VOLUME_HELPER_IMAGE,
+                        'sh', '-c', listScript, 'sh', dir,
+                    ], { maxBytes: 1024 * 1024, maxErrBytes: 64 * 1024 });
+
+                    if (listRes.code !== 0) {
+                        return volumesReply(browserWs, requestId, false, (listRes.stderr || '').trim() || 'Failed to list directory');
+                    }
+
+                    const paths = listRes.stdout.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 2000);
+
+                    const statScript = [
+                        'set -e',
+                        'dir="$1"',
+                        'shift',
+                        'for p in "$@"; do',
+                        '  name=${p##*/}',
+                        '  type=file',
+                        '  if [ -d "$p" ]; then type=dir; fi',
+                        '  size=""',
+                        '  mtime=""',
+                        '  if command -v stat >/dev/null 2>&1; then',
+                        '    size=$(stat -c %s "$p" 2>/dev/null || true)',
+                        '    mtime=$(stat -c %Y "$p" 2>/dev/null || true)',
+                        '  fi',
+                        '  printf "%s\t%s\t%s\t%s\t%s\n" "$name" "$type" "$size" "$mtime" "$p"',
+                        'done',
+                    ].join('\n');
+
+                    const statRes = await runDockerRun([
+                        'run', '--rm',
+                        '-v', `${name}:/volume:ro`,
+                        VOLUME_HELPER_IMAGE,
+                        'sh', '-c', statScript, 'sh', dir, ...paths,
+                    ], { maxBytes: 2 * 1024 * 1024, maxErrBytes: 64 * 1024 });
+
+                    if (statRes.code !== 0) {
+                        return volumesReply(browserWs, requestId, false, (statRes.stderr || '').trim() || 'Failed to stat directory entries');
+                    }
+
+                    const entries = [];
+                    for (const line of statRes.stdout.split('\n')) {
+                        if (!line.trim()) continue;
+                        const parts = line.split('\t');
+                        if (parts.length < 5) continue;
+                        const [entryName, entryType, sizeRaw, mtimeRaw] = parts;
+                        const mtimeNum = mtimeRaw ? parseInt(mtimeRaw, 10) : null;
+                        const sizeNum = sizeRaw ? parseInt(sizeRaw, 10) : null;
+                        entries.push({
+                            name: entryName,
+                            type: entryType === 'dir' ? 'dir' : 'file',
+                            size: Number.isFinite(sizeNum) ? sizeNum : null,
+                            mtime: Number.isFinite(mtimeNum) ? new Date(mtimeNum * 1000).toISOString() : null,
+                        });
+                    }
+
+                    entries.sort((a, b) => {
+                        if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+                        return String(a.name).localeCompare(String(b.name));
+                    });
+
+                    return volumesReply(browserWs, requestId, true, { entries });
+                }
+
+                if (fsAction === 'read') {
+                    const pUser = String(payload.path || '');
+                    if (!isSafePathValue(pUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                    const p = toVolumeFullPath(pUser);
+                    const limit = FILES_LIMIT.maxReadBytes;
+                    const readScript = [
+                        'set -e',
+                        'p="$1"',
+                        '[ -f "$p" ] || exit 3',
+                        '[ -r "$p" ] || exit 4',
+                        `head -c ${limit + 1} "$p"`,
+                    ].join('\n');
+
+                    const res = await runDockerRun([
+                        'run', '--rm',
+                        '-v', `${name}:/volume:ro`,
+                        VOLUME_HELPER_IMAGE,
+                        'sh', '-c', readScript, 'sh', p,
+                    ], { maxBytes: limit + 1, maxErrBytes: 64 * 1024 });
+
+                    if (res.code === 3) return volumesReply(browserWs, requestId, false, 'Not a regular file');
+                    if (res.code === 4) return volumesReply(browserWs, requestId, false, 'File is not readable');
+                    if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to read file');
+                    if ((res.stdoutBytes || 0) > limit) return volumesReply(browserWs, requestId, false, `File too large to edit (>${limit} bytes)`);
+                    return volumesReply(browserWs, requestId, true, { content: res.stdout });
+                }
+
+                if (fsAction === 'write') {
+                    const pUser = String(payload.path || '');
+                    const content = typeof payload.content === 'string' ? payload.content : '';
+                    if (!isSafePathValue(pUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                    if (Buffer.byteLength(content, 'utf8') > FILES_LIMIT.maxWriteBytes) {
+                        return volumesReply(browserWs, requestId, false, `Content too large (>${FILES_LIMIT.maxWriteBytes} bytes)`);
+                    }
+                    const p = toVolumeFullPath(pUser);
+                    const res = await runDockerRun([
+                        'run', '--rm', '-i',
+                        '-v', `${name}:/volume`,
+                        VOLUME_HELPER_IMAGE,
+                        'sh', '-c', 'cat > "$1"', 'sh', p,
+                    ], {
+                        stdin: Buffer.from(content, 'utf8'),
+                        maxBytes: 1024,
+                        maxErrBytes: 64 * 1024,
+                    });
+                    if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to write file');
+                    return volumesReply(browserWs, requestId, true, {});
+                }
+
+                if (fsAction === 'mkdir') {
+                    const dirUser = String(payload.dir || payload.path || '/');
+                    const entry = String(payload.entry || payload.name || payload.folder || '').trim();
+                    if (!isSafePathValue(dirUser) || !isSafeNameSegment(entry)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                    const dir = toVolumeFullPath(dirUser);
+                    const res = await runDockerRun([
+                        'run', '--rm',
+                        '-v', `${name}:/volume`,
+                        VOLUME_HELPER_IMAGE,
+                        'sh', '-c', 'mkdir -p -- "$1/$2"', 'sh', dir, entry,
+                    ], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to create folder');
+                    return volumesReply(browserWs, requestId, true, {});
+                }
+
+                if (fsAction === 'touch') {
+                    const dirUser = String(payload.dir || payload.path || '/');
+                    const entry = String(payload.entry || payload.name || payload.filename || '').trim();
+                    if (!isSafePathValue(dirUser) || !isSafeNameSegment(entry)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                    const dir = toVolumeFullPath(dirUser);
+                    const res = await runDockerRun([
+                        'run', '--rm',
+                        '-v', `${name}:/volume`,
+                        VOLUME_HELPER_IMAGE,
+                        'sh', '-c', ': > "$1/$2"', 'sh', dir, entry,
+                    ], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to create file');
+                    return volumesReply(browserWs, requestId, true, {});
+                }
+
+                if (fsAction === 'delete') {
+                    const pUser = String(payload.path || '');
+                    const type = String(payload.type || 'file');
+                    if (!isSafePathValue(pUser)) return volumesReply(browserWs, requestId, false, 'Invalid path');
+                    if (pUser === '/' || pUser === '.') return volumesReply(browserWs, requestId, false, 'Refusing to delete root');
+                    const p = toVolumeFullPath(pUser);
+                    const cmd = type === 'dir' ? 'rm -rf -- "$1"' : 'rm -f -- "$1"';
+                    const res = await runDockerRun([
+                        'run', '--rm',
+                        '-v', `${name}:/volume`,
+                        VOLUME_HELPER_IMAGE,
+                        'sh', '-c', cmd, 'sh', p,
+                    ], { maxBytes: 1024, maxErrBytes: 64 * 1024 });
+                    if (res.code !== 0) return volumesReply(browserWs, requestId, false, (res.stderr || '').trim() || 'Failed to delete');
+                    return volumesReply(browserWs, requestId, true, {});
+                }
+
+                return volumesReply(browserWs, requestId, false, 'Unknown fs action');
+            }
+
             return volumesReply(browserWs, requestId, false, 'Unknown action');
         } catch (e) {
             return volumesReply(browserWs, requestId, false, e && e.message ? e.message : 'Error');
@@ -780,7 +1189,7 @@ function createLiveLogsWs(deps) {
         const running = allowed.filter((c) => c.status === 'running');
         if (!running.length) return { containers: allowed, container: null };
         if (requestedContainerId) {
-            const found = running.find((c) => c.id === requestedContainerId);
+            const found = findContainerById(running, requestedContainerId);
             if (found) return { containers: allowed, container: found };
         }
         return { containers: allowed, container: running[0] };
@@ -1244,28 +1653,9 @@ function createLiveLogsWs(deps) {
     }
 
     async function getRunningContainers(applicationUuid) {
-        const namePrefix = `chap-${safeId(applicationUuid)}`.replace(/\s+/g, '');
-        try {
-            const out = await execCommand(
-                `docker ps --filter "name=${namePrefix}" --format "{{.ID}}|{{.Names}}|{{.Status}}"`
-            );
-            const lines = out.trim().split('\n').filter(Boolean);
-            return lines
-                .map((line) => {
-                    const [id, name, statusRaw] = line.split('|');
-                    const idTrim = (id || '').trim();
-                    const nameTrim = (name || '').trim();
-                    const status = normalizeStatus(statusRaw);
-                    return {
-                        id: idTrim,
-                        name: nameTrim,
-                        status,
-                    };
-                })
-                .filter((c) => c.id && c.name);
-        } catch (err) {
-            return [];
-        }
+        const all = await getAppContainers(applicationUuid, false);
+        // `docker ps` returns only running, but keep this guard if normalizeStatus ever changes.
+        return all.filter((c) => c.status === 'running' || c.status === 'restarting');
     }
 
     function stopAllLogProcesses(browserWs) {
@@ -1500,17 +1890,27 @@ function createLiveLogsWs(deps) {
         // Scope: only allow console input to containers for this application.
         const appUuid = browserWs.applicationUuid;
         const allowed = await getRunningContainers(appUuid);
-        const target = allowed.find((c) => c.id === containerId);
+        const target = findContainerById(allowed, containerId);
         if (!target) return reject('Container not found for application');
         if (target.status !== 'running') return reject('Container is not running');
 
+        const canonicalContainerId = String(target.id || '').trim();
+        if (!canonicalContainerId) return reject('Invalid container id');
+
+        // If stdin isn't open, docker attach can connect but input won't reach PID 1.
+        // Give a clear actionable error.
+        const stdinCfg = await dockerInspectStdinConfig(canonicalContainerId);
+        if (stdinCfg && stdinCfg.openStdin === false) {
+            return reject('Container stdin is not open; redeploy with compose `stdin_open: true` (node now sets this by default for new deploys).');
+        }
+
         browserWs._consoleSessions = browserWs._consoleSessions || new Map();
-        let session = browserWs._consoleSessions.get(containerId);
+        let session = browserWs._consoleSessions.get(canonicalContainerId);
 
         if (!session || !session.proc) {
             // Start an attach session so we can write to stdin.
             // This requires the container to be started with stdin open (docker run -i or compose stdin_open).
-            const proc = spawn('docker', ['attach', '--sig-proxy=false', containerId], {
+            const proc = spawn('docker', ['attach', '--sig-proxy=false', canonicalContainerId], {
                 stdio: ['pipe', 'pipe', 'pipe'],
             });
 
@@ -1520,7 +1920,7 @@ function createLiveLogsWs(deps) {
                     type: 'console:output',
                     stream,
                     container: target.name,
-                    container_id: containerId,
+                    container_id: canonicalContainerId,
                     content: line,
                     timestamp: Date.now(),
                 });
@@ -1543,21 +1943,21 @@ function createLiveLogsWs(deps) {
                     type: 'console:error',
                     request_id: requestId,
                     container: target.name,
-                    container_id: containerId,
+                    container_id: canonicalContainerId,
                     error: err.message,
                     timestamp: Date.now(),
                 });
             });
 
             proc.on('close', (code, signal) => {
-                const s = browserWs._consoleSessions && browserWs._consoleSessions.get(containerId);
+                const s = browserWs._consoleSessions && browserWs._consoleSessions.get(canonicalContainerId);
                 if (s) {
                     s.proc = null;
                 }
                 safeJsonSend(browserWs, {
                     type: 'console:status',
                     container: target.name,
-                    container_id: containerId,
+                    container_id: canonicalContainerId,
                     status: 'disconnected',
                     exit_code: typeof code === 'number' ? code : null,
                     signal: signal || null,
@@ -1566,12 +1966,12 @@ function createLiveLogsWs(deps) {
             });
 
             session = { proc, containerName: target.name };
-            browserWs._consoleSessions.set(containerId, session);
+            browserWs._consoleSessions.set(canonicalContainerId, session);
 
             safeJsonSend(browserWs, {
                 type: 'console:status',
                 container: target.name,
-                container_id: containerId,
+                container_id: canonicalContainerId,
                 status: 'connected',
                 timestamp: Date.now(),
             });
@@ -1588,7 +1988,7 @@ function createLiveLogsWs(deps) {
             type: 'console:ack',
             request_id: requestId,
             container: target.name,
-            container_id: containerId,
+            container_id: canonicalContainerId,
             timestamp: Date.now(),
         });
     }
@@ -1628,14 +2028,17 @@ function createLiveLogsWs(deps) {
         // Scope: only allow exec into containers for this application.
         const appUuid = browserWs.applicationUuid;
         const allowed = await getRunningContainers(appUuid);
-        const target = allowed.find((c) => c.id === containerId);
+        const target = findContainerById(allowed, containerId);
         if (!target) return reject('Container not found for application');
         if (target.status !== 'running') return reject('Container is not running');
+
+        const canonicalContainerId = String(target.id || '').trim();
+        if (!canonicalContainerId) return reject('Invalid container id');
 
         browserWs._execInFlight = true;
         const startedAt = Date.now();
 
-        const proc = spawn('docker', ['exec', '-i', containerId, ...argv], {
+        const proc = spawn('docker', ['exec', '-i', canonicalContainerId, ...argv], {
             stdio: ['ignore', 'pipe', 'pipe'],
         });
 
@@ -1751,6 +2154,8 @@ function createLiveLogsWs(deps) {
         browserWs.authenticated = true;
         browserWs.applicationUuid = applicationUuid;
         browserWs.userId = message.user_id;
+        browserWs.teamId = message.team_id;
+        browserWs.perms = message.perms && typeof message.perms === 'object' ? message.perms : null;
         if (browserWs.authTimeout) {
             clearTimeout(browserWs.authTimeout);
             browserWs.authTimeout = null;
