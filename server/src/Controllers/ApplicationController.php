@@ -916,36 +916,6 @@ class ApplicationController extends BaseController
     }
 
     /**
-     * Restart application
-     */
-    public function restart(string $uuid): void
-    {
-        $team = $this->currentTeam();
-        $application = Application::findByUuid($uuid);
-
-        if (!$this->canAccessApplication($application, $team)) {
-            if ($this->isApiRequest()) {
-                $this->json(['error' => 'Application not found'], 404);
-            } else {
-                flash('error', 'Application not found');
-                $this->redirect('/projects');
-            }
-        }
-
-        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
-        $this->requireTeamPermission('applications', 'execute', $teamId);
-
-        DeploymentService::restart($application);
-
-        if ($this->isApiRequest()) {
-            $this->json(['message' => 'Application restarted']);
-        } else {
-            flash('success', 'Application restarted');
-            $this->redirect('/applications/' . $uuid);
-        }
-    }
-
-    /**
      * Live logs page for application
      */
     public function logs(string $uuid): void

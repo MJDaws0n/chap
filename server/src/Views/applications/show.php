@@ -89,10 +89,6 @@ $allocatedPorts = array_values(array_map('intval', is_array($allocatedPorts) ? $
                 </a>
 
                 <?php if (($application->status ?? '') === 'running'): ?>
-                    <form method="POST" action="/applications/<?= e($application->uuid) ?>/restart" class="inline-block">
-                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                        <button type="submit" class="btn btn-warning">Restart</button>
-                    </form>
                     <form method="POST" action="/applications/<?= e($application->uuid) ?>/stop" class="inline-block">
                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                         <button type="submit" class="btn btn-secondary">Stop</button>
@@ -102,7 +98,7 @@ $allocatedPorts = array_values(array_map('intval', is_array($allocatedPorts) ? $
                 <form method="POST" action="/applications/<?= e($application->uuid) ?>/deploy" class="inline-block" data-deploy-form>
                     <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                     <button type="submit" class="btn btn-primary" <?= $isDeploying ? 'disabled aria-disabled="true"' : '' ?>>
-                        <?= $isDeploying ? 'Deploying…' : 'Deploy' ?>
+                        <?= $isDeploying ? 'Deploying…' : ((($application->status ?? '') === 'running') ? 'Redeploy' : 'Deploy') ?>
                     </button>
                 </form>
             </div>

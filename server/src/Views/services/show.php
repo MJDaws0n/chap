@@ -22,10 +22,6 @@
                 <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                 <button type="submit" class="btn btn-warning">Stop</button>
             </form>
-            <form method="POST" action="/services/<?= $service->uuid ?>/restart" class="inline-form">
-                <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                <button type="submit" class="btn btn-primary">Restart</button>
-            </form>
         <?php else: ?>
             <form method="POST" action="/services/<?= $service->uuid ?>/start" class="inline-form">
                 <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">

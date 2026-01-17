@@ -202,42 +202,6 @@ class DeploymentService
     }
 
     /**
-     * Restart an application
-     */
-    public static function restart(Application $application): void
-    {
-        if (!$application->node_id) {
-            return;
-        }
-
-        $node = Node::find($application->node_id);
-        if (!$node) {
-            return;
-        }
-
-        $task = [
-            'type' => 'container:restart',
-            'payload' => [
-                'application_uuid' => $application->uuid,
-            ],
-        ];
-
-        self::storeTask($node->id, $task);
-
-        try {
-            WebSocketServer::sendToNode($node->id, [
-                'type' => 'app:event',
-                'payload' => [
-                    'action' => 'restart',
-                    'application' => $application->toDeployPayload(),
-                ],
-            ]);
-        } catch (\Throwable $e) {
-            // fallback to queue
-        }
-    }
-
-    /**
      * Rollback to a previous deployment
      */
     public static function rollback(Deployment $previousDeployment, array $context = []): Deployment
