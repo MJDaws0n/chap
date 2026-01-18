@@ -80,6 +80,11 @@ $wsUrl = $browserWebsocketUrl ?? '';
                             <span class="badge badge-default" id="fm-status">Connecting…</span>
                         </div>
 
+                        <div class="flex items-center gap-2 text-sm text-secondary" id="fm-transfer-wrap">
+                            <span id="fm-transfer" class="text-sm text-secondary"></span>
+                            <button type="button" class="btn btn-ghost btn-sm hidden" id="fm-transfer-cancel">Cancel</button>
+                        </div>
+
                         <span class="text-sm text-secondary" id="fm-root"></span>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">

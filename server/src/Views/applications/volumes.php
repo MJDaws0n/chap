@@ -60,12 +60,12 @@ $wsUrl = $browserWebsocketUrl ?? '';
                         <span class="badge badge-default" id="vm-status">Connecting…</span>
                         <span class="text-sm text-secondary" id="vm-summary"></span>
                         <span class="text-sm text-secondary" id="vm-progress"></span>
+                        <button type="button" class="btn btn-ghost btn-sm hidden" id="vm-cancel">Cancel</button>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">
                         <input type="file" id="vm-replace-input" class="hidden" accept=".tar.gz,.tgz,application/gzip,application/x-gzip">
                         <button type="button" class="btn btn-secondary btn-sm" id="vm-refresh">Refresh</button>
                         <button type="button" class="btn btn-secondary btn-sm" id="vm-download" disabled>Download</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="vm-replace" disabled>Replace</button>
                         <button type="button" class="btn btn-danger btn-sm" id="vm-delete" disabled>Delete</button>
                     </div>
                 </div>
@@ -80,7 +80,7 @@ $wsUrl = $browserWebsocketUrl ?? '';
                             <th style="width: 120px;">Type</th>
                             <th>Mounted At</th>
                             <th style="width: 220px;">Used By</th>
-                            <th style="width: 120px;">Actions</th>
+                            <th style="width: 96px;">Actions</th>
                         </tr>
                         </thead>
                         <tbody id="vm-rows"></tbody>
@@ -98,7 +98,10 @@ $wsUrl = $browserWebsocketUrl ?? '';
         <style>
             .vm-table-wrap { overflow-x: auto; }
             .vm-row.selected { background: var(--bg-secondary); }
+            .vm-row { cursor: pointer; }
             .vm-row:hover { background: var(--bg-secondary); }
+            .vm-select-cell { text-align: left; }
+            .vm-row-actions .dropdown-menu { min-width: 200px; }
             .vm-checkbox {
                 appearance: none;
                 -webkit-appearance: none;

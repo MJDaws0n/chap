@@ -141,6 +141,9 @@
         const breadcrumbEl = qs('#fm-breadcrumb');
         const dropzone = qs('#fm-dropzone');
 
+        const transferEl = qs('#fm-transfer');
+        const transferCancelBtn = qs('#fm-transfer-cancel');
+
         const uploadBtn = qs('#fm-upload-btn');
         const uploadInput = qs('#fm-upload-input');
 
@@ -196,6 +199,24 @@
         // Transfers
         const downloads = new Map(); // transferId -> { name, chunks: Uint8Array[], received }
         const uploads = new Map(); // transferId -> { file, offset, chunkSize, destDir, name }
+
+        let activeCancel = null;
+        function setTransfer(text, onCancel) {
+            if (transferEl) transferEl.textContent = text || '';
+            activeCancel = typeof onCancel === 'function' ? onCancel : null;
+            if (transferCancelBtn) {
+                const show = !!activeCancel && !!text;
+                transferCancelBtn.classList.toggle('hidden', !show);
+                transferCancelBtn.disabled = !show;
+            }
+        }
+
+        if (transferCancelBtn) {
+            transferCancelBtn.addEventListener('click', async () => {
+                if (!activeCancel) return;
+                try { await activeCancel(); } catch {}
+            });
+        }
 
         function dirnameOf(p) {
             const s = String(p || '');
@@ -892,7 +913,10 @@
             const files = Array.from(fileList || []).filter(Boolean);
             if (files.length === 0) return;
 
+            let cancelledAll = false;
+
             for (const file of files) {
+                if (cancelledAll) break;
                 const initRes = await request('upload:init', {
                     dir: currentPath,
                     name: file.name,
@@ -900,26 +924,79 @@
                     type: file.type || 'application/octet-stream',
                 });
 
+                const serverName = (initRes && initRes.name) ? String(initRes.name) : file.name;
+
                 const transferId = initRes.transfer_id;
                 const chunkSize = initRes.chunk_size || (256 * 1024);
 
-                uploads.set(transferId, { file, offset: 0, chunkSize, destDir: currentPath, name: file.name });
+                uploads.set(transferId, { file, offset: 0, chunkSize, destDir: currentPath, name: serverName });
+
+                let cancelled = false;
+                setTransfer(`Uploading ${serverName}… 0%`, async () => {
+                    cancelled = true;
+                    cancelledAll = true;
+                    try { await request('upload:cancel', { transfer_id: transferId }); } catch {}
+                    uploads.delete(transferId);
+                    setTransfer('', null);
+                    showToast('info', 'Upload cancelled');
+                });
 
                 let offset = 0;
                 while (offset < file.size) {
+                    if (cancelled) break;
                     const slice = file.slice(offset, offset + chunkSize);
                     const buf = await slice.arrayBuffer();
                     const b64 = arrayBufferToBase64(buf);
                     await request('upload:chunk', { transfer_id: transferId, offset: offset, data_b64: b64 });
                     offset += slice.size;
+
+                    const pct = file.size > 0 ? Math.floor((offset / file.size) * 100) : 100;
+                    setTransfer(`Uploading ${serverName}… ${Math.min(100, Math.max(0, pct))}%`, activeCancel);
                 }
+
+                if (cancelled) break;
 
                 await request('upload:commit', { transfer_id: transferId });
                 uploads.delete(transferId);
-                showToast('success', `Uploaded ${file.name}`);
+                setTransfer('', null);
+                showToast('success', `Uploaded ${serverName}`);
             }
 
             await refresh();
+        }
+
+        function extractDroppedFiles(dataTransfer) {
+            const dt = dataTransfer;
+            if (!dt) return [];
+            const out = [];
+            let skippedDirs = 0;
+
+            if (dt.items && dt.items.length) {
+                for (const item of Array.from(dt.items)) {
+                    if (!item) continue;
+                    if (item.kind !== 'file') continue;
+                    try {
+                        if (item.webkitGetAsEntry) {
+                            const entry = item.webkitGetAsEntry();
+                            if (entry && entry.isDirectory) {
+                                skippedDirs += 1;
+                                continue;
+                            }
+                        }
+                    } catch {
+                        // ignore
+                    }
+                    const f = item.getAsFile ? item.getAsFile() : null;
+                    if (f) out.push(f);
+                }
+            } else if (dt.files && dt.files.length) {
+                for (const f2 of Array.from(dt.files)) out.push(f2);
+            }
+
+            if (skippedDirs) {
+                showToast('error', 'Folder uploads are not supported (yet).');
+            }
+            return out;
         }
 
         function handleMessage(msg) {
@@ -982,7 +1059,15 @@
             }
 
             if (msg.type === 'files:download:start') {
-                downloads.set(msg.transfer_id, { name: msg.name || 'download', chunks: [], received: 0, mime: msg.mime || 'application/octet-stream' });
+                downloads.set(msg.transfer_id, { name: msg.name || 'download', chunks: [], received: 0, size: Number.isFinite(msg.size) ? msg.size : null, mime: msg.mime || 'application/octet-stream' });
+                const tid = msg.transfer_id;
+                const name = msg.name || 'download';
+                setTransfer(`Downloading ${name}… 0%`, async () => {
+                    try { await request('download:cancel', { transfer_id: tid }); } catch {}
+                    downloads.delete(tid);
+                    setTransfer('', null);
+                    showToast('info', 'Download cancelled');
+                });
                 return;
             }
 
@@ -994,6 +1079,14 @@
                 for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
                 d.chunks.push(arr);
                 d.received += arr.length;
+
+                const total = Number.isFinite(d.size) ? d.size : null;
+                if (total && total > 0) {
+                    const pct = Math.floor((d.received / total) * 100);
+                    setTransfer(`Downloading ${d.name}… ${Math.min(99, Math.max(0, pct))}%`, activeCancel);
+                } else {
+                    setTransfer(`Downloading ${d.name}… ${formatBytes(d.received)}`, activeCancel);
+                }
                 return;
             }
 
@@ -1010,12 +1103,21 @@
                 a.remove();
                 URL.revokeObjectURL(url);
                 downloads.delete(msg.transfer_id);
+                setTransfer('', null);
                 showToast('success', 'Downloaded');
+                return;
+            }
+
+            if (msg.type === 'files:download:cancelled') {
+                downloads.delete(msg.transfer_id);
+                setTransfer('', null);
                 return;
             }
 
             if (msg.type === 'error') {
                 showToast('error', msg.error || 'Error');
+                // Best-effort: clear any stale transfer UI.
+                setTransfer('', null);
             }
         }
 
@@ -1154,9 +1256,8 @@
         dropzone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropzone.classList.remove('dragover');
-            if (e.dataTransfer && e.dataTransfer.files) {
-                uploadFiles(e.dataTransfer.files);
-            }
+            const files = extractDroppedFiles(e.dataTransfer);
+            if (files && files.length) uploadFiles(files);
         });
 
         // Container search filtering (best-effort)

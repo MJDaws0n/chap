@@ -124,6 +124,16 @@ function isSafeNameSegment(s) {
     return true;
 }
 
+function splitBaseExt(filename) {
+    const s = String(filename || '');
+    const i = s.lastIndexOf('.');
+    // Treat dotfiles like ".env" as having no extension.
+    if (i > 0 && i < s.length - 1) {
+        return { base: s.slice(0, i), ext: s.slice(i) };
+    }
+    return { base: s, ext: '' };
+}
+
 function checkFilesRateLimit(browserWs) {
     const now = Date.now();
     if (!browserWs._filesWindowStart) {
@@ -603,11 +613,20 @@ function createLiveLogsWs(deps) {
     // Upload transfer state: transferId -> { containerId, path, size, received, chunks: Buffer[] }
     const uploads = new Map();
 
+    // Active file downloads: transferId -> { containerId, proc, cancelled }
+    const fileDownloads = new Map();
+
     // Volume replace (streaming) transfer: transferId -> { volumeName, size, received, proc, startedAt }
     const volumeReplacements = new Map();
 
+    // Active volume downloads: transferId -> { volumeName, proc, cancelled }
+    const volumeDownloads = new Map();
+
     // Volume file upload (streaming) transfer: transferId -> { volumeName, size, received, proc, startedAt }
     const volumeFileUploads = new Map();
+
+    // Active volume file downloads: transferId -> { volumeName, proc, cancelled }
+    const volumeFileDownloads = new Map();
 
     // Pool helper containers per (app, volume) to avoid paying docker run startup on every page load.
     // key -> { id, name, inUse, lastUsed, removeTimer }
@@ -723,6 +742,54 @@ function createLiveLogsWs(deps) {
             if (cid.startsWith(id) || id.startsWith(cid)) return c;
         }
         return null;
+    }
+
+    function buildCollisionName(base, ext, n) {
+        const b = String(base || 'file');
+        const e = String(ext || '');
+        // Keep within typical filesystem segment length limits.
+        const max = 255;
+        const suffix = ` (${n})`;
+        const room = max - suffix.length - e.length;
+        const trimmedBase = b.length > room ? b.slice(0, Math.max(1, room)) : b;
+        return `${trimmedBase}${suffix}${e}`;
+    }
+
+    async function pickUniqueNameInDockerContainer(containerId, dir, desiredName) {
+        let candidate = String(desiredName || '').trim();
+        if (!candidate) candidate = 'upload';
+        const { base, ext } = splitBaseExt(candidate);
+
+        // Hard cap attempts to avoid infinite loops.
+        for (let i = 0; i < 500; i++) {
+            const existsRes = await runDockerExec(
+                containerId,
+                ['sh', '-c', 'if [ -e "$1/$2" ]; then echo 1; else echo 0; fi', 'sh', dir, candidate],
+                { maxBytes: 8, maxErrBytes: 128 }
+            );
+            if (String(existsRes.stdout || '').trim() !== '1') return candidate;
+            candidate = buildCollisionName(base, ext, i + 1);
+        }
+
+        return candidate;
+    }
+
+    async function pickUniqueNameInHelperContainer(helperId, dirFullPath, desiredName) {
+        let candidate = String(desiredName || '').trim();
+        if (!candidate) candidate = 'upload';
+        const { base, ext } = splitBaseExt(candidate);
+
+        for (let i = 0; i < 500; i++) {
+            const existsRes = await runDockerExec(
+                helperId,
+                ['sh', '-c', 'if [ -e "$1/$2" ]; then echo 1; else echo 0; fi', 'sh', dirFullPath, candidate],
+                { maxBytes: 8, maxErrBytes: 128 }
+            );
+            if (String(existsRes.stdout || '').trim() !== '1') return candidate;
+            candidate = buildCollisionName(base, ext, i + 1);
+        }
+
+        return candidate;
     }
 
     async function dockerInspectStdinConfig(containerId) {
@@ -901,7 +968,10 @@ function createLiveLogsWs(deps) {
         if (!requestId || !action) return volumesReply(browserWs, requestId, false, 'Missing request_id or action');
 
         // Chunk streaming should be bandwidth-limited, not request-count-limited.
-        if (action !== 'replace:chunk' && action !== 'fs:upload:chunk' && !checkVolumesRateLimit(browserWs)) {
+        // Cancel actions should always be allowed.
+        const isVolumesStreaming = action === 'replace:chunk' || action === 'fs:upload:chunk';
+        const isVolumesCancel = action === 'download:cancel' || action === 'replace:cancel' || action === 'fs:upload:cancel' || action === 'fs:download:cancel';
+        if (!isVolumesStreaming && !isVolumesCancel && !checkVolumesRateLimit(browserWs)) {
             return volumesReply(browserWs, requestId, false, 'Rate limit exceeded');
         }
 
@@ -979,6 +1049,8 @@ function createLiveLogsWs(deps) {
                     'sh', '-c', 'tar -czf - -C /volume .',
                 ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
+                volumeDownloads.set(transferId, { volumeName: name, proc, cancelled: false });
+
                 let sent = 0;
                 proc.stdout.on('data', (chunk) => {
                     if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
@@ -1002,7 +1074,13 @@ function createLiveLogsWs(deps) {
                 let err = '';
                 proc.stderr.on('data', (c) => { err += c.toString(); });
                 proc.on('close', (code) => {
+                    const entry = volumeDownloads.get(transferId);
+                    volumeDownloads.delete(transferId);
                     if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+                    if (entry && entry.cancelled) {
+                        safeJsonSend(browserWs, { type: 'volumes:download:cancelled', transfer_id: transferId });
+                        return;
+                    }
                     if ((code ?? 0) !== 0) {
                         safeJsonSend(browserWs, { type: 'error', error: (err || '').trim() || 'Volume download failed' });
                         return;
@@ -1010,11 +1088,23 @@ function createLiveLogsWs(deps) {
                     safeJsonSend(browserWs, { type: 'volumes:download:done', transfer_id: transferId, name: filename });
                 });
                 proc.on('error', () => {
+                    volumeDownloads.delete(transferId);
                     if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
                     safeJsonSend(browserWs, { type: 'error', error: 'Volume download failed to start' });
                 });
 
                 return volumesReply(browserWs, requestId, true, { transfer_id: transferId });
+            }
+
+            if (action === 'download:cancel') {
+                if (!requirePerm('volumes', 'read')) return;
+                const transferId = String(payload.transfer_id || '').trim();
+                const t = volumeDownloads.get(transferId);
+                if (!t || !t.proc) return volumesReply(browserWs, requestId, false, 'Invalid transfer');
+                t.cancelled = true;
+                try { t.proc.kill(); } catch {}
+                volumeDownloads.set(transferId, t);
+                return volumesReply(browserWs, requestId, true, {});
             }
 
             if (action === 'replace:init') {
@@ -1046,6 +1136,13 @@ function createLiveLogsWs(deps) {
                 proc.on('close', (code) => {
                     const t = volumeReplacements.get(transferId);
                     if (t) t.exitCode = code ?? 0;
+                    if (t && t.cancelled) {
+                        if (browserWs && browserWs.readyState === WebSocket.OPEN) {
+                            safeJsonSend(browserWs, { type: 'volumes:replace:cancelled', transfer_id: transferId });
+                        }
+                        volumeReplacements.delete(transferId);
+                        return;
+                    }
                     if ((code ?? 0) !== 0) {
                         // If browser is still connected, surface an error.
                         if (browserWs && browserWs.readyState === WebSocket.OPEN) {
@@ -1060,6 +1157,17 @@ function createLiveLogsWs(deps) {
 
                 volumeReplacements.set(transferId, { volumeName: name, size, received: 0, proc, startedAt: Date.now() });
                 return volumesReply(browserWs, requestId, true, { transfer_id: transferId, chunk_size: VOLUMES_LIMIT.uploadChunkBytes });
+            }
+
+            if (action === 'replace:cancel') {
+                if (!requirePerm('volumes', 'execute')) return;
+                const transferId = String(payload.transfer_id || '').trim();
+                const t = volumeReplacements.get(transferId);
+                if (!t || !t.proc) return volumesReply(browserWs, requestId, false, 'Invalid transfer');
+                t.cancelled = true;
+                try { t.proc.kill('SIGKILL'); } catch {}
+                volumeReplacements.set(transferId, t);
+                return volumesReply(browserWs, requestId, true, {});
             }
 
             if (action === 'replace:chunk') {
@@ -1133,7 +1241,7 @@ function createLiveLogsWs(deps) {
 
                 // Permission mapping
                 const fsAction = action.slice(3);
-                if (fsAction === 'list' || fsAction === 'read' || fsAction === 'download') {
+                if (fsAction === 'list' || fsAction === 'read' || fsAction === 'download' || fsAction === 'download:cancel') {
                     if (!requirePerm('volume_files', 'read')) return;
                 } else if (
                     fsAction === 'write' ||
@@ -1146,7 +1254,8 @@ function createLiveLogsWs(deps) {
                     fsAction === 'unarchive' ||
                     fsAction === 'upload:init' ||
                     fsAction === 'upload:chunk' ||
-                    fsAction === 'upload:commit'
+                    fsAction === 'upload:commit' ||
+                    fsAction === 'upload:cancel'
                 ) {
                     if (!requirePerm('volume_files', 'write')) return;
                 } else if (fsAction === 'delete') {
@@ -1454,11 +1563,15 @@ function createLiveLogsWs(deps) {
                     }
 
                     const transferId = `vfu_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-                    const destUser = dirUser === '/' ? `/${entry}` : `${dirUser.replace(/\/+$/, '')}/${entry}`;
+                    const helperId = await ensureVolumeFsHelper(browserWs, name);
+
+                    const dirFull = toVolumeFullPath(dirUser);
+                    const chosenName = await pickUniqueNameInHelperContainer(helperId, dirFull, entry);
+                    if (!isSafeNameSegment(chosenName)) return volumesReply(browserWs, requestId, false, 'Invalid destination');
+
+                    const destUser = dirUser === '/' ? `/${chosenName}` : `${dirUser.replace(/\/+$/, '')}/${chosenName}`;
                     if (!isSafePathValue(destUser)) return volumesReply(browserWs, requestId, false, 'Invalid destination');
                     const dest = toVolumeFullPath(destUser);
-
-                    const helperId = await ensureVolumeFsHelper(browserWs, name);
                     const proc = spawn('docker', [
                         'exec', '-i', helperId,
                         'sh', '-c', 'cat > "$1"', 'sh', dest,
@@ -1469,6 +1582,10 @@ function createLiveLogsWs(deps) {
                     proc.on('close', (code) => {
                         const t = volumeFileUploads.get(transferId);
                         if (t) t.exitCode = code ?? 0;
+                        if (t && t.cancelled) {
+                            volumeFileUploads.delete(transferId);
+                            return;
+                        }
                         if ((code ?? 0) !== 0) {
                             if (browserWs && browserWs.readyState === WebSocket.OPEN) {
                                 safeJsonSend(browserWs, { type: 'error', error: (stderr || '').trim() || 'Upload failed' });
@@ -1480,8 +1597,25 @@ function createLiveLogsWs(deps) {
                         volumeFileUploads.delete(transferId);
                     });
 
-                    volumeFileUploads.set(transferId, { volumeName: name, size, received: 0, proc, startedAt: Date.now() });
-                    return volumesReply(browserWs, requestId, true, { transfer_id: transferId, chunk_size: VOLUMES_LIMIT.uploadChunkBytes });
+                    volumeFileUploads.set(transferId, { volumeName: name, size, received: 0, proc, startedAt: Date.now(), helperId, dest, destUser, name: chosenName, cancelled: false });
+                    return volumesReply(browserWs, requestId, true, { transfer_id: transferId, chunk_size: VOLUMES_LIMIT.uploadChunkBytes, name: chosenName, path: destUser });
+                }
+
+                if (fsAction === 'upload:cancel') {
+                    const transferId = String(payload.transfer_id || '');
+                    const t = volumeFileUploads.get(transferId);
+                    if (!t || !t.proc || t.volumeName !== name) return volumesReply(browserWs, requestId, false, 'Invalid transfer');
+                    t.cancelled = true;
+                    volumeFileUploads.set(transferId, t);
+                    try { t.proc.kill('SIGKILL'); } catch {}
+                    // Best-effort cleanup of partially written file.
+                    try {
+                        if (t.helperId && t.dest) {
+                            await runDockerExec(t.helperId, ['sh', '-c', 'rm -f -- "$1"', 'sh', t.dest], { maxBytes: 64, maxErrBytes: 1024 });
+                        }
+                    } catch {}
+                    volumeFileUploads.delete(transferId);
+                    return volumesReply(browserWs, requestId, true, {});
                 }
 
                 if (fsAction === 'upload:chunk') {
@@ -1560,9 +1694,11 @@ function createLiveLogsWs(deps) {
 
                     const transferId = `vfdl_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
                     const filename = pUser.split('/').pop() || 'download';
-                    safeJsonSend(browserWs, { type: 'volume_files:download:start', transfer_id: transferId, name: filename, mime: 'application/octet-stream' });
+                    safeJsonSend(browserWs, { type: 'volume_files:download:start', transfer_id: transferId, name: filename, mime: 'application/octet-stream', size: Number.isFinite(size) && size >= 0 ? size : undefined });
 
                     const proc = spawn('docker', ['exec', helperId, 'cat', '--', p], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+                    volumeFileDownloads.set(transferId, { volumeName: name, proc, cancelled: false });
 
                     let sent = 0;
                     proc.stdout.on('data', (chunk) => {
@@ -1579,7 +1715,13 @@ function createLiveLogsWs(deps) {
                     });
 
                     proc.on('close', (code) => {
+                        const entry = volumeFileDownloads.get(transferId);
+                        volumeFileDownloads.delete(transferId);
                         if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+                        if (entry && entry.cancelled) {
+                            safeJsonSend(browserWs, { type: 'volume_files:download:cancelled', transfer_id: transferId });
+                            return;
+                        }
                         if ((code ?? 0) !== 0) {
                             safeJsonSend(browserWs, { type: 'error', error: 'Download failed' });
                             return;
@@ -1588,11 +1730,22 @@ function createLiveLogsWs(deps) {
                     });
 
                     proc.on('error', () => {
+                        volumeFileDownloads.delete(transferId);
                         if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
                         safeJsonSend(browserWs, { type: 'error', error: 'Download failed to start' });
                     });
 
                     return volumesReply(browserWs, requestId, true, { transfer_id: transferId });
+                }
+
+                if (fsAction === 'download:cancel') {
+                    const transferId = String(payload.transfer_id || '').trim();
+                    const t = volumeFileDownloads.get(transferId);
+                    if (!t || !t.proc || t.volumeName !== name) return volumesReply(browserWs, requestId, false, 'Invalid transfer');
+                    t.cancelled = true;
+                    try { t.proc.kill(); } catch {}
+                    volumeFileDownloads.set(transferId, t);
+                    return volumesReply(browserWs, requestId, true, {});
                 }
 
                 if (fsAction === 'delete') {
@@ -1662,7 +1815,11 @@ function createLiveLogsWs(deps) {
         if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
         if (!browserWs.authenticated) return filesReply(browserWs, requestId, false, 'Not authenticated');
         if (!requestId || !action) return filesReply(browserWs, requestId, false, 'Missing request_id or action');
-        if (!checkFilesRateLimit(browserWs)) return filesReply(browserWs, requestId, false, 'Rate limit exceeded');
+        const isFilesStreaming = action === 'upload:chunk';
+        const isFilesCancel = action === 'upload:cancel' || action === 'download:cancel';
+        if (!isFilesStreaming && !isFilesCancel && !checkFilesRateLimit(browserWs)) {
+            return filesReply(browserWs, requestId, false, 'Rate limit exceeded');
+        }
 
         try {
             const requestedContainerId = typeof payload.container_id === 'string' ? payload.container_id.trim() : '';
@@ -2008,8 +2165,19 @@ function createLiveLogsWs(deps) {
                     return filesReply(browserWs, requestId, false, `Upload too large (max ${FILES_LIMIT.maxUploadBytes} bytes)`);
                 }
                 const transferId = `up_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-                uploads.set(transferId, { containerId: container.id, path: `${dir}/${name}`, size, received: 0, chunks: [] });
-                return filesReply(browserWs, requestId, true, { transfer_id: transferId, chunk_size: 128 * 1024 });
+                const chosenName = await pickUniqueNameInDockerContainer(container.id, dir, name);
+                if (!isSafeNameSegment(chosenName)) return filesReply(browserWs, requestId, false, 'Invalid destination');
+                const path = dir === '/' ? `/${chosenName}` : `${dir.replace(/\/+$/, '')}/${chosenName}`;
+                uploads.set(transferId, { containerId: container.id, path, size, received: 0, chunks: [], name: chosenName });
+                return filesReply(browserWs, requestId, true, { transfer_id: transferId, chunk_size: 128 * 1024, name: chosenName, path });
+            }
+
+            if (action === 'upload:cancel') {
+                const transferId = String(payload.transfer_id || '').trim();
+                const t = uploads.get(transferId);
+                if (!t || t.containerId !== container.id) return filesReply(browserWs, requestId, false, 'Invalid transfer');
+                uploads.delete(transferId);
+                return filesReply(browserWs, requestId, true, {});
             }
 
             if (action === 'upload:chunk') {
@@ -2060,9 +2228,10 @@ function createLiveLogsWs(deps) {
                 }
 
                 const transferId = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-                safeJsonSend(browserWs, { type: 'files:download:start', transfer_id: transferId, name: p.split('/').pop() || 'download', mime: 'application/octet-stream' });
+                safeJsonSend(browserWs, { type: 'files:download:start', transfer_id: transferId, name: p.split('/').pop() || 'download', mime: 'application/octet-stream', size: Number.isFinite(size) && size >= 0 ? size : undefined });
 
                 const proc = spawn('docker', ['exec', container.id, 'cat', '--', p], { stdio: ['ignore', 'pipe', 'pipe'] });
+                fileDownloads.set(transferId, { containerId: container.id, proc, cancelled: false });
                 let sent = 0;
 
                 proc.stdout.on('data', (chunk) => {
@@ -2079,7 +2248,13 @@ function createLiveLogsWs(deps) {
                 });
 
                 proc.on('close', (code) => {
+                    const entry = fileDownloads.get(transferId);
+                    fileDownloads.delete(transferId);
                     if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+                    if (entry && entry.cancelled) {
+                        safeJsonSend(browserWs, { type: 'files:download:cancelled', transfer_id: transferId });
+                        return;
+                    }
                     if ((code ?? 0) !== 0) {
                         safeJsonSend(browserWs, { type: 'error', error: 'Download failed' });
                         return;
@@ -2087,7 +2262,21 @@ function createLiveLogsWs(deps) {
                     safeJsonSend(browserWs, { type: 'files:download:done', transfer_id: transferId, name: p.split('/').pop() || 'download' });
                 });
 
+                proc.on('error', () => {
+                    fileDownloads.delete(transferId);
+                });
+
                 return filesReply(browserWs, requestId, true, { transfer_id: transferId });
+            }
+
+            if (action === 'download:cancel') {
+                const transferId = String(payload.transfer_id || '').trim();
+                const t = fileDownloads.get(transferId);
+                if (!t || !t.proc || t.containerId !== container.id) return filesReply(browserWs, requestId, false, 'Invalid transfer');
+                t.cancelled = true;
+                try { t.proc.kill(); } catch {}
+                fileDownloads.set(transferId, t);
+                return filesReply(browserWs, requestId, true, {});
             }
 
             return filesReply(browserWs, requestId, false, 'Unknown action');

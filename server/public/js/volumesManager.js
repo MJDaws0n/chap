@@ -79,9 +79,9 @@
         const statusEl = qs('#vm-status');
         const summaryEl = qs('#vm-summary');
         const progressEl = qs('#vm-progress');
+        const cancelBtn = qs('#vm-cancel');
         const refreshBtn = qs('#vm-refresh');
         const downloadBtn = qs('#vm-download');
-        const replaceBtn = qs('#vm-replace');
         const deleteBtn = qs('#vm-delete');
         const rowsEl = qs('#vm-rows');
         const selectAllCb = qs('#vm-select-all');
@@ -93,8 +93,32 @@
 
         const downloads = new Map(); // transferId -> { name, chunks: Uint8Array[], received }
         const downloadMeta = new Map(); // transferId -> { approxTotalBytes: number, sentBytes: number }
+        const downloadWaiters = new Map(); // transferId -> { resolve, reject }
+        const downloadSettled = new Map(); // transferId -> { ok: boolean, error?: string }
+        let activeDownloadTransferId = null;
+        let bulkDownloadCtx = null; // { index, total }
         const selectedNames = new Set();
         let volumes = [];
+
+        let replaceTargetName = null;
+
+        let activeCancel = null;
+
+        function setCancelable(text, onCancel) {
+            setProgress(text);
+            activeCancel = typeof onCancel === 'function' ? onCancel : null;
+            if (!cancelBtn) return;
+            const show = !!activeCancel && !!text;
+            cancelBtn.classList.toggle('hidden', !show);
+            cancelBtn.disabled = !show;
+        }
+
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', async () => {
+                if (!activeCancel) return;
+                try { await activeCancel(); } catch {}
+            });
+        }
 
         function setProgress(text) {
             if (!progressEl) return;
@@ -127,11 +151,74 @@
         }
 
         function updateButtons() {
-            const one = selectedSingle();
-            const enabled = !!one;
+            const enabled = selectedNames.size > 0;
             downloadBtn.disabled = !enabled;
-            replaceBtn.disabled = !enabled;
             deleteBtn.disabled = !enabled;
+        }
+
+        function filesystemUrlFor(name) {
+            return `/applications/${encodeURIComponent(appUuid)}/volumes/${encodeURIComponent(name)}/files`;
+        }
+
+        function mkRowDropdown(itemsBuilder) {
+            const dropdownId = generateId('vm_row_menu');
+            const dd = document.createElement('div');
+            dd.className = 'dropdown';
+
+            const trigger = document.createElement('button');
+            trigger.type = 'button';
+            trigger.className = 'btn btn-ghost btn-sm';
+            trigger.title = 'Actions';
+            trigger.setAttribute('aria-label', 'Actions');
+            trigger.setAttribute('data-dropdown-trigger', dropdownId);
+            trigger.setAttribute('data-dropdown-placement', 'bottom-end');
+            trigger.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6h.01M12 12h.01M12 18h.01"/></svg>';
+
+            const menu = document.createElement('div');
+            menu.className = 'dropdown-menu';
+            menu.id = dropdownId;
+            const items = document.createElement('div');
+            items.className = 'dropdown-items';
+
+            const mkItem = (label, onClick, danger) => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'dropdown-item';
+                b.textContent = label;
+                if (danger) b.classList.add('text-danger');
+                b.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    Promise.resolve(onClick()).catch((err) => {
+                        showToast('error', err && err.message ? err.message : 'Action failed');
+                    });
+                });
+                return b;
+            };
+
+            itemsBuilder(mkItem);
+            menu.appendChild(items);
+            dd.appendChild(trigger);
+            dd.appendChild(menu);
+            return dd;
+        }
+
+        function downloadProgressLabel(suffix) {
+            if (bulkDownloadCtx && bulkDownloadCtx.total > 1) {
+                return `Downloading ${bulkDownloadCtx.index}/${bulkDownloadCtx.total} — ${suffix}`;
+            }
+            return `Downloading… ${suffix}`;
+        }
+
+        function waitForDownload(transferId) {
+            const settled = downloadSettled.get(transferId);
+            if (settled) {
+                downloadSettled.delete(transferId);
+                return settled.ok ? Promise.resolve(true) : Promise.reject(new Error(settled.error || 'cancelled'));
+            }
+            return new Promise((resolve, reject) => {
+                downloadWaiters.set(transferId, { resolve, reject });
+            });
         }
 
         function render() {
@@ -144,6 +231,7 @@
                 tr.dataset.name = v.name;
 
                 const cbTd = document.createElement('td');
+                cbTd.className = 'vm-select-cell';
                 const cb = document.createElement('input');
                 cb.type = 'checkbox';
                 cb.className = 'vm-checkbox';
@@ -173,20 +261,24 @@
                 usedTd.textContent = (v.used_by || []).join(', ');
 
                 const actionsTd = document.createElement('td');
-                const dl = document.createElement('button');
-                dl.type = 'button';
-                dl.className = 'btn btn-ghost btn-sm';
-                dl.textContent = 'Download';
-                dl.addEventListener('click', (e) => { e.stopPropagation(); selectOnly(v.name); downloadSelected(); });
+                actionsTd.className = 'vm-row-actions';
 
-                actionsTd.appendChild(dl);
-
-                const fsLink = document.createElement('a');
-                fsLink.className = 'btn btn-ghost btn-sm';
-                fsLink.textContent = 'Filesystem';
-                fsLink.href = `/applications/${encodeURIComponent(appUuid)}/volumes/${encodeURIComponent(v.name)}/files`;
-                fsLink.addEventListener('click', (e) => { e.stopPropagation(); });
-                actionsTd.appendChild(fsLink);
+                const dd = mkRowDropdown((mkItem) => {
+                    mkItem('View', async () => {
+                        window.location.href = filesystemUrlFor(v.name);
+                    });
+                    mkItem('Download', async () => {
+                        await downloadVolumes([v.name]);
+                    });
+                    mkItem('Replace', async () => {
+                        replaceTargetName = v.name;
+                        replaceInput.click();
+                    });
+                    mkItem('Delete', async () => {
+                        await deleteVolumes([v.name]);
+                    }, true);
+                });
+                actionsTd.appendChild(dd);
 
                 tr.appendChild(cbTd);
                 tr.appendChild(nameTd);
@@ -195,13 +287,13 @@
                 tr.appendChild(usedTd);
                 tr.appendChild(actionsTd);
 
-                tr.addEventListener('click', () => {
-                    const now = !selectedNames.has(v.name);
-                    selectedNames.clear();
-                    if (now) selectedNames.add(v.name);
-                    render();
-                    updateButtons();
-                    updateSelectAll();
+                tr.addEventListener('click', (ev) => {
+                    if (ev && ev.target && ev.target.closest) {
+                        if (ev.target.closest('.vm-row-actions')) return;
+                        if (ev.target.closest('.vm-select-cell')) return;
+                        if (ev.target.closest('[data-dropdown-trigger]')) return;
+                    }
+                    window.location.href = filesystemUrlFor(v.name);
                 });
 
                 tr.classList.toggle('selected', selectedNames.has(v.name));
@@ -211,6 +303,7 @@
             rowsEl.appendChild(frag);
             setSummary(`${volumes.length} volume${volumes.length === 1 ? '' : 's'}`);
             updateButtons();
+            updateSelectAll();
         }
 
         function updateSelectAll() {
@@ -231,6 +324,57 @@
             selectedNames.add(name);
             updateButtons();
             updateSelectAll();
+        }
+
+        async function deleteVolumes(names) {
+            const list = (names || []).filter(Boolean);
+            if (!list.length) return;
+
+            const label = list.length === 1 ? `volume “${list[0]}”` : `${list.length} volumes`;
+            const ok = await chapConfirmDelete({
+                title: 'Delete volume?',
+                text: `This will permanently delete ${label}. This cannot be undone.`,
+            });
+            if (!ok) return;
+
+            try {
+                for (const name of list) {
+                    await request('delete', { name });
+                }
+                showToast('success', list.length === 1 ? 'Volume deleted' : 'Volumes deleted');
+                for (const name of list) selectedNames.delete(name);
+                await refresh();
+            } catch (e) {
+                showToast('error', e.message || 'Delete failed');
+            }
+        }
+
+        async function downloadVolumes(names) {
+            const list = (names || []).filter(Boolean);
+            if (!list.length) return;
+
+            bulkDownloadCtx = { index: 0, total: list.length };
+            try {
+                for (let i = 0; i < list.length; i++) {
+                    bulkDownloadCtx.index = i + 1;
+                    const name = list[i];
+
+                    const res = await request('download', { name });
+                    if (!res || !res.transfer_id) throw new Error('Download did not start');
+                    const tid = res.transfer_id;
+                    activeDownloadTransferId = tid;
+                    try {
+                        await waitForDownload(tid);
+                    } catch (e) {
+                        const msg = e && e.message ? e.message : 'Download failed';
+                        if (msg === 'cancelled') return;
+                        throw e;
+                    }
+                }
+                showToast('success', list.length === 1 ? 'Download ready' : 'Downloads ready');
+            } finally {
+                bulkDownloadCtx = null;
+            }
         }
 
         function request(action, payload) {
@@ -262,58 +406,51 @@
         }
 
         async function deleteSelected() {
-            const one = selectedSingle();
-            if (!one) return;
-            const ok = await chapConfirmDelete({
-                title: 'Delete volume?',
-                text: `This will permanently delete volume “${one.name}”. This cannot be undone.`,
-            });
-            if (!ok) return;
-
             try {
-                await request('delete', { name: one.name });
-                showToast('success', 'Volume deleted');
-                selectedNames.clear();
-                await refresh();
+                await deleteVolumes(Array.from(selectedNames));
             } catch (e) {
-                showToast('error', e.message || 'Delete failed');
+                showToast('error', e && e.message ? e.message : 'Delete failed');
             }
         }
 
         async function downloadSelected() {
-            const one = selectedSingle();
-            if (!one) return;
             try {
-                const res = await request('download', { name: one.name });
-                if (!res || !res.transfer_id) throw new Error('Download did not start');
-                showToast('info', 'Download started');
+                await downloadVolumes(Array.from(selectedNames));
             } catch (e) {
-                showToast('error', e.message || 'Download failed');
+                const msg = e && e.message ? e.message : 'Download failed';
+                if (msg !== 'cancelled') showToast('error', msg);
             }
         }
 
         async function replaceSelectedWithFile(file) {
-            const one = selectedSingle();
-            if (!one) return;
+            const targetName = replaceTargetName || (selectedSingle() ? selectedSingle().name : null);
+            if (!targetName) return;
             if (!file) return;
 
             const ok = await chapConfirm({
                 title: 'Replace volume?',
-                text: `This will wipe volume “${one.name}” then restore from the selected archive.`,
+                text: `This will wipe volume “${targetName}” then restore from the selected archive.`,
                 confirmButtonText: 'Replace',
             });
             if (!ok) return;
 
             try {
-                const initRes = await request('replace:init', { name: one.name, size: file.size, filename: file.name });
+                const initRes = await request('replace:init', { name: targetName, size: file.size, filename: file.name });
                 const transferId = initRes.transfer_id;
                 const chunkSize = initRes.chunk_size || (256 * 1024);
                 if (!transferId) throw new Error('Replace did not start');
 
-                setProgress('Uploading… 0%');
+                let cancelled = false;
+                setCancelable('Uploading… 0%', async () => {
+                    cancelled = true;
+                    try { await request('replace:cancel', { transfer_id: transferId }); } catch {}
+                    showToast('info', 'Upload cancelled');
+                    setCancelable('', null);
+                });
 
                 let offset = 0;
                 while (offset < file.size) {
+                    if (cancelled) break;
                     const slice = file.slice(offset, offset + chunkSize);
                     const buf = await slice.arrayBuffer();
                     const b64 = arrayBufferToBase64(buf);
@@ -321,18 +458,21 @@
                     offset += slice.size;
 
                     const pct = Math.floor((offset / file.size) * 100);
-                    setProgress(`Uploading… ${Math.min(100, Math.max(0, pct))}%`);
+                    setCancelable(`Uploading… ${Math.min(100, Math.max(0, pct))}%`, activeCancel);
                 }
+
+                if (cancelled) return;
 
                 await request('replace:commit', { transfer_id: transferId });
                 showToast('success', 'Volume replaced');
-                setProgress('');
+                setCancelable('', null);
                 await refresh();
             } catch (e) {
                 showToast('error', e.message || 'Replace failed');
-                setProgress('');
+                setCancelable('', null);
             } finally {
                 try { replaceInput.value = ''; } catch {}
+                replaceTargetName = null;
             }
         }
 
@@ -382,7 +522,22 @@
                         approxTotalBytes: Number.isFinite(msg.approx_total_bytes) ? msg.approx_total_bytes : 0,
                         sentBytes: 0,
                     });
-                    setProgress('Downloading…');
+                    const tid = msg.transfer_id;
+                    activeDownloadTransferId = tid;
+                    setCancelable(downloadProgressLabel('0%'), async () => {
+                        try { await request('download:cancel', { transfer_id: tid }); } catch {}
+                        downloads.delete(tid);
+                        downloadMeta.delete(tid);
+                        const w = downloadWaiters.get(tid);
+                        if (w) {
+                            downloadWaiters.delete(tid);
+                            w.reject(new Error('cancelled'));
+                        } else {
+                            downloadSettled.set(tid, { ok: false, error: 'cancelled' });
+                        }
+                        setCancelable('', null);
+                        showToast('info', 'Download cancelled');
+                    });
                     return;
                 }
 
@@ -400,9 +555,9 @@
                         const total = meta.approxTotalBytes;
                         if (total && total > 0) {
                             const pct = Math.floor((sent / total) * 100);
-                            setProgress(`Downloading… ${Math.min(99, Math.max(0, pct))}%`);
+                            setCancelable(downloadProgressLabel(`${Math.min(99, Math.max(0, pct))}%`), activeCancel);
                         } else {
-                            setProgress(`Downloading… ${fmtBytes(sent)}`);
+                            setCancelable(downloadProgressLabel(fmtBytes(sent)), activeCancel);
                         }
                     }
                     return;
@@ -415,15 +570,53 @@
                     downloadMeta.delete(msg.transfer_id);
                     const blob = new Blob(t2.chunks, { type: 'application/gzip' });
                     triggerDownload(blob, msg.name || t2.name || 'volume.tar.gz');
-                    showToast('success', 'Download ready');
-                    setProgress('');
+                    const w = downloadWaiters.get(msg.transfer_id);
+                    if (w) {
+                        downloadWaiters.delete(msg.transfer_id);
+                        w.resolve(true);
+                    } else {
+                        downloadSettled.set(msg.transfer_id, { ok: true });
+                    }
+                    setCancelable('', null);
+                    if (activeDownloadTransferId === msg.transfer_id) activeDownloadTransferId = null;
+                    return;
+                }
+
+                if (msg.type === 'volumes:download:cancelled') {
+                    downloads.delete(msg.transfer_id);
+                    downloadMeta.delete(msg.transfer_id);
+                    const w = downloadWaiters.get(msg.transfer_id);
+                    if (w) {
+                        downloadWaiters.delete(msg.transfer_id);
+                        w.reject(new Error('cancelled'));
+                    } else {
+                        downloadSettled.set(msg.transfer_id, { ok: false, error: 'cancelled' });
+                    }
+                    setCancelable('', null);
+                    if (activeDownloadTransferId === msg.transfer_id) activeDownloadTransferId = null;
+                    return;
+                }
+
+                if (msg.type === 'volumes:replace:cancelled') {
+                    setCancelable('', null);
                     return;
                 }
 
                 if (msg.type === 'error' && msg.error) {
                     showToast('error', msg.error);
                     // If an error happens mid-transfer, clear progress.
-                    setProgress('');
+                    setCancelable('', null);
+
+                    if (activeDownloadTransferId) {
+                        const w = downloadWaiters.get(activeDownloadTransferId);
+                        if (w) {
+                            downloadWaiters.delete(activeDownloadTransferId);
+                            w.reject(new Error(msg.error));
+                        } else {
+                            downloadSettled.set(activeDownloadTransferId, { ok: false, error: msg.error });
+                        }
+                        activeDownloadTransferId = null;
+                    }
                 }
             });
 
@@ -442,7 +635,6 @@
 
         deleteBtn.addEventListener('click', () => deleteSelected());
         downloadBtn.addEventListener('click', () => downloadSelected());
-        replaceBtn.addEventListener('click', () => replaceInput.click());
         replaceInput.addEventListener('change', () => {
             const f = (replaceInput.files && replaceInput.files[0]) ? replaceInput.files[0] : null;
             if (!f) return;

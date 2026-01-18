@@ -171,6 +171,9 @@
     const breadcrumbEl = qs('#fm-breadcrumb');
     const dropzone = qs('#fm-dropzone');
 
+    const transferEl = qs('#fm-transfer');
+    const transferCancelBtn = qs('#fm-transfer-cancel');
+
     const uploadBtn = qs('#fm-upload-btn');
     const uploadInput = qs('#fm-upload-input');
 
@@ -209,6 +212,24 @@
 
     const pending = new Map();
     const downloads = new Map();
+
+    let activeCancel = null;
+    function setTransfer(text, onCancel) {
+      if (transferEl) transferEl.textContent = text || '';
+      activeCancel = typeof onCancel === 'function' ? onCancel : null;
+      if (transferCancelBtn) {
+        const show = !!activeCancel && !!text;
+        transferCancelBtn.classList.toggle('hidden', !show);
+        transferCancelBtn.disabled = !show;
+      }
+    }
+
+    if (transferCancelBtn) {
+      transferCancelBtn.addEventListener('click', async () => {
+        if (!activeCancel) return;
+        try { await activeCancel(); } catch {}
+      });
+    }
 
     function setStatus(kind, text) {
       statusEl.textContent = text;
@@ -791,7 +812,10 @@
       const files = Array.from(fileList || []).filter(Boolean);
       if (files.length === 0) return;
 
+      let cancelledAll = false;
+
       for (const file of files) {
+        if (cancelledAll) break;
         const initRes = await request('fs:upload:init', {
           dir: currentPath,
           name: file.name,
@@ -799,23 +823,74 @@
           type: file.type || 'application/octet-stream',
         });
 
+        const serverName = (initRes && initRes.name) ? String(initRes.name) : file.name;
+
         const transferId = initRes.transfer_id;
         const chunkSize = initRes.chunk_size || (1024 * 1024);
 
+        let cancelled = false;
+        setTransfer(`Uploading ${serverName}… 0%`, async () => {
+          cancelled = true;
+          cancelledAll = true;
+          try { await request('fs:upload:cancel', { transfer_id: transferId }); } catch {}
+          setTransfer('', null);
+          showToast('info', 'Upload cancelled');
+        });
+
         let offset = 0;
         while (offset < file.size) {
+          if (cancelled) break;
           const slice = file.slice(offset, offset + chunkSize);
           const buf = await slice.arrayBuffer();
           const b64 = arrayBufferToBase64(buf);
           await request('fs:upload:chunk', { transfer_id: transferId, offset: offset, data_b64: b64 });
           offset += slice.size;
+
+          const pct = file.size > 0 ? Math.floor((offset / file.size) * 100) : 100;
+          setTransfer(`Uploading ${serverName}… ${Math.min(100, Math.max(0, pct))}%`, activeCancel);
         }
 
+        if (cancelled) break;
+
         await request('fs:upload:commit', { transfer_id: transferId });
-        showToast('success', `Uploaded ${file.name}`);
+        setTransfer('', null);
+        showToast('success', `Uploaded ${serverName}`);
       }
 
       await refresh();
+    }
+
+    function extractDroppedFiles(dataTransfer) {
+      const dt = dataTransfer;
+      if (!dt) return [];
+      const out = [];
+      let skippedDirs = 0;
+
+      if (dt.items && dt.items.length) {
+        for (const item of Array.from(dt.items)) {
+          if (!item || item.kind !== 'file') continue;
+          try {
+            if (item.webkitGetAsEntry) {
+              const entry = item.webkitGetAsEntry();
+              if (entry && entry.isDirectory) {
+                skippedDirs += 1;
+                continue;
+              }
+            }
+          } catch {
+            // ignore
+          }
+          const f = item.getAsFile ? item.getAsFile() : null;
+          if (f) out.push(f);
+        }
+      } else if (dt.files && dt.files.length) {
+        for (const f2 of Array.from(dt.files)) out.push(f2);
+      }
+
+      if (skippedDirs) {
+        showToast('error', 'Folder uploads are not supported (yet).');
+      }
+      return out;
     }
 
     function handleMessage(msg) {
@@ -853,7 +928,15 @@
       }
 
       if (msg.type === 'volume_files:download:start') {
-        downloads.set(msg.transfer_id, { name: msg.name, mime: msg.mime || 'application/octet-stream', chunks: [], received: 0 });
+        downloads.set(msg.transfer_id, { name: msg.name, mime: msg.mime || 'application/octet-stream', chunks: [], received: 0, size: Number.isFinite(msg.size) ? msg.size : null });
+        const tid = msg.transfer_id;
+        const name = msg.name || 'download';
+        setTransfer(`Downloading ${name}… 0%`, async () => {
+          try { await request('fs:download:cancel', { transfer_id: tid }); } catch {}
+          downloads.delete(tid);
+          setTransfer('', null);
+          showToast('info', 'Download cancelled');
+        });
         return;
       }
 
@@ -866,6 +949,14 @@
           for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
           t.chunks.push(bytes);
           t.received += bytes.length;
+
+          const total = Number.isFinite(t.size) ? t.size : null;
+          if (total && total > 0) {
+            const pct = Math.floor((t.received / total) * 100);
+            setTransfer(`Downloading ${t.name}… ${Math.min(99, Math.max(0, pct))}%`, activeCancel);
+          } else {
+            setTransfer(`Downloading ${t.name}… ${formatBytes(t.received)}`, activeCancel);
+          }
         } catch {
           // ignore
         }
@@ -886,6 +977,19 @@
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 5000);
+        setTransfer('', null);
+        return;
+      }
+
+      if (msg.type === 'volume_files:download:cancelled') {
+        downloads.delete(msg.transfer_id);
+        setTransfer('', null);
+        return;
+      }
+
+      if (msg.type === 'error') {
+        showToast('error', msg.error || 'Error');
+        setTransfer('', null);
         return;
       }
     }
@@ -998,7 +1102,7 @@
       dropzone.addEventListener('drop', (ev) => {
         ev.preventDefault();
         dropzone.classList.remove('dragover');
-        const files = ev.dataTransfer ? ev.dataTransfer.files : null;
+        const files = extractDroppedFiles(ev.dataTransfer);
         uploadFiles(files).catch((e) => showToast('error', e.message || 'Upload failed'));
       });
     }
