@@ -133,6 +133,24 @@
         const sessionId = root.dataset.sessionId;
         const appUuid = root.dataset.applicationUuid;
 
+        function friendlyContainerName(name) {
+            const n = String(name || '');
+            const app = String(appUuid || '');
+            if (!n) return n;
+            if (app) {
+                const idx = n.indexOf(app);
+                if (idx >= 0) {
+                    const cut = idx + app.length;
+                    const next = n[cut];
+                    if (next === '-' || next === '_') return n.slice(cut + 1);
+                    return n.slice(cut);
+                }
+            }
+            if (n.startsWith('chap-') && n.length > 5) return n.slice(5);
+            if (n.startsWith('chap_') && n.length > 5) return n.slice(5);
+            return n;
+        }
+
         const statusEl = qs('#fm-status');
         const rootEl = qs('#fm-root');
         const manualLocationBtn = qs('#fm-manual-location');
@@ -1019,6 +1037,14 @@
                             setSelectedContainer(res.selected_container_id);
                         }
                     }
+
+                    if (res && res.no_running_containers) {
+                        setSelectedContainer(null);
+                        setTransfer('', null);
+                        showToast('error', 'No running containers. Start the app to browse its filesystem.');
+                        return;
+                    }
+
                     navigate(currentPath).catch((e) => {
                         showToast('error', e && e.message ? e.message : 'Failed to load directory');
                     });
@@ -1053,7 +1079,8 @@
                 containers = Array.isArray(msg.containers) ? msg.containers : [];
                 renderContainerList(containers);
                 if (!selectedContainerId && containers.length) {
-                    setSelectedContainer(containers[0].id);
+                    const firstRunning = containers.find(c => (String(c.status || '').toLowerCase() === 'running' || String(c.status || '').toLowerCase() === 'restarting'));
+                    if (firstRunning) setSelectedContainer(firstRunning.id);
                 }
                 return;
             }
@@ -1125,13 +1152,16 @@
             selectedContainerId = containerId;
             const c = containers.find(x => x.id === containerId);
             if (selectedContainerNameEl) {
-                selectedContainerNameEl.textContent = c ? c.name : 'Select container...';
+                selectedContainerNameEl.textContent = c ? friendlyContainerName(c.name) : 'Select container...';
+                if (c) selectedContainerNameEl.title = c.name;
             }
             // Refresh the current dir when container changes
             if (authenticated) {
                 clearSelection();
                 syncUrlState();
-                refresh().catch(() => {});
+                if (c && (String(c.status || '').toLowerCase() === 'running' || String(c.status || '').toLowerCase() === 'restarting')) {
+                    refresh().catch(() => {});
+                }
             }
         }
 
@@ -1152,7 +1182,8 @@
                 const btn = document.createElement('button');
                 btn.type = 'button';
                 btn.className = 'dropdown-item';
-                btn.textContent = `${c.name} (${c.status})`;
+                btn.textContent = `${friendlyContainerName(c.name)} (${c.status})`;
+                btn.title = c.name;
                 btn.addEventListener('click', () => {
                     setSelectedContainer(c.id);
                 });

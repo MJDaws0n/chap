@@ -1,0 +1,19 @@
+services:
+  minecraft:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      VELOCITY_VERSION: "${VELOCITY_VERSION:-latest}"
+      MEMORY: "${MEMORY:-2G}"
+      JAVA_EXTRA_ARGS: "${JAVA_EXTRA_ARGS:-}"
+    ports:
+      - "${PROXY_PORT:-25577}:25577"
+    volumes:
+      - minecraft-data:/data
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+
+volumes:
+  minecraft-data: {}

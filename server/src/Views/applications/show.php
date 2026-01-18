@@ -39,81 +39,13 @@ $canEditResourceLimits = $canEditResourceLimits ?? false;
 ?>
 
 <div class="flex flex-col gap-6">
-    <div class="page-header">
-        <div class="page-header-top">
-            <div>
-                <nav class="breadcrumb">
-                    <span class="breadcrumb-item"><a href="/projects">Projects</a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="/projects/<?= e($project->uuid) ?>"><?= e($project->name) ?></a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="/environments/<?= e($environment->uuid) ?>"><?= e($environment->name) ?></a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-current"><?= e($application->name) ?></span>
-                </nav>
-
-                <div class="flex items-center gap-4 mt-4">
-                    <div class="icon-box icon-box-lg icon-box-blue">
-                        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                    </div>
-
-                    <div class="min-w-0">
-                        <div class="flex items-center flex-wrap gap-3">
-                            <h1 class="page-header-title"><?= e($application->name) ?></h1>
-                            <span class="badge <?= $statusColor ?>"><?= ucfirst($application->status) ?></span>
-                        </div>
-                        <?php if (!empty($application->description)): ?>
-                            <p class="page-header-description truncate"><?= e($application->description) ?></p>
-                        <?php else: ?>
-                            <p class="page-header-description">No description</p>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            </div>
-
-            <div class="page-header-actions flex-wrap">
-                <a href="/applications/<?= e($application->uuid) ?>/logs" class="btn btn-secondary">
-                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                    </svg>
-                    Live Logs
-                </a>
-
-                <a href="/applications/<?= e($application->uuid) ?>/files" class="btn btn-secondary">
-                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
-                    </svg>
-                    Container filesystem
-                </a>
-
-                <a href="/applications/<?= e($application->uuid) ?>/volumes" class="btn btn-secondary">
-                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
-                    </svg>
-                    Volumes
-                </a>
-
-                <?php if (in_array(($application->status ?? ''), ['running', 'restarting'], true)): ?>
-                    <form method="POST" action="/applications/<?= e($application->uuid) ?>/stop" class="inline-block">
-                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                        <button type="submit" class="btn btn-secondary">Stop</button>
-                    </form>
-                <?php endif; ?>
-
-                <form method="POST" action="/applications/<?= e($application->uuid) ?>/deploy" class="inline-block" data-deploy-form>
-                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                    <button type="submit" class="btn btn-primary" <?= $isDeploying ? 'disabled aria-disabled="true"' : '' ?>>
-                        <?= $isDeploying ? 'Deploying…' : (in_array(($application->status ?? ''), ['running', 'restarting'], true) ? 'Redeploy' : 'Deploy') ?>
-                    </button>
-                </form>
-            </div>
-        </div>
-    </div>
+    <?php $activeTab = $activeTab ?? 'config'; ?>
+    <?php $latestDeployment = !empty($deployments) ? $deployments[0] : null; ?>
+    <?php include __DIR__ . '/_header_tabs.php'; ?>
 
     <div class="grid grid-cols-1 lg:grid-cols-3">
         <div class="lg:col-span-2 flex flex-col gap-6">
+            <?php if ($activeTab === 'deploy'): ?>
             <!-- Deployments -->
             <div class="card">
                 <div class="card-header">
@@ -146,39 +78,34 @@ $canEditResourceLimits = $canEditResourceLimits ?? false;
                             $sha = $deployment->commit_sha ? substr($deployment->commit_sha, 0, 7) : 'N/A';
                             $msg = $deployment->commit_message ?? 'Manual deployment';
                             ?>
-                            <a href="/deployments/<?= e($deployment->uuid) ?>" class="flex items-center justify-between px-6 py-4 border-b border-primary transition-colors">
+                            <div class="flex items-center justify-between px-6 py-4 border-b border-primary cursor-default">
                                 <div class="min-w-0 flex-1">
                                     <p class="font-medium truncate"><?= e($msg) ?></p>
                                     <p class="text-sm text-secondary truncate"><?= e($sha) ?> • <?= time_ago($deployment->created_at) ?></p>
                                 </div>
                                 <div class="flex items-center gap-3 ml-4 flex-shrink-0">
                                     <span class="badge <?= $depColor ?>"><?= ucfirst($depStatus) ?></span>
-                                    <svg class="icon text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-                                    </svg>
                                 </div>
-                            </a>
+                            </div>
                         <?php endforeach; ?>
                     </div>
                 <?php endif; ?>
             </div>
 
-            <!-- Configuration -->
+            <!-- Deploy Settings -->
             <div class="card">
                 <div class="card-header">
-                    <h2 class="card-title">Configuration</h2>
+                    <h2 class="card-title">Deploy</h2>
                 </div>
                 <div class="card-body">
-                    <form method="POST" action="/applications/<?= $application->uuid ?>" id="config-form">
+                    <p class="text-sm text-secondary mb-4">Repository + node settings used for deployments.</p>
+
+                    <form method="POST" action="/applications/<?= $application->uuid ?>" id="deploy-settings-form">
                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                         <input type="hidden" name="_method" value="PUT">
+                        <input type="hidden" name="_redirect_tab" value="deploy">
 
                         <div class="grid grid-cols-1 md:grid-cols-2">
-                            <div class="form-group">
-                                <label class="form-label" for="name">Name</label>
-                                <input type="text" name="name" id="name" value="<?= e($application->name) ?>" class="input">
-                            </div>
-
                             <div class="form-group">
                                 <label class="form-label" for="node_uuid">Node</label>
                                 <select name="node_uuid" id="node_uuid" class="select">
@@ -206,52 +133,10 @@ $canEditResourceLimits = $canEditResourceLimits ?? false;
                                     <option value="docker-compose" <?= $application->build_pack === 'docker-compose' ? 'selected' : '' ?>>Docker Compose</option>
                                 </select>
                             </div>
-
-                            <div class="form-group">
-                                <label class="form-label" for="cpu_limit">CPU Limit</label>
-                                <input
-                                    type="text"
-                                    name="cpu_limit"
-                                    id="cpu_limit"
-                                    value="<?= e($canEditResourceLimits ? ($old['cpu_limit'] ?? $application->cpu_limit) : $application->cpu_limit) ?>"
-                                    class="input"
-                                    placeholder="e.g. 1"
-                                    <?= !$canEditResourceLimits ? 'disabled aria-disabled="true"' : '' ?>
-                                >
-                                <?php if (!empty($errors['cpu_limit'])): ?><p class="form-error"><?= e($errors['cpu_limit']) ?></p><?php endif; ?>
-                            </div>
-
-                            <div class="form-group">
-                                <label class="form-label" for="memory_limit">Memory Limit</label>
-                                <input
-                                    type="text"
-                                    name="memory_limit"
-                                    id="memory_limit"
-                                    value="<?= e($canEditResourceLimits ? ($old['memory_limit'] ?? $application->memory_limit) : $application->memory_limit) ?>"
-                                    class="input"
-                                    placeholder="e.g. 512m"
-                                    <?= !$canEditResourceLimits ? 'disabled aria-disabled="true"' : '' ?>
-                                >
-                                <?php if (!empty($errors['memory_limit'])): ?><p class="form-error"><?= e($errors['memory_limit']) ?></p><?php endif; ?>
-                            </div>
-
-                            <div class="md:col-span-2">
-                                <div class="alert alert-warning">
-                                    <svg class="alert-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-                                    </svg>
-                                    <span>
-                                        Changing CPU/Memory limits triggers an automatic redeploy.
-                                        <?php if (!$canEditResourceLimits): ?>
-                                            You don't have permission to edit resource limits.
-                                        <?php endif; ?>
-                                    </span>
-                                </div>
-                            </div>
                         </div>
 
                         <div class="flex justify-end gap-3 pt-4 mt-4 border-t">
-                            <button type="submit" class="btn btn-primary">Save Changes</button>
+                            <button type="submit" class="btn btn-primary">Save Deploy Settings</button>
                         </div>
                     </form>
                 </div>
@@ -365,6 +250,75 @@ $canEditResourceLimits = $canEditResourceLimits ?? false;
                 </div>
             </div>
 
+            <?php else: ?>
+
+            <!-- Configuration -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Configuration</h2>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="/applications/<?= $application->uuid ?>" id="config-form">
+                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                        <input type="hidden" name="_method" value="PUT">
+                        <input type="hidden" name="_redirect_tab" value="config">
+
+                        <div class="grid grid-cols-1 md:grid-cols-2">
+                            <div class="form-group">
+                                <label class="form-label" for="name">Name</label>
+                                <input type="text" name="name" id="name" value="<?= e($application->name) ?>" class="input">
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="cpu_limit">CPU Limit</label>
+                                <input
+                                    type="text"
+                                    name="cpu_limit"
+                                    id="cpu_limit"
+                                    value="<?= e($canEditResourceLimits ? ($old['cpu_limit'] ?? $application->cpu_limit) : $application->cpu_limit) ?>"
+                                    class="input"
+                                    placeholder="e.g. 1"
+                                    <?= !$canEditResourceLimits ? 'disabled aria-disabled="true"' : '' ?>
+                                >
+                                <?php if (!empty($errors['cpu_limit'])): ?><p class="form-error"><?= e($errors['cpu_limit']) ?></p><?php endif; ?>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="memory_limit">Memory Limit</label>
+                                <input
+                                    type="text"
+                                    name="memory_limit"
+                                    id="memory_limit"
+                                    value="<?= e($canEditResourceLimits ? ($old['memory_limit'] ?? $application->memory_limit) : $application->memory_limit) ?>"
+                                    class="input"
+                                    placeholder="e.g. 512m"
+                                    <?= !$canEditResourceLimits ? 'disabled aria-disabled="true"' : '' ?>
+                                >
+                                <?php if (!empty($errors['memory_limit'])): ?><p class="form-error"><?= e($errors['memory_limit']) ?></p><?php endif; ?>
+                            </div>
+
+                            <div class="md:col-span-2">
+                                <div class="alert alert-warning">
+                                    <svg class="alert-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                    </svg>
+                                    <span>
+                                        Changing CPU/Memory limits triggers an automatic redeploy.
+                                        <?php if (!$canEditResourceLimits): ?>
+                                            You don't have permission to edit resource limits.
+                                        <?php endif; ?>
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex justify-end gap-3 pt-4 mt-4 border-t">
+                            <button type="submit" class="btn btn-primary">Save Changes</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
             <!-- Ports -->
             <div class="card">
                 <div class="card-header flex items-center justify-between gap-4 flex-wrap">
@@ -393,6 +347,7 @@ $canEditResourceLimits = $canEditResourceLimits ?? false;
                     <form method="POST" action="/applications/<?= $application->uuid ?>" id="env-form">
                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                         <input type="hidden" name="_method" value="PUT">
+                        <input type="hidden" name="_redirect_tab" value="config">
                         <input type="hidden" name="environment_variables" id="env-serialized" value="">
 
                         <div id="env-rows" class="flex flex-col gap-3">
@@ -410,6 +365,8 @@ $canEditResourceLimits = $canEditResourceLimits ?? false;
                     </form>
                 </div>
             </div>
+
+            <?php endif; ?>
         </div>
 
         <div class="flex flex-col gap-6">
@@ -440,21 +397,23 @@ $canEditResourceLimits = $canEditResourceLimits ?? false;
                 </div>
             </div>
 
-            <!-- Danger Zone -->
-            <div class="card border-red">
-                <div class="card-header">
-                    <h3 class="card-title text-red">Danger Zone</h3>
+            <?php if ($activeTab === 'config'): ?>
+                <!-- Danger Zone -->
+                <div class="card border-red">
+                    <div class="card-header">
+                        <h3 class="card-title text-red">Danger Zone</h3>
+                    </div>
+                    <div class="card-body">
+                        <form method="POST" action="/applications/<?= $application->uuid ?>" id="delete-form">
+                            <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                            <input type="hidden" name="_method" value="DELETE">
+                            <button type="button" class="btn btn-danger w-full" id="delete-app-btn">
+                                Delete Application
+                            </button>
+                        </form>
+                    </div>
                 </div>
-                <div class="card-body">
-                    <form method="POST" action="/applications/<?= $application->uuid ?>" id="delete-form">
-                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                        <input type="hidden" name="_method" value="DELETE">
-                        <button type="button" class="btn btn-danger w-full" id="delete-app-btn">
-                            Delete Application
-                        </button>
-                    </form>
-                </div>
-            </div>
+            <?php endif; ?>
         </div>
     </div>
 </div>
@@ -759,6 +718,13 @@ document.querySelectorAll('[data-delete-incoming-webhook]').forEach(form => {
 
     function init() {
         cacheElements();
+
+        // This entire section is only rendered on the Configuration tab.
+        // If the elements aren't present, bail out quietly.
+        if (!elements.envRows || !elements.envForm || !elements.envSerialized || !elements.addEnvBtn || !elements.bulkEditBtn || !elements.envCancelBtn) {
+            return;
+        }
+
         bindEvents();
         parseInitialEnv();
         renderRows();
@@ -789,14 +755,16 @@ document.querySelectorAll('[data-delete-incoming-webhook]').forEach(form => {
             renderRows();
         });
 
-        elements.deleteAppBtn.addEventListener('click', () => {
-            Modal.confirmDelete('Are you sure you want to delete this application? This action cannot be undone.')
-                .then(result => {
-                    if (result && result.confirmed) {
-                        elements.deleteForm.submit();
-                    }
-                });
-        });
+        if (elements.deleteAppBtn && elements.deleteForm && window.Modal && typeof window.Modal.confirmDelete === 'function') {
+            elements.deleteAppBtn.addEventListener('click', () => {
+                window.Modal.confirmDelete('Are you sure you want to delete this application? This action cannot be undone.')
+                    .then(result => {
+                        if (result && result.confirmed) {
+                            elements.deleteForm.submit();
+                        }
+                    });
+            });
+        }
 
         elements.envForm.addEventListener('submit', () => {
             updateSerialized();

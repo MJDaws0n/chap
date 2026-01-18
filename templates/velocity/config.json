@@ -1,0 +1,16 @@
+{
+  "name": "Velocity",
+  "version": "1.0.0",
+  "slug": "velocity",
+  "description": "Velocity proxy for Minecraft server networks.",
+  "category": "Minecraft",
+  "doc_url": "https://velocitypowered.com/",
+  "env_variables": {
+    "MEMORY": "{ram}M",
+    "VELOCITY_VERSION": "latest",
+    "PROXY_PORT": "{port[0]}",
+    "JAVA_EXTRA_ARGS": ""
+  },
+  "default_ports_required": 1,
+  "is_official": true
+}

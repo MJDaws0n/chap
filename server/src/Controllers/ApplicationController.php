@@ -646,6 +646,17 @@ class ApplicationController extends BaseController
     $userId = (int) ($this->user?->id ?? 0);
     $canEditResourceLimits = admin_view_all() || ($userId > 0 && TeamPermissionService::can($teamId, $userId, 'applications.resources', 'write'));
 
+        $tab = isset($_GET['tab']) ? (string) $_GET['tab'] : '';
+        if ($tab === '') {
+            // Main inside-application landing page is Live Logs.
+            $this->redirect('/applications/' . $application->uuid . '/logs');
+            return;
+        }
+        if (!in_array($tab, ['deploy', 'config'], true)) {
+            $this->redirect('/applications/' . $application->uuid . '/logs');
+            return;
+        }
+
         $deployments = Deployment::forApplication($application->id, 10);
         $project = $application->environment()?->project();
         $nodes = [];
@@ -677,6 +688,7 @@ class ApplicationController extends BaseController
                 'incomingWebhookReveals' => $incomingWebhookReveals,
                 'allocatedPorts' => $allocatedPorts,
                 'canEditResourceLimits' => $canEditResourceLimits,
+                'activeTab' => $tab,
             ]);
         }
     }
@@ -705,7 +717,12 @@ class ApplicationController extends BaseController
 
         if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
             flash('error', 'Invalid CSRF token');
-            $this->redirect('/applications/' . $uuid);
+            $redirTab = (string)$this->input('_redirect_tab', '');
+            $redirUrl = '/applications/' . $uuid;
+            if (in_array($redirTab, ['deploy', 'config'], true)) {
+                $redirUrl .= '?tab=' . $redirTab;
+            }
+            $this->redirect($redirUrl);
             return;
         }
 
@@ -716,6 +733,12 @@ class ApplicationController extends BaseController
         $oldMemoryLimit = (string) ($application->memory_limit ?? '');
 
         $data = $this->all();
+
+        $redirectTab = (string)($data['_redirect_tab'] ?? '');
+        $redirectUrl = '/applications/' . $uuid;
+        if (in_array($redirectTab, ['deploy', 'config'], true)) {
+            $redirectUrl .= '?tab=' . $redirectTab;
+        }
 
     $errors = [];
 
@@ -869,7 +892,7 @@ class ApplicationController extends BaseController
             } else {
                 $_SESSION['_errors'] = $errors;
                 $_SESSION['_old_input'] = $data;
-                $this->redirect('/applications/' . $uuid);
+                $this->redirect($redirectUrl);
             }
         }
 
@@ -926,12 +949,12 @@ class ApplicationController extends BaseController
                 }
 
                 flash('success', 'Resource limits updated. Redeploy started.');
-                $this->redirect('/deployments/' . $deployment->uuid);
+                $this->redirect('/applications/' . $uuid . '/logs');
                 return;
             }
 
             flash('success', 'Application updated');
-            $this->redirect('/applications/' . $uuid);
+            $this->redirect($redirectUrl);
         }
     }
 
@@ -1034,7 +1057,7 @@ class ApplicationController extends BaseController
             $this->json(['deployment' => $deployment->toArray()], 201);
         } else {
             flash('success', 'Deployment started');
-            $this->redirect('/deployments/' . $deployment->uuid);
+            $this->redirect('/applications/' . $uuid . '/logs');
         }
     }
 
@@ -1107,6 +1130,8 @@ class ApplicationController extends BaseController
         // Get logs websocket URL if configured
         $logsWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
 
+        $latest = Deployment::forApplication((int) $application->id, 1);
+
         // Initial page load - just render the view; containers/logs come from the node logs WebSocket
         $this->view('applications/logs', [
             'title' => 'Live Logs - ' . $application->name,
@@ -1116,6 +1141,7 @@ class ApplicationController extends BaseController
             'containers' => [],
             'logsWebsocketUrl' => $logsWebsocketUrl,
             'sessionId' => session_id(),
+            'latestDeployment' => !empty($latest) ? $latest[0] : null,
         ]);
     }
 
@@ -1154,6 +1180,8 @@ class ApplicationController extends BaseController
         // Reuse the node browser WS URL (currently named logs_websocket_url in DB/model)
         $browserWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
 
+        $latest = Deployment::forApplication((int) $application->id, 1);
+
         $this->view('applications/files', [
             'title' => 'Files - ' . $application->name,
             'application' => $application,
@@ -1161,6 +1189,7 @@ class ApplicationController extends BaseController
             'project' => $application->environment()->project(),
             'browserWebsocketUrl' => $browserWebsocketUrl,
             'sessionId' => session_id(),
+            'latestDeployment' => !empty($latest) ? $latest[0] : null,
         ]);
     }
 
@@ -1198,6 +1227,8 @@ class ApplicationController extends BaseController
         // Reuse the node browser WS URL (currently named logs_websocket_url in DB/model)
         $browserWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
 
+        $latest = Deployment::forApplication((int) $application->id, 1);
+
         $this->view('applications/volumes', [
             'title' => 'Volumes - ' . $application->name,
             'application' => $application,
@@ -1205,6 +1236,7 @@ class ApplicationController extends BaseController
             'project' => $application->environment()->project(),
             'browserWebsocketUrl' => $browserWebsocketUrl,
             'sessionId' => session_id(),
+            'latestDeployment' => !empty($latest) ? $latest[0] : null,
         ]);
     }
 
@@ -1240,6 +1272,8 @@ class ApplicationController extends BaseController
         }
         $browserWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
 
+        $latest = Deployment::forApplication((int) $application->id, 1);
+
         $this->view('applications/volume_files', [
             'title' => 'Volume Files - ' . $application->name,
             'application' => $application,
@@ -1248,6 +1282,7 @@ class ApplicationController extends BaseController
             'browserWebsocketUrl' => $browserWebsocketUrl,
             'sessionId' => session_id(),
             'volumeName' => $volume,
+            'latestDeployment' => !empty($latest) ? $latest[0] : null,
         ]);
     }
 

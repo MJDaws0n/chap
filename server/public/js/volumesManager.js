@@ -76,6 +76,28 @@
         const sessionId = root.dataset.sessionId;
         const appUuid = root.dataset.applicationUuid;
 
+        function friendlyResourceName(name) {
+            const n = String(name || '');
+            const app = String(appUuid || '');
+            if (!n) return n;
+
+            // Prefer stripping the app UUID segment if present.
+            if (app) {
+                const idx = n.indexOf(app);
+                if (idx >= 0) {
+                    const cut = idx + app.length;
+                    const next = n[cut];
+                    if (next === '-' || next === '_') return n.slice(cut + 1);
+                    return n.slice(cut);
+                }
+            }
+
+            // Generic chap prefix.
+            if (n.startsWith('chap-') && n.length > 5) return n.slice(5);
+            if (n.startsWith('chap_') && n.length > 5) return n.slice(5);
+            return n;
+        }
+
         const statusEl = qs('#vm-status');
         const summaryEl = qs('#vm-summary');
         const progressEl = qs('#vm-progress');
@@ -180,7 +202,7 @@
             const items = document.createElement('div');
             items.className = 'dropdown-items';
 
-            const mkItem = (label, onClick, danger) => {
+            const addItem = (label, onClick, danger) => {
                 const b = document.createElement('button');
                 b.type = 'button';
                 b.className = 'dropdown-item';
@@ -193,10 +215,11 @@
                         showToast('error', err && err.message ? err.message : 'Action failed');
                     });
                 });
+                items.appendChild(b);
                 return b;
             };
 
-            itemsBuilder(mkItem);
+            itemsBuilder(addItem);
             menu.appendChild(items);
             dd.appendChild(trigger);
             dd.appendChild(menu);
@@ -249,7 +272,8 @@
                 cbTd.appendChild(cb);
 
                 const nameTd = document.createElement('td');
-                nameTd.textContent = v.name;
+                nameTd.textContent = friendlyResourceName(v.name);
+                nameTd.title = v.name;
 
                 const typeTd = document.createElement('td');
                 typeTd.textContent = v.type;
@@ -258,7 +282,8 @@
                 mountsTd.textContent = (v.mounts || []).join(', ');
 
                 const usedTd = document.createElement('td');
-                usedTd.textContent = (v.used_by || []).join(', ');
+                usedTd.textContent = (v.used_by || []).map(friendlyResourceName).join(', ');
+                usedTd.title = (v.used_by || []).join(', ');
 
                 const actionsTd = document.createElement('td');
                 actionsTd.className = 'vm-row-actions';

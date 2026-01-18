@@ -11,37 +11,12 @@ $wsUrl = $browserWebsocketUrl ?? '';
      data-session-id="<?= e($sessionId ?? '') ?>"
      data-application-uuid="<?= e($application->uuid) ?>">
 
-    <div class="page-header">
-        <div class="page-header-top">
-            <div>
-                <nav class="breadcrumb">
-                    <span class="breadcrumb-item"><a href="/projects">Projects</a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="/projects/<?= e($project->uuid) ?>"><?= e($project->name) ?></a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="/environments/<?= e($environment->uuid) ?>"><?= e($environment->name) ?></a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="/applications/<?= e($application->uuid) ?>"><?= e($application->name) ?></a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-current">Volumes</span>
-                </nav>
+    <?php $activeTab = 'volume-files'; ?>
+    <?php include __DIR__ . '/_header_tabs.php'; ?>
 
-                <div class="flex items-center gap-4 mt-4">
-                    <div class="icon-box icon-box-lg icon-box-blue">
-                        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
-                        </svg>
-                    </div>
-                    <div class="min-w-0">
-                        <h1 class="page-header-title">Volumes</h1>
-                        <p class="page-header-description truncate">Download, replace, or delete persistent volumes attached to this application.</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="page-header-actions flex-wrap">
-                <a href="/applications/<?= e($application->uuid) ?>" class="btn btn-secondary">Back</a>
-            </div>
+    <div class="card">
+        <div class="card-body">
+            <p class="text-secondary text-sm">Manage persistent volumes attached to this application. Tip: open a volume to browse and edit files.</p>
         </div>
     </div>
 

@@ -163,8 +163,27 @@
     const appUuid = root.dataset.applicationUuid;
     const volumeName = root.dataset.volumeName;
 
+    function friendlyResourceName(name) {
+      const n = String(name || '');
+      const app = String(appUuid || '');
+      if (!n) return n;
+      if (app) {
+        const idx = n.indexOf(app);
+        if (idx >= 0) {
+          const cut = idx + app.length;
+          const next = n[cut];
+          if (next === '-' || next === '_') return n.slice(cut + 1);
+          return n.slice(cut);
+        }
+      }
+      if (n.startsWith('chap-') && n.length > 5) return n.slice(5);
+      if (n.startsWith('chap_') && n.length > 5) return n.slice(5);
+      return n;
+    }
+
     const statusEl = qs('#fm-status');
     const rootEl = qs('#fm-root');
+    const volEl = qs('#fm-volume');
     const manualLocationBtn = qs('#fm-manual-location');
     const refreshBtn = qs('#fm-refresh');
     const rowsEl = qs('#fm-rows');
@@ -339,7 +358,9 @@
       const requestId = generateId('req');
       return new Promise((resolve, reject) => {
         pending.set(requestId, { resolve, reject, action });
-        const fullPayload = { ...(payload || {}), name: volumeName };
+        // IMPORTANT: `name` is used by many FS actions as the *filename*.
+        // Use `volume` for the target volume to avoid clobbering user-supplied filenames.
+        const fullPayload = { ...(payload || {}), volume: volumeName };
         if (!send('volumes:request', { request_id: requestId, action: action, payload: fullPayload })) {
           pending.delete(requestId);
           reject(new Error('WebSocket not connected'));
@@ -900,6 +921,13 @@
         authenticated = true;
         setStatus('badge-success', 'Connected');
         if (rootEl) rootEl.textContent = 'Root: /';
+        if (volEl) {
+          const full = String(volumeName || '').trim();
+          if (full) {
+            volEl.textContent = `Volume: ${friendlyResourceName(full)}`;
+            volEl.title = full;
+          }
+        }
         if (!initialPathFromUrl) currentPath = '/';
         navigate(currentPath).catch((e) => {
           showToast('error', e && e.message ? e.message : 'Failed to load directory');

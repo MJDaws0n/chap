@@ -11,6 +11,17 @@ use Chap\Services\DeploymentService;
  */
 class DeploymentController extends BaseController
 {
+    private function redirectToApplicationLogs(?Deployment $deployment): void
+    {
+        $applicationUuid = (string)($deployment?->application()?->uuid ?? '');
+        if ($applicationUuid !== '') {
+            $this->redirect('/applications/' . $applicationUuid . '/logs');
+            return;
+        }
+
+        $this->redirect('/projects');
+    }
+
     /**
      * Start a new deployment for an application
      */
@@ -90,45 +101,7 @@ class DeploymentController extends BaseController
             $this->json(['deployment' => $deployment->toArray()], 201);
         } else {
             flash('success', 'Deployment started');
-            $this->redirect('/deployments/' . $deployment->uuid);
-        }
-    }
-
-    /**
-     * Show deployment details
-     */
-    public function show(string $uuid): void
-    {
-        $team = $this->currentTeam();
-        $deployment = Deployment::findByUuid($uuid);
-
-        if (!$this->canAccessDeployment($deployment, $team)) {
-            if ($this->isApiRequest()) {
-                $this->json(['error' => 'Deployment not found'], 404);
-            } else {
-                flash('error', 'Deployment not found');
-                $this->redirect('/projects');
-            }
-        }
-
-        $teamId = (int) ($deployment->application()?->environment()?->project()?->team_id ?? 0);
-        $this->requireTeamPermission('deployments', 'read', $teamId);
-
-        $application = $deployment->application();
-
-        if ($this->isApiRequest()) {
-            $this->json([
-                'deployment' => $deployment->toArray(),
-                'logs' => $deployment->logsArray(),
-            ]);
-        } else {
-            $this->view('deployments/show', [
-                'title' => 'Deployment',
-                'deployment' => $deployment,
-                'application' => $application,
-                'environment' => $application->environment(),
-                'project' => $application->environment()->project(),
-            ]);
+            $this->redirectToApplicationLogs($deployment);
         }
     }
 
@@ -178,7 +151,7 @@ class DeploymentController extends BaseController
                 $this->json(['error' => 'Deployment cannot be cancelled'], 400);
             } else {
                 flash('error', 'This deployment cannot be cancelled');
-                $this->redirect('/deployments/' . $uuid);
+                $this->redirectToApplicationLogs($deployment);
             }
         }
 
@@ -188,7 +161,7 @@ class DeploymentController extends BaseController
             $this->json(['message' => 'Deployment cancelled']);
         } else {
             flash('success', 'Deployment cancelled');
-            $this->redirect('/deployments/' . $uuid);
+            $this->redirectToApplicationLogs($deployment);
         }
     }
 
@@ -217,7 +190,7 @@ class DeploymentController extends BaseController
                 $this->json(['error' => 'Cannot rollback to this deployment'], 400);
             } else {
                 flash('error', 'Cannot rollback to this deployment');
-                $this->redirect('/deployments/' . $uuid);
+                $this->redirectToApplicationLogs($deployment);
             }
         }
 
@@ -230,7 +203,7 @@ class DeploymentController extends BaseController
             $this->json(['deployment' => $newDeployment->toArray()], 201);
         } else {
             flash('success', 'Rollback started');
-            $this->redirect('/deployments/' . $newDeployment->uuid);
+            $this->redirectToApplicationLogs($newDeployment);
         }
     }
 

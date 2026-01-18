@@ -1236,7 +1236,9 @@ function createLiveLogsWs(deps) {
             }
 
             if (action.startsWith('fs:')) {
-                const name = String(payload.name || payload.volume || '').trim();
+                // IMPORTANT: For fs:* actions, `payload.name` is frequently used as a *filename*.
+                // Prefer `payload.volume` as the volume identifier; keep `payload.name` only as a legacy fallback.
+                const name = String(payload.volume || payload.volume_name || payload.volumeName || payload.name || '').trim();
                 if (!await ensureVolumeBelongsToApp(browserWs, name)) return volumesReply(browserWs, requestId, false, 'Volume not found for application');
 
                 // Permission mapping
@@ -1797,14 +1799,16 @@ function createLiveLogsWs(deps) {
 
     async function resolveContainerForFiles(browserWs, requestedContainerId) {
         const appUuid = browserWs.applicationUuid;
-        const allowed = await getRunningContainers(appUuid);
-        const running = allowed.filter((c) => c.status === 'running');
-        if (!running.length) return { containers: allowed, container: null };
+        const allContainers = await getAppContainers(appUuid, true);
+        const running = allContainers.filter((c) => isRunningLike(c.status));
+        if (!running.length) return { containers: allContainers, container: null, reason: 'No running containers found' };
         if (requestedContainerId) {
             const found = findContainerById(running, requestedContainerId);
-            if (found) return { containers: allowed, container: found };
+            if (found) return { containers: allContainers, container: found };
+            const foundAny = findContainerById(allContainers, requestedContainerId);
+            if (foundAny) return { containers: allContainers, container: null, reason: 'Selected container is not running' };
         }
-        return { containers: allowed, container: running[0] };
+        return { containers: allContainers, container: running[0] };
     }
 
     async function handleFilesRequest(browserWs, message) {
@@ -1824,6 +1828,27 @@ function createLiveLogsWs(deps) {
         try {
             const requestedContainerId = typeof payload.container_id === 'string' ? payload.container_id.trim() : '';
             const { containers, container } = await resolveContainerForFiles(browserWs, requestedContainerId);
+
+            // Allow meta to succeed even when there are no running containers.
+            if (action === 'meta') {
+                const root = '/';
+                const persistentPrefixes = container ? await runDockerInspectMounts(container.id) : [];
+                if (container) {
+                    try {
+                        console.log(`[BrowserWS] files:${action} app=${browserWs.applicationUuid} container=${container.id}`);
+                    } catch {}
+                    browserWs.selectedContainerId = container.id;
+                }
+                return filesReply(browserWs, requestId, true, {
+                    root,
+                    default_path: '/',
+                    containers,
+                    selected_container_id: container ? container.id : null,
+                    persistent_prefixes: persistentPrefixes,
+                    no_running_containers: !container,
+                });
+            }
+
             if (!container) return filesReply(browserWs, requestId, false, 'No running containers found');
 
             try {
@@ -1833,16 +1858,6 @@ function createLiveLogsWs(deps) {
             browserWs.selectedContainerId = container.id;
             const persistentPrefixes = await runDockerInspectMounts(container.id);
             const root = '/';
-
-            if (action === 'meta') {
-                return filesReply(browserWs, requestId, true, {
-                    root,
-                    default_path: '/',
-                    containers,
-                    selected_container_id: container.id,
-                    persistent_prefixes: persistentPrefixes,
-                });
-            }
 
             if (action === 'list') {
                 const dir = String(payload.path || '/');
@@ -2306,6 +2321,11 @@ function createLiveLogsWs(deps) {
         return all.filter((c) => c.status === 'running' || c.status === 'restarting');
     }
 
+    function isRunningLike(status) {
+        const s = String(status || '').toLowerCase();
+        return s === 'running' || s === 'restarting';
+    }
+
     function stopAllLogProcesses(browserWs) {
         if (browserWs.logProcesses && Array.isArray(browserWs.logProcesses)) {
             for (const p of browserWs.logProcesses) {
@@ -2335,12 +2355,7 @@ function createLiveLogsWs(deps) {
             return;
         }
 
-        // Publish container list once per change
-        safeJsonSend(browserWs, {
-            type: 'containers',
-            containers,
-            timestamp: Date.now(),
-        });
+        // NOTE: container list is published by discovery (includes stopped containers).
 
         const tail = clampInt(browserWs.tailLines, 0, 1000, 100);
 
@@ -2388,7 +2403,8 @@ function createLiveLogsWs(deps) {
                     // Discovery loop will rebuild streams if container IDs changed.
                     // This is just a best-effort nudge if docker logs exits unexpectedly.
                     try {
-                        const latest = await getRunningContainers(applicationUuid);
+                        const all = await getAppContainers(applicationUuid, true);
+                        const latest = all.filter((c) => isRunningLike(c.status));
                         const idsKey = latest.map(x => x.id).sort().join(',');
                         if (browserWs._containerIdsKey && browserWs._containerIdsKey !== idsKey) return;
                         startLogStreams(browserWs, applicationUuid, latest);
@@ -2421,8 +2437,9 @@ function createLiveLogsWs(deps) {
             browserWs._discoveryInFlight = true;
 
             try {
-                const containers = await getRunningContainers(applicationUuid);
-                const idsKey = containers.map((c) => c.id).sort().join(',');
+                const containers = await getAppContainers(applicationUuid, true);
+                const running = containers.filter((c) => isRunningLike(c.status));
+                const idsKey = running.map((c) => c.id).sort().join(',');
 
                 // Avoid spam: hash only stable fields (id/name/status)
                 const hash = JSON.stringify(containers.map((c) => ({ id: c.id, name: c.name, status: c.status })));
@@ -2438,7 +2455,7 @@ function createLiveLogsWs(deps) {
 
                 if (browserWs._containerIdsKey !== idsKey) {
                     browserWs._containerIdsKey = idsKey;
-                    startLogStreams(browserWs, applicationUuid, containers);
+                    startLogStreams(browserWs, applicationUuid, running);
                 }
             } finally {
                 browserWs._discoveryInFlight = false;

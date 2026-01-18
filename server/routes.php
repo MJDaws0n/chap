@@ -116,7 +116,6 @@ Route::middleware(['auth'], function() {
     
     // Deployments
     Route::post('/applications/{appId}/deploy', 'DeploymentController@deploy');
-    Route::get('/deployments/{id}', 'DeploymentController@show');
     Route::post('/deployments/{id}/cancel', 'DeploymentController@cancel');
     Route::post('/deployments/{id}/rollback', 'DeploymentController@rollback');
     Route::get('/deployments/{id}/logs', 'DeploymentController@logs');

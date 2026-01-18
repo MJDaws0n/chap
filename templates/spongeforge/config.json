@@ -1,0 +1,19 @@
+{
+  "name": "SpongeForge",
+  "version": "1.0.0",
+  "slug": "spongeforge",
+  "description": "Sponge plugin platform running on Forge (for modded servers).",
+  "category": "Minecraft",
+  "doc_url": "https://www.spongepowered.org/",
+  "env_variables": {
+    "EULA": "TRUE",
+    "SERVER_JAR_URL": "",
+    "FORGE_VERSION": "recommended",
+    "SPONGE_VERSION": "latest",
+    "MEMORY": "{ram}M",
+    "MINECRAFT_PORT": "{port[0]}",
+    "JAVA_EXTRA_ARGS": ""
+  },
+  "default_ports_required": 1,
+  "is_official": true
+}

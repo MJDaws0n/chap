@@ -1,0 +1,16 @@
+{
+  "name": "BungeeCord",
+  "version": "1.0.0",
+  "slug": "bungeecord",
+  "description": "A BungeeCord proxy for Minecraft server networks.",
+  "category": "Minecraft",
+  "doc_url": "https://www.spigotmc.org/wiki/bungeecord/",
+  "env_variables": {
+    "MEMORY": "{ram}M",
+    "PROXY_VERSION": "latest",
+    "PROXY_PORT": "{port[0]}",
+    "JAVA_EXTRA_ARGS": ""
+  },
+  "default_ports_required": 1,
+  "is_official": true
+}

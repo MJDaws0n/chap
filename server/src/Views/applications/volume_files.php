@@ -4,6 +4,25 @@
  * Volume filesystem browser (WebSocket-only, browser connects to node).
  */
 $wsUrl = $browserWebsocketUrl ?? '';
+$volumeFullName = $volumeName ?? '';
+$volumeLabel = $volumeFullName;
+$appUuid = $application->uuid ?? '';
+
+if (!empty($appUuid) && !empty($volumeFullName)) {
+    $pos = strpos($volumeFullName, $appUuid);
+    if ($pos !== false) {
+        $cut = $pos + strlen($appUuid);
+        $next = $volumeFullName[$cut] ?? '';
+        if ($next === '-' || $next === '_') $cut += 1;
+        $volumeLabel = substr($volumeFullName, $cut);
+    }
+}
+
+if (is_string($volumeLabel) && strlen($volumeLabel) > 5) {
+    if (substr($volumeLabel, 0, 5) === 'chap-' || substr($volumeLabel, 0, 5) === 'chap_') {
+        $volumeLabel = substr($volumeLabel, 5);
+    }
+}
 ?>
 
 <div class="flex flex-col gap-6" id="volume-file-manager"
@@ -12,39 +31,12 @@ $wsUrl = $browserWebsocketUrl ?? '';
      data-application-uuid="<?= e($application->uuid) ?>"
      data-volume-name="<?= e($volumeName ?? '') ?>">
 
-    <div class="page-header">
-        <div class="page-header-top">
-            <div>
-                <nav class="breadcrumb">
-                    <span class="breadcrumb-item"><a href="/projects">Projects</a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="/projects/<?= e($project->uuid) ?>"><?= e($project->name) ?></a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="/environments/<?= e($environment->uuid) ?>"><?= e($environment->name) ?></a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="/applications/<?= e($application->uuid) ?>"><?= e($application->name) ?></a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="/applications/<?= e($application->uuid) ?>/volumes">Volumes</a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-current">Filesystem</span>
-                </nav>
+    <?php $activeTab = 'volume-files'; ?>
+    <?php include __DIR__ . '/_header_tabs.php'; ?>
 
-                <div class="flex items-center gap-4 mt-4">
-                    <div class="icon-box icon-box-lg icon-box-blue">
-                        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
-                        </svg>
-                    </div>
-                    <div class="min-w-0">
-                        <h1 class="page-header-title">Volume filesystem</h1>
-                        <p class="page-header-description truncate">Browse and manage files inside <code><?= e($volumeName ?? '') ?></code> (no running container required).</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="page-header-actions flex-wrap">
-                <a href="/applications/<?= e($application->uuid) ?>/volumes" class="btn btn-secondary">Back</a>
-            </div>
+    <div class="card">
+        <div class="card-body">
+            <p class="text-sm text-secondary">Browsing volume: <code title="<?= e($volumeFullName) ?>"><?= e($volumeLabel) ?></code></p>
         </div>
     </div>
 
@@ -70,7 +62,7 @@ $wsUrl = $browserWebsocketUrl ?? '';
                         </div>
 
                         <span class="text-sm text-secondary" id="fm-root">Root: /</span>
-                        <span class="text-sm text-secondary" id="fm-volume">Volume: <?= e($volumeName ?? '') ?></span>
+                        <span class="text-sm text-secondary" id="fm-volume" title="<?= e($volumeFullName) ?>">Volume: <?= e($volumeLabel) ?></span>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">
                         <input type="file" id="fm-upload-input" class="hidden" multiple>
@@ -158,6 +150,13 @@ $wsUrl = $browserWebsocketUrl ?? '';
                 </div>
 
                 <div class="mt-4 fm-dropzone" id="fm-dropzone">
+                    <div class="fm-drop-overlay" aria-hidden="true">
+                        <div class="fm-drop-overlay-inner">
+                            <div class="fm-drop-title">Drop files to upload</div>
+                            <div class="fm-drop-sub">Folders aren’t supported yet</div>
+                        </div>
+                    </div>
+
                     <div class="fm-table-wrap">
                         <table class="table" id="fm-table">
                             <thead>
@@ -175,7 +174,6 @@ $wsUrl = $browserWebsocketUrl ?? '';
                             <tbody id="fm-rows"></tbody>
                         </table>
                     </div>
-                    <div class="text-sm text-tertiary mt-2">Tip: drag & drop files here to upload.</div>
                 </div>
             </div>
         </div>
@@ -184,7 +182,42 @@ $wsUrl = $browserWebsocketUrl ?? '';
         <script src="/js/volumeFileManager.js?v=<?= e((string) $vfmVer) ?>"></script>
 
         <style>
+            .fm-dropzone { position: relative; }
             .fm-dropzone.dragover { outline: 2px dashed var(--border-strong); outline-offset: 4px; }
+            .fm-drop-hint {
+                display: inline-flex;
+                align-items: center;
+                gap: 10px;
+                padding: 10px 12px;
+                border: 1px dashed var(--border-primary);
+                border-radius: var(--radius-md);
+                background: var(--bg-secondary);
+                color: var(--text-secondary);
+                margin-bottom: 12px;
+                user-select: none;
+            }
+            .fm-drop-hint .icon { width: 16px; height: 16px; color: var(--text-tertiary); }
+
+            .fm-drop-overlay {
+                position: absolute;
+                inset: 0;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                pointer-events: none;
+                background: color-mix(in srgb, var(--bg-primary) 60%, transparent);
+                border-radius: var(--radius-md);
+            }
+            .fm-dropzone.dragover .fm-drop-overlay { display: flex; }
+            .fm-drop-overlay-inner {
+                padding: 18px 20px;
+                border-radius: var(--radius-lg);
+                border: 1px dashed var(--border-strong);
+                background: var(--bg-secondary);
+                text-align: center;
+            }
+            .fm-drop-title { font-weight: 600; }
+            .fm-drop-sub { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; }
             .fm-name { display:flex; align-items:center; gap: 10px; min-width: 0; }
             .fm-icon { width: 18px; height: 18px; color: var(--text-tertiary); }
             .fm-row.selected { background: var(--bg-secondary); }

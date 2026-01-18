@@ -1,0 +1,17 @@
+{
+  "name": "Spigot",
+  "version": "1.0.0",
+  "slug": "spigot",
+  "description": "Spigot Minecraft server (optimized vanilla server implementation).",
+  "category": "Minecraft",
+  "doc_url": "https://www.spigotmc.org/wiki/spigot/",
+  "env_variables": {
+    "EULA": "TRUE",
+    "MINECRAFT_VERSION": "latest",
+    "MEMORY": "{ram}M",
+    "MINECRAFT_PORT": "{port[0]}",
+    "JAVA_EXTRA_ARGS": ""
+  },
+  "default_ports_required": 1,
+  "is_official": true
+}

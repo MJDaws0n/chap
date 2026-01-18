@@ -100,7 +100,7 @@
         <?php else: ?>
             <div class="card-body p-0">
                 <?php foreach ($recentDeployments as $deployment): ?>
-                    <a href="/deployments/<?= $deployment['id'] ?>" class="flex items-center justify-between px-6 py-4 border-b border-primary hover:bg-tertiary transition-colors">
+                        <div class="flex items-center justify-between px-6 py-4 border-b border-primary cursor-default">
                         <div class="min-w-0 flex-1">
                             <p class="font-medium truncate"><?= htmlspecialchars($deployment['application_name'] ?? 'Unknown') ?></p>
                             <p class="text-sm text-secondary truncate">
@@ -124,7 +124,7 @@
                             <span class="badge <?= $badgeClass ?>"><?= ucfirst($status) ?></span>
                             <p class="text-xs text-tertiary mt-1"><?= time_ago($deployment['created_at'] ?? '') ?></p>
                         </div>
-                    </a>
+                        </div>
                 <?php endforeach; ?>
             </div>
         <?php endif; ?>

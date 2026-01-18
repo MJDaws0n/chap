@@ -19,38 +19,8 @@ $isDeploying = method_exists($application, 'isDeploying')
 ?>
 
 <div class="flex flex-col gap-6">
-    <div class="page-header">
-        <div class="page-header-top">
-            <div>
-                <nav class="breadcrumb">
-                    <span class="breadcrumb-item"><a href="/projects">Projects</a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="/projects/<?= e($project->uuid) ?>"><?= e($project->name) ?></a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="/environments/<?= e($environment->uuid) ?>"><?= e($environment->name) ?></a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-item"><a href="/applications/<?= e($application->uuid) ?>"><?= e($application->name) ?></a></span>
-                    <span class="breadcrumb-separator">/</span>
-                    <span class="breadcrumb-current">Live Logs</span>
-                </nav>
-
-                <div class="flex items-center flex-wrap gap-3 mt-4">
-                    <h1 class="page-header-title">Live Logs</h1>
-                    <span class="badge <?= $statusColor ?>"><?= ucfirst($application->status) ?></span>
-                </div>
-                <p class="page-header-description truncate"><?= e($application->name) ?></p>
-            </div>
-
-            <div class="page-header-actions">
-                <a href="/applications/<?= e($application->uuid) ?>" class="btn btn-secondary">
-                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-                    </svg>
-                    Back to Application
-                </a>
-            </div>
-        </div>
-    </div>
+    <?php $activeTab = 'logs'; ?>
+    <?php include __DIR__ . '/_header_tabs.php'; ?>
 
     <div class="grid grid-cols-1 lg:grid-cols-3">
         <div class="lg:col-span-2">
@@ -101,71 +71,57 @@ $isDeploying = method_exists($application, 'isDeploying')
                 </div>
 
                 <div class="card-body p-0">
-                    <div class="logs-container" id="logs-container">
-                        <div class="flex flex-col items-center justify-center h-full gap-3" id="logs-empty">
-                            <p class="text-secondary text-sm">No logs available. Select a container to view logs.</p>
+                    <div id="container-logs-wrap">
+                        <div class="logs-container" id="logs-container">
+                            <div class="flex flex-col items-center justify-center h-full gap-3" id="logs-empty">
+                                <p class="text-secondary text-sm">No logs available. Select a container to view logs.</p>
+                            </div>
+                            <div class="flex flex-col items-center justify-center h-full gap-3 hidden" id="logs-loading">
+                                <div class="spinner"></div>
+                                <p class="text-secondary text-sm">Loading logs…</p>
+                            </div>
+                            <div class="logs-content" id="logs-content"></div>
                         </div>
-                        <div class="flex flex-col items-center justify-center h-full gap-3 hidden" id="logs-loading">
-                            <div class="spinner"></div>
-                            <p class="text-secondary text-sm">Loading logs…</p>
+
+                        <div class="border-t border-primary p-4" id="logs-exec-wrap">
+                            <div class="flex items-center gap-3">
+                                <input
+                                    type="text"
+                                    class="input input-sm flex-1"
+                                    id="exec-input"
+                                    placeholder="Send command to container console…"
+                                    autocomplete="off"
+                                    spellcheck="false"
+                                >
+                                <button type="button" class="btn btn-secondary btn-sm" id="exec-send-btn">
+                                    Run
+                                </button>
+                            </div>
+                            <p class="text-tertiary text-xs mt-2">
+                                Sends input to the container's main process (stdin) via the node WebSocket.
+                            </p>
                         </div>
-                        <div class="logs-content" id="logs-content"></div>
                     </div>
 
-                    <div class="border-t border-primary p-4">
-                        <div class="flex items-center gap-3">
-                            <input
-                                type="text"
-                                class="input input-sm flex-1"
-                                id="exec-input"
-                                placeholder="Send command to container console…"
-                                autocomplete="off"
-                                spellcheck="false"
-                            >
-                            <button type="button" class="btn btn-secondary btn-sm" id="exec-send-btn">
-                                Run
-                            </button>
+                    <div id="deployment-logs-wrap" class="hidden">
+                        <div class="p-4 border-b border-primary">
+                            <div class="flex items-center justify-between gap-3 flex-wrap">
+                                <div>
+                                    <p class="font-medium">Deployment logs</p>
+                                    <p class="text-sm text-secondary" id="deployment-logs-status"></p>
+                                </div>
+                                <p class="text-xs text-tertiary">Auto-switches back when deployment completes.</p>
+                            </div>
                         </div>
-                        <p class="text-tertiary text-xs mt-2">
-                            Sends input to the container's main process (stdin) via the node WebSocket.
-                        </p>
+                        <div class="logs-container">
+                            <div class="logs-content" id="deployment-logs-container"></div>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
         <div class="flex flex-col gap-6">
-            <!-- Actions Card -->
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="card-title">Actions</h3>
-                </div>
-                <div class="card-body">
-                    <div class="flex flex-col gap-3">
-                        <form method="POST" action="/applications/<?= $application->uuid ?>/deploy" data-deploy-form>
-                            <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                            <button type="submit" class="btn btn-primary w-full" <?= $isDeploying ? 'disabled aria-disabled="true"' : '' ?>>
-                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                                </svg>
-                                <?= $isDeploying ? 'Redeploying…' : (in_array(($application->status ?? ''), ['running', 'restarting'], true) ? 'Redeploy' : 'Deploy') ?>
-                            </button>
-                        </form>
-                        <?php if (in_array(($application->status ?? ''), ['running', 'restarting'], true)): ?>
-                            <form method="POST" action="/applications/<?= $application->uuid ?>/stop">
-                                <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                                <button type="submit" class="btn btn-secondary w-full">
-                                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <rect x="6" y="6" width="12" height="12" rx="2"/>
-                                    </svg>
-                                    Stop Application
-                                </button>
-                            </form>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            </div>
-
             <!-- Settings Card -->
             <div class="card">
                 <div class="card-header">
@@ -346,6 +302,9 @@ $isDeploying = method_exists($application, 'isDeploying')
 #pause-btn.paused .icon-play { display: block; }
 #pause-btn.paused .icon-pause { display: none; }
 </style>
+
+<?php $deployInlineVer = @filemtime(__DIR__ . '/../../../public/js/applicationDeployInline.js') ?: time(); ?>
+<script src="/js/applicationDeployInline.js?v=<?= e((string) $deployInlineVer) ?>"></script>
 
 <script>
 (function() {
