@@ -84,14 +84,6 @@ class NodeHandler implements MessageComponentInterface {
                 $this->handleContainerList($from, $data);
                 break;
 
-            case 'container:logs:stream':
-                $this->handleContainerLogs($from, $data);
-                break;
-
-            case 'container:logs:response':
-                $this->handleContainerLogsResponse($from, $data);
-                break;
-
             case 'port:check:response':
                 $this->handlePortCheckResponse($from, $data);
                 break;
@@ -104,11 +96,6 @@ class NodeHandler implements MessageComponentInterface {
             // Node agent metrics reporting
             case 'node:metrics':
                 $this->handleNodeMetrics($from, $data);
-                break;
-
-            // Node agent container logs
-            case 'containerLogs':
-                $this->handleContainerLogsFromAgent($from, $data);
                 break;
 
             // Node agent exec result
@@ -470,88 +457,6 @@ class NodeHandler implements MessageComponentInterface {
         $containers = $data['payload']['containers'] ?? [];
         
         echo "Received container list for request {$requestId}: " . count($containers) . " containers\n";
-    }
-
-    /**
-     * Handle container logs stream
-     */
-    protected function handleContainerLogs(ConnectionInterface $conn, array $data): void
-    {
-        // Persist logs to database
-        $containerId = $data['payload']['container_id'] ?? '';
-        $message = $data['payload']['message'] ?? '';
-        $level = $data['payload']['level'] ?? 'info';
-        
-        if ($containerId && $message) {
-            DeploymentService::handleContainerLog($containerId, $message, $level, $conn->nodeId ?? null);
-        }
-        
-        echo "Container log [{$containerId}]: {$message}\n";
-    }
-
-    /**
-     * Handle container logs from node agent (batch format)
-     */
-    protected function handleContainerLogsFromAgent(ConnectionInterface $conn, array $data): void
-    {
-        $payload = $data['payload'] ?? [];
-        $containerId = $payload['container_id'] ?? $payload['containerId'] ?? '';
-        $logs = $payload['logs'] ?? [];
-        $nodeId = $conn->nodeId ?? null;
-        
-        if (empty($containerId) || empty($logs)) {
-            return;
-        }
-        
-        // Logs can be an array of log lines
-        foreach ($logs as $log) {
-            $line = is_string($log) ? $log : ($log['line'] ?? $log['message'] ?? '');
-            $level = is_array($log) ? ($log['level'] ?? 'info') : 'info';
-            
-            if (!empty($line)) {
-                DeploymentService::handleContainerLog($containerId, $line, $level, $nodeId);
-            }
-        }
-        
-        echo "Received " . count($logs) . " log lines for container {$containerId}\n";
-    }
-
-    /**
-     * Handle container logs response from node (includes container list)
-     */
-    protected function handleContainerLogsResponse(ConnectionInterface $conn, array $data): void
-    {
-        $payload = $data['payload'] ?? [];
-        $applicationUuid = $payload['application_uuid'] ?? '';
-        $containers = $payload['containers'] ?? [];
-        $logs = $payload['logs'] ?? [];
-        $nodeId = $conn->nodeId ?? null;
-        
-        echo "Received logs response for {$applicationUuid}: " . count($containers) . " containers, " . count($logs) . " log lines\n";
-        
-        // Store/update containers in database
-        if (!empty($containers) && !empty($applicationUuid)) {
-            DeploymentService::syncContainersForApplication($applicationUuid, $containers, $nodeId);
-        }
-        
-        // Store in cache for the HTTP endpoint to fetch
-        $requestId = $payload['task_id'] ?? $payload['request_id'] ?? null;
-        if ($requestId) {
-            $cacheFile = "/tmp/logs_response_{$applicationUuid}_{$requestId}.json";
-            file_put_contents($cacheFile, json_encode([
-                'containers' => $containers,
-                'logs' => $logs,
-                'timestamp' => time()
-            ]));
-        }
-
-        // Also write a fallback to the generic key for backwards compatibility
-        $cacheFileGeneric = "/tmp/logs_response_{$applicationUuid}.json";
-        file_put_contents($cacheFileGeneric, json_encode([
-            'containers' => $containers,
-            'logs' => $logs,
-            'timestamp' => time()
-        ]));
     }
 
     /**
