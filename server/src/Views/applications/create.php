@@ -182,6 +182,9 @@ $initialEnv = old('environment_variables', '');
                             class="input"
                             placeholder="512m">
                         <p class="form-hint">Examples: 512m, 1g, 2048m</p>
+                        <?php if (!empty($_SESSION['_errors']['memory_limit'])): ?>
+                            <p class="form-error"><?= e($_SESSION['_errors']['memory_limit']) ?></p>
+                        <?php endif; ?>
                     </div>
 
                     <div class="form-group">
@@ -191,6 +194,45 @@ $initialEnv = old('environment_variables', '');
                             class="input"
                             placeholder="1">
                         <p class="form-hint">Examples: 0.5, 1, 2</p>
+                        <?php if (!empty($_SESSION['_errors']['cpu_limit'])): ?>
+                            <p class="form-error"><?= e($_SESSION['_errors']['cpu_limit']) ?></p>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="storage_mb_limit" class="form-label">Storage Limit (MB or -1)</label>
+                        <input type="number" name="storage_mb_limit" id="storage_mb_limit"
+                            value="<?= e(old('storage_mb_limit', '-1')) ?>"
+                            class="input"
+                            placeholder="-1">
+                        <p class="form-hint">Applies to the app's persistent volume usage. Use -1 for unlimited.</p>
+                        <?php if (!empty($_SESSION['_errors']['storage_mb_limit'])): ?>
+                            <p class="form-error"><?= e($_SESSION['_errors']['storage_mb_limit']) ?></p>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="bandwidth_mbps_limit" class="form-label">Bandwidth Limit (Mbps or -1)</label>
+                        <input type="number" name="bandwidth_mbps_limit" id="bandwidth_mbps_limit"
+                            value="<?= e(old('bandwidth_mbps_limit', '-1')) ?>"
+                            class="input"
+                            placeholder="-1">
+                        <p class="form-hint">Applies to total app network throughput. Use -1 for unlimited.</p>
+                        <?php if (!empty($_SESSION['_errors']['bandwidth_mbps_limit'])): ?>
+                            <p class="form-error"><?= e($_SESSION['_errors']['bandwidth_mbps_limit']) ?></p>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pids_limit" class="form-label">Process Limit (PIDs or -1)</label>
+                        <input type="number" name="pids_limit" id="pids_limit"
+                            value="<?= e(old('pids_limit', '-1')) ?>"
+                            class="input"
+                            placeholder="-1">
+                        <p class="form-hint">Limits total processes per container. Use -1 for unlimited.</p>
+                        <?php if (!empty($_SESSION['_errors']['pids_limit'])): ?>
+                            <p class="form-error"><?= e($_SESSION['_errors']['pids_limit']) ?></p>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>

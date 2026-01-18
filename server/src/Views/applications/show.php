@@ -3,6 +3,7 @@
  * Application Show View
  * Updated to use new design system with vanilla JavaScript
  */
+/** @var \Chap\Models\Application $application */
 $statusColors = [
     'running' => 'badge-success',
     'restarting' => 'badge-warning',
@@ -297,13 +298,55 @@ $canEditResourceLimits = $canEditResourceLimits ?? false;
                                 <?php if (!empty($errors['memory_limit'])): ?><p class="form-error"><?= e($errors['memory_limit']) ?></p><?php endif; ?>
                             </div>
 
+                            <div class="form-group">
+                                <label class="form-label" for="storage_mb_limit">Storage Limit (MB or -1)</label>
+                                <input
+                                    type="number"
+                                    name="storage_mb_limit"
+                                    id="storage_mb_limit"
+                                    value="<?= e($canEditResourceLimits ? ($old['storage_mb_limit'] ?? (string)$application->storage_mb_limit) : (string)$application->storage_mb_limit) ?>"
+                                    class="input"
+                                    placeholder="-1"
+                                    <?= !$canEditResourceLimits ? 'disabled aria-disabled="true"' : '' ?>
+                                >
+                                <?php if (!empty($errors['storage_mb_limit'])): ?><p class="form-error"><?= e($errors['storage_mb_limit']) ?></p><?php endif; ?>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="bandwidth_mbps_limit">Bandwidth Limit (Mbps or -1)</label>
+                                <input
+                                    type="number"
+                                    name="bandwidth_mbps_limit"
+                                    id="bandwidth_mbps_limit"
+                                    value="<?= e($canEditResourceLimits ? ($old['bandwidth_mbps_limit'] ?? (string)$application->bandwidth_mbps_limit) : (string)$application->bandwidth_mbps_limit) ?>"
+                                    class="input"
+                                    placeholder="-1"
+                                    <?= !$canEditResourceLimits ? 'disabled aria-disabled="true"' : '' ?>
+                                >
+                                <?php if (!empty($errors['bandwidth_mbps_limit'])): ?><p class="form-error"><?= e($errors['bandwidth_mbps_limit']) ?></p><?php endif; ?>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="pids_limit">Process Limit (PIDs or -1)</label>
+                                <input
+                                    type="number"
+                                    name="pids_limit"
+                                    id="pids_limit"
+                                    value="<?= e($canEditResourceLimits ? ($old['pids_limit'] ?? (string)$application->pids_limit) : (string)$application->pids_limit) ?>"
+                                    class="input"
+                                    placeholder="-1"
+                                    <?= !$canEditResourceLimits ? 'disabled aria-disabled="true"' : '' ?>
+                                >
+                                <?php if (!empty($errors['pids_limit'])): ?><p class="form-error"><?= e($errors['pids_limit']) ?></p><?php endif; ?>
+                            </div>
+
                             <div class="md:col-span-2">
                                 <div class="alert alert-warning">
                                     <svg class="alert-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
                                     </svg>
                                     <span>
-                                        Changing CPU/Memory limits triggers an automatic redeploy.
+                                        Changing resource limits triggers an automatic redeploy.
                                         <?php if (!$canEditResourceLimits): ?>
                                             You don't have permission to edit resource limits.
                                         <?php endif; ?>

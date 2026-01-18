@@ -15,7 +15,8 @@ class ConfigTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        // Reset config state
+        // Ensure tests don't depend on previous cached config
+        Config::reset();
         Config::load();
     }
     
@@ -24,10 +25,8 @@ class ConfigTest extends TestCase
      */
     public function testConfigLoads(): void
     {
-        Config::load();
-        
-        // APP_ENV should be set from bootstrap
-        $this->assertEquals('testing', Config::get('APP_ENV'));
+        // app.env should be set from bootstrap env vars
+        $this->assertEquals('testing', Config::get('app.env'));
     }
     
     /**
@@ -35,11 +34,11 @@ class ConfigTest extends TestCase
      */
     public function testGetConfigValue(): void
     {
-        // Set a test value
-        putenv('TEST_KEY=test_value');
-        Config::load();
-        
-        $this->assertEquals('test_value', Config::get('TEST_KEY'));
+        // Config reads environment variables into dot-notation keys
+        putenv('APP_NAME=Test Chap');
+        Config::reload();
+
+        $this->assertEquals('Test Chap', Config::get('app.name'));
     }
     
     /**
@@ -47,8 +46,8 @@ class ConfigTest extends TestCase
      */
     public function testDefaultValues(): void
     {
-        $this->assertEquals('default', Config::get('NON_EXISTENT_KEY', 'default'));
-        $this->assertNull(Config::get('NON_EXISTENT_KEY'));
+        $this->assertEquals('default', Config::get('app.non_existent', 'default'));
+        $this->assertNull(Config::get('app.non_existent'));
     }
     
     /**
@@ -56,8 +55,8 @@ class ConfigTest extends TestCase
      */
     public function testSetConfigValue(): void
     {
-        Config::set('CUSTOM_KEY', 'custom_value');
-        $this->assertEquals('custom_value', Config::get('CUSTOM_KEY'));
+        Config::set('app.custom_key', 'custom_value');
+        $this->assertEquals('custom_value', Config::get('app.custom_key'));
     }
     
     /**
@@ -68,6 +67,7 @@ class ConfigTest extends TestCase
         $all = Config::all();
         
         $this->assertIsArray($all);
-        $this->assertArrayHasKey('APP_ENV', $all);
+        $this->assertArrayHasKey('app', $all);
+        $this->assertArrayHasKey('database', $all);
     }
 }

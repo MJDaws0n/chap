@@ -137,7 +137,7 @@
 
 <script>
 document.getElementById('delete-environment-btn').addEventListener('click', function() {
-    Modal.confirmDelete('Are you sure you want to delete this environment? All applications, databases, and services will be deleted.')
+    Modal.confirmDelete('Are you sure you want to delete this environment? All applications will be deleted.')
         .then(confirmed => {
             if (confirmed) {
                 document.getElementById('delete-environment-form').submit();

@@ -130,26 +130,6 @@ Route::middleware(['auth'], function() {
     // Template scripts (ChapScribe)
     Route::post('/chap-scripts/{uuid}/respond', 'ChapScriptRunController@respond');
     
-    // Databases
-    Route::get('/environments/{envId}/databases/create', 'DatabaseController@create');
-    Route::post('/environments/{envId}/databases', 'DatabaseController@store');
-    Route::get('/databases/{id}', 'DatabaseController@show');
-    Route::get('/databases/{id}/edit', 'DatabaseController@edit');
-    Route::put('/databases/{id}', 'DatabaseController@update');
-    Route::delete('/databases/{id}', 'DatabaseController@destroy');
-    Route::post('/databases/{id}/start', 'DatabaseController@start');
-    Route::post('/databases/{id}/stop', 'DatabaseController@stop');
-    
-    // Services (one-click apps)
-    Route::get('/environments/{envId}/services/create', 'ServiceController@create');
-    Route::post('/environments/{envId}/services', 'ServiceController@store');
-    Route::get('/services/{id}', 'ServiceController@show');
-    Route::get('/services/{id}/edit', 'ServiceController@edit');
-    Route::put('/services/{id}', 'ServiceController@update');
-    Route::delete('/services/{id}', 'ServiceController@destroy');
-    Route::post('/services/{id}/start', 'ServiceController@start');
-    Route::post('/services/{id}/stop', 'ServiceController@stop');
-    
     // Templates
     Route::get('/templates', 'TemplateController@index');
     Route::get('/templates/{slug}', 'TemplateController@show');
@@ -259,20 +239,6 @@ Route::prefix('/api/v1', function() {
         Route::get('/applications/{appId}/deployments', 'Api\DeploymentController@index');
         Route::get('/deployments/{id}', 'Api\DeploymentController@show');
         Route::post('/deployments/{id}/cancel', 'Api\DeploymentController@cancel');
-        
-        // Databases
-        Route::get('/databases', 'Api\DatabaseController@index');
-        Route::post('/databases', 'Api\DatabaseController@store');
-        Route::get('/databases/{id}', 'Api\DatabaseController@show');
-        Route::put('/databases/{id}', 'Api\DatabaseController@update');
-        Route::delete('/databases/{id}', 'Api\DatabaseController@destroy');
-        
-        // Services
-        Route::get('/services', 'Api\ServiceController@index');
-        Route::post('/services', 'Api\ServiceController@store');
-        Route::get('/services/{id}', 'Api\ServiceController@show');
-        Route::put('/services/{id}', 'Api\ServiceController@update');
-        Route::delete('/services/{id}', 'Api\ServiceController@destroy');
         
         // Templates
         Route::get('/templates', 'Api\TemplateController@index');

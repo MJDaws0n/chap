@@ -731,6 +731,9 @@ class ApplicationController extends BaseController
 
         $oldCpuLimit = (string) ($application->cpu_limit ?? '');
         $oldMemoryLimit = (string) ($application->memory_limit ?? '');
+        $oldStorageLimit = (int) ($application->storage_mb_limit ?? -1);
+        $oldBandwidthLimit = (int) ($application->bandwidth_mbps_limit ?? -1);
+        $oldPidsLimit = (int) ($application->pids_limit ?? -1);
 
         $data = $this->all();
 
@@ -748,6 +751,12 @@ class ApplicationController extends BaseController
             }
             if (array_key_exists('memory_limit', $data) && (trim((string)$data['memory_limit']) !== trim($oldMemoryLimit))) {
                 $errors['memory_limit'] = 'You do not have permission to edit memory limits';
+            }
+
+            foreach (['storage_mb_limit', 'bandwidth_mbps_limit', 'pids_limit', 'port_limit'] as $k) {
+                if (array_key_exists($k, $data) && trim((string)$data[$k]) !== trim((string)($application->$k ?? ''))) {
+                    $errors[$k] = 'You do not have permission to edit resource limits';
+                }
             }
         }
 
@@ -925,7 +934,12 @@ class ApplicationController extends BaseController
             PortAllocator::releaseForApplication((int)$application->id);
         }
 
-        $limitsChanged = (trim($oldCpuLimit) !== trim((string)$cpuLimitInput)) || (trim($oldMemoryLimit) !== trim((string)$memoryLimitInput));
+        $limitsChanged =
+            (trim($oldCpuLimit) !== trim((string)$cpuLimitInput)) ||
+            (trim($oldMemoryLimit) !== trim((string)$memoryLimitInput)) ||
+            ((int)$oldStorageLimit !== (int)$storageMbLimit) ||
+            ((int)$oldBandwidthLimit !== (int)$bandwidthLimit) ||
+            ((int)$oldPidsLimit !== (int)$pidsLimit);
         $shouldAutoRedeploy = $canEditResourceLimits
             && $limitsChanged
             && !$isMovingNodes

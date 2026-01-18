@@ -105,6 +105,48 @@
 
             <div class="card">
                 <div class="card-header">
+                    <h3 class="card-title">Configured Limits</h3>
+                </div>
+                <div class="card-body">
+                    <?php
+                        $cpuCores = ($application->cpu_millicores_limit ?? -1) > 0 ? ((float)$application->cpu_millicores_limit / 1000.0) : null;
+                        $cpuLabel = $cpuCores !== null ? rtrim(rtrim(number_format($cpuCores, 3, '.', ''), '0'), '.') . ' CPU' : 'Auto';
+
+                        $ramLabel = ($application->ram_mb_limit ?? -1) > 0 ? ((int)$application->ram_mb_limit) . ' MB' : 'Auto';
+                        $storageLabel = ($application->storage_mb_limit ?? -1) > 0 ? ((int)$application->storage_mb_limit) . ' MB' : 'Auto';
+                        $bandwidthLabel = ($application->bandwidth_mbps_limit ?? -1) > 0 ? ((int)$application->bandwidth_mbps_limit) . ' Mbps' : 'Auto';
+                        $pidsLabel = ($application->pids_limit ?? -1) > 0 ? (string)((int)$application->pids_limit) : 'Auto';
+                    ?>
+
+                    <div class="flex flex-col gap-2 text-sm">
+                        <div class="flex justify-between gap-4">
+                            <span class="text-tertiary">CPU</span>
+                            <span class="text-secondary"><?= e($cpuLabel) ?></span>
+                        </div>
+                        <div class="flex justify-between gap-4">
+                            <span class="text-tertiary">RAM</span>
+                            <span class="text-secondary"><?= e($ramLabel) ?></span>
+                        </div>
+                        <div class="flex justify-between gap-4">
+                            <span class="text-tertiary">Bandwidth</span>
+                            <span class="text-secondary"><?= e($bandwidthLabel) ?></span>
+                        </div>
+                        <div class="flex justify-between gap-4">
+                            <span class="text-tertiary">Storage</span>
+                            <span class="text-secondary"><?= e($storageLabel) ?></span>
+                        </div>
+                        <div class="flex justify-between gap-4">
+                            <span class="text-tertiary">PIDs</span>
+                            <span class="text-secondary"><?= e($pidsLabel) ?></span>
+                        </div>
+                    </div>
+
+                    <p class="text-xs text-tertiary mt-3">"Auto" means this app is not assigned a fixed slice at the environment level.</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
                     <h3 class="card-title">Current</h3>
                 </div>
                 <div class="card-body">

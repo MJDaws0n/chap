@@ -193,6 +193,10 @@ class TemplateController extends BaseController
         // Parse and validate resource limits
         $cpuLimitInput = trim((string)$this->input('cpu_limit', ''));
         $memoryLimitInput = trim((string)$this->input('memory_limit', ''));
+
+        $storageMbLimit = ResourceHierarchy::parseMb((string)$this->input('storage_mb_limit', '-1'));
+        $bandwidthLimit = ResourceHierarchy::parseIntOrAuto((string)$this->input('bandwidth_mbps_limit', '-1'));
+        $pidsLimit = ResourceHierarchy::parseIntOrAuto((string)$this->input('pids_limit', '-1'));
         
         $cpuMillicores = -1;
         $ramMb = -1;
@@ -219,31 +223,55 @@ class TemplateController extends BaseController
             }
         }
         
-        // Validate against environment limits
-        if ($cpuMillicores !== -1 || $ramMb !== -1) {
+        // Validate against environment limits (fixed allocations only)
+        if ($cpuMillicores !== -1 || $ramMb !== -1 || $storageMbLimit !== -1 || $bandwidthLimit !== -1 || $pidsLimit !== -1) {
             $parent = ResourceHierarchy::effectiveEnvironmentLimits($environment);
             $siblings = Application::forEnvironment((int)$environment->id);
-            
-            $cpuMap = [];
-            $ramMap = [];
+
+            $maps = [
+                'cpu_millicores' => [],
+                'ram_mb' => [],
+                'storage_mb' => [],
+                'bandwidth_mbps' => [],
+                'pids' => [],
+            ];
+
             foreach ($siblings as $a) {
-                $cpuMap[(int)$a->id] = (int)$a->cpu_millicores_limit;
-                $ramMap[(int)$a->id] = (int)$a->ram_mb_limit;
+                $maps['cpu_millicores'][(int)$a->id] = (int)$a->cpu_millicores_limit;
+                $maps['ram_mb'][(int)$a->id] = (int)$a->ram_mb_limit;
+                $maps['storage_mb'][(int)$a->id] = (int)$a->storage_mb_limit;
+                $maps['bandwidth_mbps'][(int)$a->id] = (int)$a->bandwidth_mbps_limit;
+                $maps['pids'][(int)$a->id] = (int)$a->pids_limit;
             }
-            
+
             // Synthetic child id 0 for the new application
-            $cpuMap[0] = $cpuMillicores;
-            $ramMap[0] = $ramMb;
-            
-            if ($cpuMillicores !== -1 && !ResourceAllocator::validateDoesNotOverallocate((int)$parent['cpu_millicores'], $cpuMap)) {
+            $maps['cpu_millicores'][0] = $cpuMillicores;
+            $maps['ram_mb'][0] = $ramMb;
+            $maps['storage_mb'][0] = $storageMbLimit;
+            $maps['bandwidth_mbps'][0] = $bandwidthLimit;
+            $maps['pids'][0] = $pidsLimit;
+
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['cpu_millicores'], $maps['cpu_millicores'])) {
                 $_SESSION['_errors']['cpu_limit'] = 'CPU allocations exceed the environment\'s remaining limit';
-                $_SESSION['_old_input'] = $_POST;
-                $this->redirect('/templates/' . urlencode($slug));
-                return;
             }
-            
-            if ($ramMb !== -1 && !ResourceAllocator::validateDoesNotOverallocate((int)$parent['ram_mb'], $ramMap)) {
+
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['ram_mb'], $maps['ram_mb'])) {
                 $_SESSION['_errors']['memory_limit'] = 'RAM allocations exceed the environment\'s remaining limit';
+            }
+
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['storage_mb'], $maps['storage_mb'])) {
+                $_SESSION['_errors']['storage_mb_limit'] = 'Storage allocations exceed the environment\'s remaining limit';
+            }
+
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['bandwidth_mbps'], $maps['bandwidth_mbps'])) {
+                $_SESSION['_errors']['bandwidth_mbps_limit'] = 'Bandwidth allocations exceed the environment\'s remaining limit';
+            }
+
+            if (!ResourceAllocator::validateDoesNotOverallocate((int)$parent['pids'], $maps['pids'])) {
+                $_SESSION['_errors']['pids_limit'] = 'PID allocations exceed the environment\'s remaining limit';
+            }
+
+            if (!empty($_SESSION['_errors'])) {
                 $_SESSION['_old_input'] = $_POST;
                 $this->redirect('/templates/' . urlencode($slug));
                 return;
@@ -312,10 +340,10 @@ class TemplateController extends BaseController
             'cpu_limit' => $cpuLimitInput !== '' ? $cpuLimitInput : '1',
             'cpu_millicores_limit' => $cpuMillicores,
             'ram_mb_limit' => $ramMb,
-            'storage_mb_limit' => -1,
+            'storage_mb_limit' => $storageMbLimit,
             'port_limit' => -1,
-            'bandwidth_mbps_limit' => -1,
-            'pids_limit' => -1,
+            'bandwidth_mbps_limit' => $bandwidthLimit,
+            'pids_limit' => $pidsLimit,
             'health_check_enabled' => 1,
             'health_check_path' => '/',
             'template_slug' => $template->slug,

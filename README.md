@@ -3,11 +3,12 @@
 **Chap** is a self-hosted deployment platform inspired by Coolify, designed to give you full control over your applications, databases, and services on your own infrastructure.
 
 <p align="center">
-  <img src=".github/images/dashboard.png" alt="Chap dashboard" width="900" />
+  <img src=".github/images/console.png" alt="Chap dashboard" width="900" />
 </p>
 
 <p align="center">
   <img src=".github/images/dashboard-light.png" alt="Dashboard" width="240" style="margin:6px" />
+  <img src=".github/images/dashboard.png" alt="Roles" width="240" style="margin:6px" />
   <img src=".github/images/deploy.png" alt="Deploy" width="240" style="margin:6px" />
   <img src=".github/images/code.png" alt="Code" width="240" style="margin:6px" />
   <img src=".github/images/files.png" alt="Files" width="240" style="margin:6px" />
@@ -16,6 +17,7 @@
   <img src=".github/images/node.png" alt="Nodes" width="240" style="margin:6px" />
   <img src=".github/images/teams.png" alt="Teams" width="240" style="margin:6px" />
   <img src=".github/images/roles.png" alt="Roles" width="240" style="margin:6px" />
+    <img src=".github/images/scripts.png" alt="Roles" width="240" style="margin:6px" />
 </p>
 
 ## Features

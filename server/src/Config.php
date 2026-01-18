@@ -18,6 +18,26 @@ class Config
     private static bool $loaded = false;
 
     /**
+     * Reset the in-memory config cache.
+     *
+     * Useful for tests (or long-lived processes) where env/config may change.
+     */
+    public static function reset(): void
+    {
+        self::$config = [];
+        self::$loaded = false;
+    }
+
+    /**
+     * Force a full reload of configuration.
+     */
+    public static function reload(): void
+    {
+        self::reset();
+        self::load();
+    }
+
+    /**
      * Load configuration
      */
     public static function load(): void

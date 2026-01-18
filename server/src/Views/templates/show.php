@@ -190,6 +190,33 @@ if (is_array($portsMeta)) {
                                 <?php endif; ?>
                                 <p class="form-hint">Examples: 0.5, 1, 2</p>
                             </div>
+
+                            <div>
+                                <label class="label" for="storage_mb_limit">Storage Limit (MB or -1)</label>
+                                <input class="input w-full" type="number" name="storage_mb_limit" id="storage_mb_limit" value="<?= e(old('storage_mb_limit', '-1')) ?>" placeholder="-1">
+                                <?php if (!empty($errors['storage_mb_limit'])): ?>
+                                    <p class="form-error"><?= e($errors['storage_mb_limit']) ?></p>
+                                <?php endif; ?>
+                                <p class="form-hint">Use -1 for unlimited.</p>
+                            </div>
+
+                            <div>
+                                <label class="label" for="bandwidth_mbps_limit">Bandwidth Limit (Mbps or -1)</label>
+                                <input class="input w-full" type="number" name="bandwidth_mbps_limit" id="bandwidth_mbps_limit" value="<?= e(old('bandwidth_mbps_limit', '-1')) ?>" placeholder="-1">
+                                <?php if (!empty($errors['bandwidth_mbps_limit'])): ?>
+                                    <p class="form-error"><?= e($errors['bandwidth_mbps_limit']) ?></p>
+                                <?php endif; ?>
+                                <p class="form-hint">Use -1 for unlimited.</p>
+                            </div>
+
+                            <div>
+                                <label class="label" for="pids_limit">Process Limit (PIDs or -1)</label>
+                                <input class="input w-full" type="number" name="pids_limit" id="pids_limit" value="<?= e(old('pids_limit', '-1')) ?>" placeholder="-1">
+                                <?php if (!empty($errors['pids_limit'])): ?>
+                                    <p class="form-error"><?= e($errors['pids_limit']) ?></p>
+                                <?php endif; ?>
+                                <p class="form-hint">Use -1 for unlimited.</p>
+                            </div>
                         </div>
                     </div>
                 </div>

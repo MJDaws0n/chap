@@ -6,6 +6,7 @@
 
 const WebSocket = require('ws');
 const { spawn, exec } = require('child_process');
+const http = require('http');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
@@ -59,6 +60,9 @@ const PORTCHECK_IMAGES = [
 // Initialize storage manager
 const storage = new StorageManager(config.dataDir);
 storage.init();
+
+// Best-effort: restore any previously configured enforcers after a node restart.
+rehydrateAppEnforcersFromDisk();
 
 // Utility: safely normalize IDs coming from external sources
 function safeId(x) {
@@ -217,6 +221,269 @@ let isConnected = false;
 
 // Live logs WebSocket server (browser -> node)
 let liveLogsWs = null;
+
+// Runtime enforcement (bandwidth/storage) keyed by application UUID
+const appEnforcers = new Map();
+
+function dockerApiJson(method, pathAndQuery, options = {}) {
+    const timeout = Number.isFinite(options.timeout) ? options.timeout : 5000;
+    const body = options.body;
+
+    return new Promise((resolve, reject) => {
+        const req = http.request(
+            {
+                socketPath: '/var/run/docker.sock',
+                path: pathAndQuery,
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                timeout,
+            },
+            (res) => {
+                let data = '';
+                res.setEncoding('utf8');
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                    const code = res.statusCode || 0;
+                    if (code < 200 || code >= 300) {
+                        return reject(new Error(`Docker API error ${code}: ${data || res.statusMessage || 'unknown'}`));
+                    }
+                    if (!data) return resolve(null);
+                    try {
+                        resolve(JSON.parse(data));
+                    } catch (e) {
+                        reject(new Error(`Docker API JSON parse error: ${e.message}`));
+                    }
+                });
+            }
+        );
+
+        req.on('error', (err) => reject(err));
+        req.on('timeout', () => {
+            try { req.destroy(new Error('Docker API request timeout')); } catch {}
+        });
+
+        if (body !== undefined) {
+            try {
+                req.write(typeof body === 'string' ? body : JSON.stringify(body));
+            } catch (e) {
+                try { req.destroy(); } catch {}
+                return reject(e);
+            }
+        }
+        req.end();
+    });
+}
+
+function stopAppEnforcer(applicationId) {
+    const key = safeId(applicationId);
+    const enforcer = appEnforcers.get(key);
+    if (!enforcer) return;
+    try { clearInterval(enforcer.timer); } catch {}
+    appEnforcers.delete(key);
+}
+
+function normalizeAppLimits(appConfig) {
+    const cpuMilli = parseInt(appConfig.cpu_millicores_limit ?? appConfig.cpuMillicoresLimit, 10);
+    const ramMb = parseInt(appConfig.ram_mb_limit ?? appConfig.ramMbLimit, 10);
+    const storageMb = parseInt(appConfig.storage_mb_limit ?? appConfig.storageMbLimit, 10);
+    const bandwidthMbps = parseInt(appConfig.bandwidth_mbps_limit ?? appConfig.bandwidthMbpsLimit, 10);
+    const pids = parseInt(appConfig.pids_limit ?? appConfig.pidsLimit, 10);
+
+    const cpuCores = Number.isFinite(cpuMilli) && cpuMilli > 0 ? (cpuMilli / 1000) : null;
+    const memoryLimit = Number.isFinite(ramMb) && ramMb > 0 ? `${ramMb}m` : (appConfig.memory_limit ?? appConfig.memoryLimit ?? appConfig.ram_limit ?? appConfig.ramLimit);
+
+    return {
+        cpuCores,
+        memoryLimit,
+        storageMb: Number.isFinite(storageMb) && storageMb > 0 ? storageMb : null,
+        bandwidthMbps: Number.isFinite(bandwidthMbps) && bandwidthMbps > 0 ? bandwidthMbps : null,
+        pids: Number.isFinite(pids) && pids > 0 ? pids : null,
+    };
+}
+
+function startAppEnforcer(applicationId, appConfig, composeDir) {
+    const key = safeId(applicationId);
+    stopAppEnforcer(key);
+
+    const limits = normalizeAppLimits(appConfig);
+    const hasRuntimeLimits = Number.isFinite(limits.storageMb) || Number.isFinite(limits.bandwidthMbps);
+    if (!hasRuntimeLimits) return;
+
+    const composeProject = `chap-${dockerSafeName(key)}`;
+    const volumeRoot = storage.pathVolumeRoot(key);
+    const bandwidthLimitBps = Number.isFinite(limits.bandwidthMbps)
+        ? (limits.bandwidthMbps * 1000 * 1000) / 8
+        : null;
+
+    const state = {
+        timer: null,
+        paused: false,
+        lastPausedAt: 0,
+        lastBelowAt: 0,
+        prev: { ts: 0, rx: 0, tx: 0 },
+        lastStorageCheckAt: 0,
+    };
+
+    const pauseAll = async (containerIds, reason) => {
+        if (!containerIds.length) return;
+        if (state.paused) return;
+        const now = Date.now();
+        // Avoid rapid flapping.
+        if (now - state.lastPausedAt < 3000) return;
+        state.lastPausedAt = now;
+        state.paused = true;
+        state.lastBelowAt = 0;
+        console.warn(`[Enforcer] Pausing app ${key}: ${reason}`);
+        for (const id of containerIds) {
+            try { await execCommand(`docker pause ${dockerSafeName(id)}`, { timeout: 10000 }); } catch {}
+        }
+    };
+
+    const unpauseAll = async (containerIds, reason) => {
+        if (!containerIds.length) return;
+        if (!state.paused) return;
+        console.log(`[Enforcer] Unpausing app ${key}: ${reason}`);
+        for (const id of containerIds) {
+            try { await execCommand(`docker unpause ${dockerSafeName(id)}`, { timeout: 10000 }); } catch {}
+        }
+        state.paused = false;
+        state.lastBelowAt = 0;
+    };
+
+    const getProjectContainerIds = async () => {
+        try {
+            const out = await execCommand(
+                `docker ps -q --filter "label=com.docker.compose.project=${composeProject}"`,
+                { timeout: 8000 }
+            );
+            return String(out || '').split('\n').map(s => s.trim()).filter(Boolean);
+        } catch {
+            return [];
+        }
+    };
+
+    const poll = async () => {
+        const now = Date.now();
+        const containerIds = await getProjectContainerIds();
+        if (!containerIds.length) return;
+
+        // Storage enforcement (best-effort) based on persistent volume directory size.
+        if (Number.isFinite(limits.storageMb) && now - state.lastStorageCheckAt > 30000) {
+            state.lastStorageCheckAt = now;
+            try {
+                // BusyBox du output: <KB> <path>
+                const duOut = await execCommand(`du -sk ${volumeRoot}`, { timeout: 15000 });
+                const kb = parseInt(String(duOut || '').trim().split(/\s+/)[0], 10);
+                if (Number.isFinite(kb) && kb >= 0) {
+                    const usedMb = Math.ceil(kb / 1024);
+                    if (usedMb > limits.storageMb) {
+                        await pauseAll(containerIds, `storage limit exceeded (${usedMb}MB > ${limits.storageMb}MB)`);
+                        return;
+                    }
+                }
+            } catch {
+                // ignore
+            }
+        }
+
+        // Bandwidth enforcement (best-effort) based on Docker stats network totals.
+        if (Number.isFinite(bandwidthLimitBps) && bandwidthLimitBps > 0) {
+            let rx = 0;
+            let tx = 0;
+            for (const cid of containerIds) {
+                try {
+                    const stats = await dockerApiJson('GET', `/containers/${dockerSafeName(cid)}/stats?stream=false`, { timeout: 4000 });
+                    const nets = stats && stats.networks && typeof stats.networks === 'object' ? stats.networks : null;
+                    if (nets) {
+                        for (const v of Object.values(nets)) {
+                            if (!v) continue;
+                            if (Number.isFinite(v.rx_bytes)) rx += v.rx_bytes;
+                            if (Number.isFinite(v.tx_bytes)) tx += v.tx_bytes;
+                        }
+                    }
+                } catch {
+                    // ignore per-container failures
+                }
+            }
+
+            const prev = state.prev;
+            if (prev.ts && now > prev.ts) {
+                const dt = (now - prev.ts) / 1000;
+                if (dt > 0) {
+                    const rxBps = Math.max(0, (rx - prev.rx) / dt);
+                    const txBps = Math.max(0, (tx - prev.tx) / dt);
+                    const totalBps = rxBps + txBps;
+
+                    if (totalBps > bandwidthLimitBps) {
+                        await pauseAll(containerIds, `bandwidth limit exceeded (${Math.round(totalBps / 1024)}B/s > ${Math.round(bandwidthLimitBps / 1024)}B/s)`);
+                        state.prev = { ts: now, rx, tx };
+                        return;
+                    }
+
+                    // Hysteresis: only unpause once sustained below 85% for 10s.
+                    const below = totalBps < (bandwidthLimitBps * 0.85);
+                    if (state.paused) {
+                        if (below) {
+                            if (!state.lastBelowAt) state.lastBelowAt = now;
+                            if (now - state.lastBelowAt > 10000) {
+                                await unpauseAll(containerIds, 'bandwidth back under limit');
+                            }
+                        } else {
+                            state.lastBelowAt = 0;
+                        }
+                    }
+                }
+            }
+
+            state.prev = { ts: now, rx, tx };
+        }
+    };
+
+    // Persist on disk so a node restart can rehydrate later (best-effort).
+    try {
+        const meta = {
+            application_id: key,
+            storage_mb_limit: limits.storageMb ?? null,
+            bandwidth_mbps_limit: limits.bandwidthMbps ?? null,
+        };
+        fs.writeFileSync(path.join(composeDir, 'chap.limits.json'), JSON.stringify(meta, null, 2), 'utf8');
+    } catch {}
+
+    state.timer = setInterval(() => {
+        poll().catch(() => {});
+    }, 5000);
+    appEnforcers.set(key, state);
+}
+
+function rehydrateAppEnforcersFromDisk() {
+    try {
+        const root = storage.dirs.compose;
+        if (!root || !fs.existsSync(root)) return;
+        const entries = fs.readdirSync(root).map(n => path.join(root, n));
+        for (const dir of entries) {
+            try {
+                const stat = fs.statSync(dir);
+                if (!stat.isDirectory()) continue;
+                const metaPath = path.join(dir, 'chap.limits.json');
+                if (!fs.existsSync(metaPath)) continue;
+                const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+                const appId = safeId(meta.application_id);
+                if (!appId) continue;
+                // Fake the appConfig shape expected by normalizeAppLimits.
+                startAppEnforcer(appId, {
+                    storage_mb_limit: meta.storage_mb_limit,
+                    bandwidth_mbps_limit: meta.bandwidth_mbps_limit,
+                }, dir);
+            } catch {
+                continue;
+            }
+        }
+    } catch {
+        // ignore
+    }
+}
 
 /**
  * Connect to the Chap server
@@ -810,16 +1077,21 @@ async function deployCompose(deploymentId, appConfig) {
     };
 
     // Enforce app-level resource caps by dividing them across all services.
-    // This prevents users from exceeding a 2GB/1CPU app limit by adding many containers.
+    // This prevents users from exceeding an app limit by adding many containers.
     const applyAppResourceCapsToCompose = (composeContent) => {
         const raw = String(composeContent || '');
         if (!raw.trim()) return raw;
 
-        // App-level limits come from the application config.
-        const cpuRaw = appConfig.cpu_limit ?? appConfig.cpuLimit ?? appConfig.cpu_limit_cores ?? appConfig.cpuLimitCores;
-        const memRaw = appConfig.memory_limit ?? appConfig.memoryLimit ?? appConfig.ram_limit ?? appConfig.ramLimit;
+        // Prefer numeric hierarchy limits if available.
+        const normalized = normalizeAppLimits(appConfig);
 
-        const cpuRequested = cpuRaw === null || cpuRaw === undefined ? null : parseFloat(String(cpuRaw).trim());
+        const cpuRaw = appConfig.cpu_limit ?? appConfig.cpuLimit ?? appConfig.cpu_limit_cores ?? appConfig.cpuLimitCores;
+        const memRawFallback = appConfig.memory_limit ?? appConfig.memoryLimit ?? appConfig.ram_limit ?? appConfig.ramLimit;
+        const memRaw = normalized.memoryLimit ?? memRawFallback;
+
+        const cpuRequested = normalized.cpuCores !== null
+            ? normalized.cpuCores
+            : (cpuRaw === null || cpuRaw === undefined ? null : parseFloat(String(cpuRaw).trim()));
         const cpuRequestedLimited = Number.isFinite(cpuRequested) && cpuRequested > 0;
 
         const maxCpu = Number.isFinite(security?.SECURITY_CONFIG?.maxCpus) ? security.SECURITY_CONFIG.maxCpus : null;
@@ -833,7 +1105,14 @@ async function deployCompose(deploymentId, appConfig) {
             : memRequestedBytes;
         const memLimited = Number.isFinite(memTotalBytes) && memTotalBytes > 0;
 
-        if (!cpuLimited && !memLimited) {
+        const pidsRequested = normalized.pids;
+        const maxPids = Number.isFinite(security?.SECURITY_CONFIG?.maxPids) ? security.SECURITY_CONFIG.maxPids : null;
+        const pidsTotal = Number.isFinite(pidsRequested) && pidsRequested > 0 && Number.isFinite(maxPids) && maxPids > 0
+            ? Math.min(pidsRequested, maxPids)
+            : (Number.isFinite(pidsRequested) && pidsRequested > 0 ? pidsRequested : null);
+        const pidsLimited = Number.isFinite(pidsTotal) && pidsTotal > 0;
+
+        if (!cpuLimited && !memLimited && !pidsLimited) {
             return raw;
         }
 
@@ -893,6 +1172,15 @@ async function deployCompose(deploymentId, appConfig) {
             memRemainderMiB = totalMiB - (perWeightMemMiB * totalWeight);
         }
 
+        // PIDs: distribute as ints.
+        let pidsRemainder = 0;
+        let perWeightPids = 0;
+        if (pidsLimited) {
+            const pidsTotalInt = Math.floor(pidsTotal);
+            perWeightPids = Math.floor(pidsTotalInt / totalWeight);
+            pidsRemainder = pidsTotalInt - (perWeightPids * totalWeight);
+        }
+
         for (const entry of weights) {
             const { name, service, weight } = entry;
 
@@ -944,6 +1232,25 @@ async function deployCompose(deploymentId, appConfig) {
                 service.memswap_limit = memStr;
             }
 
+            if (pidsLimited) {
+                let pidsForService = perWeightPids * weight;
+                if (pidsRemainder > 0) {
+                    const extra = Math.min(pidsRemainder, weight);
+                    pidsForService += extra;
+                    pidsRemainder -= extra;
+                }
+
+                if (pidsForService <= 0) pidsForService = 1;
+
+                service.deploy = service.deploy && typeof service.deploy === 'object' ? service.deploy : {};
+                service.deploy.resources = service.deploy.resources && typeof service.deploy.resources === 'object' ? service.deploy.resources : {};
+                service.deploy.resources.limits = service.deploy.resources.limits && typeof service.deploy.resources.limits === 'object' ? service.deploy.resources.limits : {};
+                service.deploy.resources.limits.pids = pidsForService;
+
+                // Non-swarm compose key.
+                service.pids_limit = pidsForService;
+            }
+
             doc.services[name] = service;
         }
 
@@ -955,7 +1262,10 @@ async function deployCompose(deploymentId, appConfig) {
             const memMsg = memLimited
                 ? `${memRaw}${(Number.isFinite(memRequestedBytes) && memRequestedBytes > 0 && Number.isFinite(memTotalBytes) && memTotalBytes !== memRequestedBytes) ? ` (clamped to ${security?.SECURITY_CONFIG?.maxMemory || 'node max'})` : ''}`
                 : 'memory unlimited';
-            sendLog(deploymentId, `🔧 App resource caps applied (${cpuMsg}, ${memMsg}) across ${serviceEntries.length} service(s)`, 'info');
+            const pidsMsg = pidsLimited
+                ? `${pidsTotal} PIDs${(Number.isFinite(pidsRequested) && Number.isFinite(pidsTotal) && pidsTotal !== pidsRequested) ? ` (clamped from ${pidsRequested})` : ''}`
+                : 'PIDs unlimited';
+            sendLog(deploymentId, `🔧 App resource caps applied (${cpuMsg}, ${memMsg}, ${pidsMsg}) across ${serviceEntries.length} service(s)`, 'info');
         } catch (_) {}
 
         return yaml.stringify(doc);
@@ -1091,6 +1401,13 @@ async function deployCompose(deploymentId, appConfig) {
         console.warn(`[Agent] ⚠ Could not list containers:`, err.message);
     }
     
+    // Start/refresh runtime enforcement for this app (bandwidth/storage best-effort).
+    try {
+        startAppEnforcer(applicationId, appConfig, composeDir);
+    } catch (e) {
+        console.warn(`[Agent] ⚠️  Failed starting app enforcer: ${e.message}`);
+    }
+
     console.log(`[Agent] ✅ Docker Compose deployment completed (secured)`);
     sendLog(deploymentId, '✅ Docker Compose deployment completed successfully!', 'info');
     security.auditLog('compose_deploy_complete', { applicationId, deploymentId });
@@ -1147,6 +1464,8 @@ async function handleApplicationDelete(message) {
         : [];
     
     console.log(`[Agent] 🗑️  Deleting application: ${applicationUuid}`);
+
+    stopAppEnforcer(applicationUuid);
 
     // Acknowledge receipt so the server won't keep retrying this delete task.
     if (taskId) {
@@ -1291,6 +1610,8 @@ async function handleStop(message) {
     
     console.log(`[Agent] 🛑 Stopping application: ${applicationUuid}`);
 
+    stopAppEnforcer(applicationUuid);
+
     // Acknowledge receipt so the server won't keep retrying this stop task.
     if (taskId) {
         send('task:ack', {
@@ -1383,127 +1704,6 @@ async function handleRestart(message) {
             payload: {
                 application_uuid: applicationUuid,
                 task_id: taskId || undefined,
-                error: err.message
-            }
-        });
-    }
-}
-
-/**
- * Handle logs request (with security limits)
- */
-async function handleLogs(message) {
-    const payload = message.payload || {};
-    const applicationUuid = payload.application_uuid || payload.applicationId;
-    const requestedContainerId = payload.container_id ? safeId(payload.container_id) : null;
-    const tail = Math.min(Math.max(parseInt(payload.tail, 10) || 100, 1), 1000);
-    
-    // Security: Limit tail to reasonable amount
-    const safeTail = Math.min(Math.max(parseInt(tail, 10) || 100, 1), 1000);
-    
-    console.log(`[Agent] 📋 Fetching logs for application: ${applicationUuid}`);
-    
-    try {
-        let containers = [];
-        
-        // Try to get containers from compose project first
-        const composeDir = storage.getComposeDir(applicationUuid);
-        try {
-                // Use docker ps to get actual container names for the compose project
-                const safeAppId = String(applicationUuid).trim();
-                const psOutput = await execCommand(`docker ps -a --filter "label=com.docker.compose.project=chap-${safeAppId}" --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}"`);
-            containers = psOutput.trim().split('\n').filter(Boolean).map(line => {
-                const [id, fullName, image, status] = line.split('|');
-                // Extract service name from full container name (e.g., "chap-xxx-app-1" -> "app-1")
-                const nameParts = fullName.split('-');
-                const serviceName = nameParts.length > 1 ? nameParts.slice(-2).join('-') : fullName;
-                return {
-                    id: id,
-                    name: serviceName,
-                    fullName: fullName,
-                    status: status.toLowerCase().includes('up') ? 'running' : 'exited',
-                    image: image
-                };
-            });
-            console.log(`[Agent] Found ${containers.length} compose containers`);
-        } catch (err) {
-            console.log(`[Agent] No compose containers, trying single container`);
-        }
-        
-        // If no compose containers, try single container
-        if (containers.length === 0) {
-            try {
-                const containerName = `chap-${safeId(applicationUuid)}`;
-                const inspectOutput = await execCommand(`docker inspect ${containerName} --format '{{.Id}}|{{.Name}}|{{.State.Status}}|{{.Config.Image}}'`);
-                const [id, name, status, image] = inspectOutput.trim().split('|');
-                containers = [{
-                    id: id.substring(0, 12),
-                    name: name.replace(/^\//, ''),
-                    fullName: name.replace(/^\//, ''),
-                    status: status,
-                    image: image
-                }];
-            } catch {
-                // No containers found
-            }
-        }
-        
-        console.log(`[Agent] Total containers found: ${containers.length}`);
-        containers.forEach(c => console.log(`[Agent]   - ${c.name} (${c.id}): ${c.status}`));
-        
-        // If a specific container was requested, get its logs
-        let logs = [];
-        if (requestedContainerId) {
-            // Find the container - could be ID or name
-            const container = containers.find(c => 
-                c.id === requestedContainerId || 
-                c.id.startsWith(requestedContainerId) ||
-                c.name === requestedContainerId ||
-                c.fullName === requestedContainerId
-            );
-            
-            const targetContainer = container ? container.fullName : requestedContainerId;
-            console.log(`[Agent] Fetching logs for container: ${targetContainer}`);
-            
-            try {
-                const logOutput = await execCommand(`docker logs --tail ${safeTail} ${targetContainer} 2>&1`);
-                logs = logOutput.split('\n').filter(Boolean).map(line => ({
-                    timestamp: new Date().toISOString(),
-                    message: line,
-                    level: line.toLowerCase().includes('error') ? 'error' : 
-                           line.toLowerCase().includes('warn') ? 'warning' : 'info'
-                }));
-                console.log(`[Agent] Got ${logs.length} log lines`);
-            } catch (err) {
-                console.error(`[Agent] Failed to get logs for ${targetContainer}:`, err.message);
-            }
-        }
-        
-        // Send containers list and logs back to server
-        const requestId = payload.task_id || payload.request_id || null;
-        const responsePayload = {
-            application_uuid: applicationUuid,
-            containers: containers.map(c => ({
-                id: c.id,
-                name: c.name,
-                status: c.status,
-                image: c.image
-            })),
-            logs,
-            requested_container: requestedContainerId
-        };
-        if (requestId) responsePayload.task_id = requestId;
-
-        send('container:logs:response', { 
-            payload: responsePayload
-        });
-    } catch (err) {
-        console.error(`[Agent] Failed to get logs:`, err.message);
-        send('container:logs:response', { 
-            payload: {
-                application_uuid: applicationUuid,
-                containers: [],
-                logs: [],
                 error: err.message
             }
         });

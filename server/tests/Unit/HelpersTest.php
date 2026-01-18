@@ -8,6 +8,7 @@
 namespace Tests\Unit;
 
 use Tests\TestCase;
+use Chap\Config;
 
 class HelpersTest extends TestCase
 {
@@ -59,7 +60,7 @@ class HelpersTest extends TestCase
         $token = csrf_token();
         
         // Should be stored in session
-        $this->assertNotEmpty($_SESSION['_csrf_token'] ?? null, 'CSRF token should be in session');
+        $this->assertNotEmpty($_SESSION['csrf_token'] ?? null, 'CSRF token should be in session');
         
         // Same token should be returned on subsequent calls
         $this->assertEquals($token, csrf_token(), 'Same CSRF token should be returned');
@@ -94,16 +95,16 @@ class HelpersTest extends TestCase
      */
     public function testConfigFunction(): void
     {
-        // Set an env var
-        putenv('TEST_CONFIG_VAR=test_value');
-        $_ENV['TEST_CONFIG_VAR'] = 'test_value';
-        
-        // Should retrieve it
-        $this->assertEquals('test_value', config('TEST_CONFIG_VAR'));
-        
+        // Set env var used by Config
+        putenv('APP_NAME=Config Test');
+        $_ENV['APP_NAME'] = 'Config Test';
+        Config::reload();
+
+        $this->assertEquals('Config Test', config('app.name'));
+
         // Should return default for missing
-        $this->assertEquals('default', config('MISSING_VAR', 'default'));
-        $this->assertNull(config('MISSING_VAR'));
+        $this->assertEquals('default', config('app.missing', 'default'));
+        $this->assertNull(config('app.missing'));
     }
     
     /**
