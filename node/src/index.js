@@ -5,7 +5,7 @@
  */
 
 const WebSocket = require('ws');
-const { spawn, exec, execSync } = require('child_process');
+const { spawn, exec } = require('child_process');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');

@@ -404,7 +404,14 @@ class AuthController extends BaseController
             ]);
         }
 
-        // Log in user
+        // If MFA is enabled, require a TOTP challenge before creating a session.
+        if ((bool)$user->two_factor_enabled && !empty($user->two_factor_secret)) {
+            $_SESSION['mfa_pending_user_id'] = (int)$user->id;
+            $_SESSION['mfa_pending_started_at'] = time();
+            $_SESSION['mfa_pending_remember'] = 0;
+            $this->redirect('/mfa');
+        }
+
         AuthManager::login($user);
         ActivityLog::log('user.login', null, null, ['via' => 'github']);
 

@@ -54,6 +54,12 @@ class ApplicationController extends BaseApiController
             return;
         }
 
+        $buildPack = strtolower(trim((string)($data['build_pack'] ?? 'docker-compose')));
+        if (!in_array($buildPack, ['docker-compose', 'compose'], true)) {
+            $this->validationError(['build_pack' => 'Only docker-compose is supported']);
+            return;
+        }
+
         $application = Application::create([
             'uuid' => uuid(),
             'environment_id' => $environment->id,
@@ -61,7 +67,7 @@ class ApplicationController extends BaseApiController
             'description' => $data['description'] ?? null,
             'git_repository' => $data['git_repository'] ?? null,
             'git_branch' => $data['git_branch'] ?? 'main',
-            'build_pack' => $data['build_pack'] ?? 'dockerfile',
+            'build_pack' => 'docker-compose',
             'port' => $data['port'] ?? null,
             'status' => 'stopped',
         ]);
@@ -117,12 +123,22 @@ class ApplicationController extends BaseApiController
 
         $data = $this->all();
 
+        $buildPack = $application->build_pack;
+        if (array_key_exists('build_pack', $data)) {
+            $requested = strtolower(trim((string)$data['build_pack']));
+            if (!in_array($requested, ['docker-compose', 'compose'], true)) {
+                $this->validationError(['build_pack' => 'Only docker-compose is supported']);
+                return;
+            }
+            $buildPack = $requested === 'compose' ? 'docker-compose' : $requested;
+        }
+
         $application->update([
             'name' => $data['name'] ?? $application->name,
             'description' => $data['description'] ?? $application->description,
             'git_repository' => $data['git_repository'] ?? $application->git_repository,
             'git_branch' => $data['git_branch'] ?? $application->git_branch,
-            'build_pack' => $data['build_pack'] ?? $application->build_pack,
+            'build_pack' => $buildPack,
             'port' => $data['port'] ?? $application->port,
         ]);
 

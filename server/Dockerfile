@@ -36,8 +36,12 @@ RUN composer install --no-dev --optimize-autoloader --no-scripts
 # Copy application files
 COPY . /var/www/html
 
-# Regenerate autoloader with all files present
-RUN composer dump-autoload --optimize
+# The repository includes a vendor/ directory for convenience in some setups.
+# To guarantee image builds are reproducible and include composer.json dependencies,
+# remove any copied vendor/ and reinstall.
+RUN rm -rf vendor \
+    && composer install --no-dev --optimize-autoloader --no-scripts \
+    && composer dump-autoload --optimize
 
 # Create necessary directories
 RUN mkdir -p storage/logs storage/cache storage/sessions storage/uploads \

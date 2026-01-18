@@ -52,10 +52,6 @@ services:
       - DB_PASSWORD=${DB_PASSWORD:-chap_secret}
       
       - WS_PORT=8081
-      
-      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
-      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
-      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}
 
       # Human verification (captcha)
       - CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-none}
