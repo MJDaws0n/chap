@@ -5,8 +5,9 @@
   "description": "CurseForge modpack based server runtime.",
   "category": "Minecraft",
   "doc_url": "https://www.curseforge.com/minecraft/modpacks",
+  "chap_script": "accept-eula.json",
   "env_variables": {
-    "EULA": "TRUE",
+    "EULA": "FALSE",
     "CURSEFORGE_MODPACK": "",
     "SERVER_JAR_URL": "",
     "MEMORY": "{ram}M",

@@ -5,7 +5,9 @@
   "description": "Waterfall — a BungeeCord fork (proxy) for Minecraft networks.",
   "category": "Minecraft",
   "doc_url": "https://papermc.io/",
+  "chap_script": "accept-eula.json",
   "env_variables": {
+    "EULA": "FALSE",
     "MEMORY": "{ram}M",
     "WATERFALL_VERSION": "latest",
     "SERVER_JAR_URL": "",

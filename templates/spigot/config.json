@@ -5,8 +5,9 @@
   "description": "Spigot Minecraft server (optimized vanilla server implementation).",
   "category": "Minecraft",
   "doc_url": "https://www.spigotmc.org/wiki/spigot/",
+  "chap_script": "accept-eula.json",
   "env_variables": {
-    "EULA": "TRUE",
+    "EULA": "FALSE",
     "MINECRAFT_VERSION": "latest",
     "SERVER_JAR_URL": "",
     "MEMORY": "{ram}M",

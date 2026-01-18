@@ -8,6 +8,7 @@ services:
       SERVER_JAR_URL: "${SERVER_JAR_URL:-}"
       FORGE_VERSION: "${FORGE_VERSION:-latest}"
       MEMORY: "${MEMORY:-2G}"
+        EULA: "${EULA:-FALSE}"
       JAVA_EXTRA_ARGS: "${JAVA_EXTRA_ARGS:-}"
     ports:
       - "${MINECRAFT_PORT:-25565}:25565"

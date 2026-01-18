@@ -5,8 +5,9 @@
   "description": "Sponge plugin platform on a vanilla runtime (no Forge).",
   "category": "Minecraft",
   "doc_url": "https://www.spongepowered.org/",
+  "chap_script": "accept-eula.json",
   "env_variables": {
-    "EULA": "TRUE",
+    "EULA": "FALSE",
     "SERVER_JAR_URL": "",
     "SPONGE_VERSION": "latest",
     "MEMORY": "{ram}M",

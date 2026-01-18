@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
+      EULA: "${EULA:-FALSE}"
       VELOCITY_VERSION: "${VELOCITY_VERSION:-latest}"
       SERVER_JAR_URL: "${SERVER_JAR_URL:-}"
       MEMORY: "${MEMORY:-2G}"

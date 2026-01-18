@@ -5,8 +5,9 @@
   "description": "Paper — high performance fork of Spigot for Minecraft servers.",
   "category": "Minecraft",
   "doc_url": "https://papermc.io/",
+  "chap_script": "accept-eula.json",
   "env_variables": {
-    "EULA": "TRUE",
+    "EULA": "FALSE",
     "MINECRAFT_VERSION": "latest",
     "PAPER_VERSION": "latest",
     "SERVER_JAR_URL": "",

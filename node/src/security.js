@@ -62,8 +62,8 @@ function clampDockerMemory(requested, maxAllowed) {
  */
 const SECURITY_CONFIG = {
     // Maximum resource limits for containers
-    maxCpus: parseFloat(process.env.CHAP_MAX_CPUS || '2'),
-    maxMemory: process.env.CHAP_MAX_MEMORY || '2g',
+    maxCpus: parseFloat(process.env.CHAP_MAX_CPUS || '20'),
+    maxMemory: process.env.CHAP_MAX_MEMORY || '20g',
     maxPids: parseInt(process.env.CHAP_MAX_PIDS || '256', 10),
     
     // Network settings

@@ -874,11 +874,15 @@ async function deployCompose(deploymentId, appConfig) {
         }
 
         // Memory: distribute in bytes exactly.
-        let memRemainderBytes = 0;
-        let perWeightMemBytes = 0;
+        const mib = 1024 * 1024;
+        let memRemainderMiB = 0;
+        let perWeightMemMiB = 0;
         if (memLimited) {
-            perWeightMemBytes = Math.floor(memTotalBytes / totalWeight);
-            memRemainderBytes = memTotalBytes - (perWeightMemBytes * totalWeight);
+            // Compose expects memory values like "512m"/"2g"; distribute in whole MiB and round DOWN
+            // so the total applied never exceeds the application's cap.
+            const totalMiB = Math.floor(memTotalBytes / mib);
+            perWeightMemMiB = Math.floor(totalMiB / totalWeight);
+            memRemainderMiB = totalMiB - (perWeightMemMiB * totalWeight);
         }
 
         for (const entry of weights) {
@@ -905,27 +909,31 @@ async function deployCompose(deploymentId, appConfig) {
             }
 
             if (memLimited) {
-                let memBytes = perWeightMemBytes * weight;
-                if (memRemainderBytes > 0) {
-                    const extra = Math.min(memRemainderBytes, weight);
-                    memBytes += extra;
-                    memRemainderBytes -= extra;
+                let memMiB = perWeightMemMiB * weight;
+                if (memRemainderMiB > 0) {
+                    const extra = Math.min(memRemainderMiB, weight);
+                    memMiB += extra;
+                    memRemainderMiB -= extra;
                 }
+
+                // If the app memory cap is extremely small relative to service count, some services may
+                // round down to 0 MiB. In that case, set a tiny 1 MiB cap to avoid "unlimited" services,
+                // even though it's not a realistic production configuration.
+                if (memMiB <= 0) memMiB = 1;
+
+                const memStr = `${memMiB}m`;
 
                 service.deploy = service.deploy && typeof service.deploy === 'object' ? service.deploy : {};
                 service.deploy.resources = service.deploy.resources && typeof service.deploy.resources === 'object' ? service.deploy.resources : {};
                 service.deploy.resources.limits = service.deploy.resources.limits && typeof service.deploy.resources.limits === 'object' ? service.deploy.resources.limits : {};
 
-                // Use bytes string to avoid rounding up to MiB and accidentally exceeding the app cap.
-                service.deploy.resources.limits.memory = String(Math.max(0, memBytes));
-
-                // Best-effort: prevent swap abuse as well.
-                service.memswap_limit = String(Math.max(0, memBytes));
+                // Compose expects a Docker-compatible memory string.
+                service.deploy.resources.limits.memory = memStr;
 
                 // Also set non-swarm compose keys.
                 // `mem_limit`/`memswap_limit` are accepted by docker compose and translate to container HostConfig.*.
-                service.mem_limit = Math.max(0, Math.floor(memBytes));
-                service.memswap_limit = Math.max(0, Math.floor(memBytes));
+                service.mem_limit = memStr;
+                service.memswap_limit = memStr;
             }
 
             doc.services[name] = service;

@@ -5,7 +5,9 @@
   "description": "A BungeeCord proxy for Minecraft server networks.",
   "category": "Minecraft",
   "doc_url": "https://www.spigotmc.org/wiki/bungeecord/",
+  "chap_script": "accept-eula.json",
   "env_variables": {
+    "EULA": "FALSE",
     "MEMORY": "{ram}M",
     "PROXY_VERSION": "latest",
     "SERVER_JAR_URL": "",

@@ -5,7 +5,9 @@
   "description": "Velocity proxy for Minecraft server networks.",
   "category": "Minecraft",
   "doc_url": "https://velocitypowered.com/",
+  "chap_script": "accept-eula.json",
   "env_variables": {
+    "EULA": "FALSE",
     "MEMORY": "{ram}M",
     "VELOCITY_VERSION": "latest",
     "SERVER_JAR_URL": "",

@@ -89,8 +89,8 @@ services:
       - CHAP_SERVER_URL=${CHAP_SERVER_URL:?CHAP_SERVER_URL is required - e.g. ws://your-server:8081}
       - CHAP_DATA_DIR=/data
       # Security settings
-      - CHAP_MAX_CPUS=${CHAP_MAX_CPUS:-2}
-      - CHAP_MAX_MEMORY=${CHAP_MAX_MEMORY:-2g}
+      - CHAP_MAX_CPUS=${CHAP_MAX_CPUS:-20}
+      - CHAP_MAX_MEMORY=${CHAP_MAX_MEMORY:-20g}
       - CHAP_MAX_PIDS=${CHAP_MAX_PIDS:-256}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

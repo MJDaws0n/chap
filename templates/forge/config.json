@@ -5,8 +5,9 @@
   "description": "Minecraft Forge (modded server runtime).",
   "category": "Minecraft",
   "doc_url": "https://files.minecraftforge.net/",
+  "chap_script": "accept-eula.json",
   "env_variables": {
-    "EULA": "TRUE",
+    "EULA": "FALSE",
     "SERVER_JAR_URL": "",
     "FORGE_VERSION": "latest",
     "MEMORY": "{ram}M",
