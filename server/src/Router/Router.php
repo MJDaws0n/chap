@@ -6,6 +6,7 @@ use Chap\Middleware\AuthMiddleware;
 use Chap\Middleware\AdminMiddleware;
 use Chap\Middleware\CsrfMiddleware;
 use Chap\Middleware\GuestMiddleware;
+use Chap\Middleware\ApiV2AuthMiddleware;
 
 /**
  * HTTP Router
@@ -22,6 +23,7 @@ class Router
         'csrf' => CsrfMiddleware::class,
         'guest' => GuestMiddleware::class,
         'api.auth' => AuthMiddleware::class, // API uses same auth for now
+        'api.v2' => ApiV2AuthMiddleware::class,
     ];
 
     /**

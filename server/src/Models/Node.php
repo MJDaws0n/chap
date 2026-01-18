@@ -12,7 +12,7 @@ class Node extends BaseModel
 {
     protected static string $table = 'nodes';
     protected static array $fillable = [
-        'team_id', 'name', 'description', 'logs_websocket_url', 'token', 'status', 
+        'team_id', 'name', 'description', 'logs_websocket_url', 'api_url', 'token', 'status', 
         'agent_version', 'docker_version', 'os_info', 'cpu_cores',
         'memory_total', 'disk_total', 'last_seen_at', 'settings', 'port_cursor'
     ];
@@ -22,6 +22,7 @@ class Node extends BaseModel
     public string $name = '';
     public ?string $description = null;
     public ?string $logs_websocket_url = null;
+    public ?string $api_url = null;
     public string $token = '';
     public string $status = 'pending';
     public ?string $agent_version = null;

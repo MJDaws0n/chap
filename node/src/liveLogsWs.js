@@ -13,6 +13,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const security = require('./security');
+const { makeNodeV2RequestHandler } = require('./nodeV2Http');
 
 const EXEC_LIMIT = {
     // per connection
@@ -672,6 +673,9 @@ function parseDockerTimestampLine(line) {
  * @param {(cmd: string, opts?: object) => Promise<string>} deps.execCommand
  * @param {(x: any) => string} deps.safeId
  * @param {(applicationUuid: string) => string | null | undefined} [deps.getComposeDir]
+ * @param {any} [deps.storage]
+ * @param {string} [deps.agentVersion]
+ * @param {() => boolean} [deps.isServerConnected]
  */
 function createLiveLogsWs(deps) {
      const { config, sendToServer, isServerConnected, execCommand, safeId, getComposeDir } = deps;
@@ -3243,6 +3247,15 @@ function createLiveLogsWs(deps) {
     function start() {
         if (browserWss) return;
 
+        const requestHandler = makeNodeV2RequestHandler({
+            config,
+            storage: deps.storage,
+            agentVersion: deps.agentVersion,
+            isServerConnected: deps.isServerConnected,
+            execCommand: deps.execCommand,
+            deployComposeForNodeApi: deps.deployComposeForNodeApi,
+        });
+
         const useSSL =
             config.browserWsSslCert &&
             config.browserWsSslKey &&
@@ -3254,7 +3267,7 @@ function createLiveLogsWs(deps) {
             const httpsServer = https.createServer({
                 cert: fs.readFileSync(config.browserWsSslCert),
                 key: fs.readFileSync(config.browserWsSslKey),
-            });
+            }, requestHandler);
             browserWss = new WebSocketServer({ server: httpsServer });
             httpsServer.listen(config.browserWsPort, config.browserWsHost, () => {
                 console.log(
@@ -3262,11 +3275,11 @@ function createLiveLogsWs(deps) {
                 );
             });
         } else {
-            browserWss = new WebSocketServer({
-                port: config.browserWsPort,
-                host: config.browserWsHost,
+            const httpServer = http.createServer(requestHandler);
+            browserWss = new WebSocketServer({ server: httpServer });
+            httpServer.listen(config.browserWsPort, config.browserWsHost, () => {
+                console.log(`[BrowserWS] Server started on ws://${config.browserWsHost}:${config.browserWsPort} (no SSL)`);
             });
-            console.log(`[BrowserWS] Server started on ws://${config.browserWsHost}:${config.browserWsPort} (no SSL)`);
         }
 
         // Ping-frame heartbeat

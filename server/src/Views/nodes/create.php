@@ -74,6 +74,19 @@
                 </div>
 
                 <div class="form-group">
+                    <label for="api_url" class="form-label">Node API URL <span class="text-muted">(optional)</span></label>
+                    <input
+                        type="text"
+                        id="api_url"
+                        name="api_url"
+                        class="input"
+                        placeholder="https://node.example.com:6002"
+                        value="<?= htmlspecialchars($old['api_url'] ?? '') ?>"
+                    >
+                    <p class="form-hint">Client-facing base URL for the Node API (used for /node/v2). If blank, Chap will attempt to derive it from the WebSocket URL.</p>
+                </div>
+
+                <div class="form-group">
                     <label class="form-label">Port Ranges <span class="text-danger">*</span></label>
                     <div id="port-ranges" class="flex flex-col gap-2">
                         <?php foreach ($oldPortRanges as $i => $v): ?>

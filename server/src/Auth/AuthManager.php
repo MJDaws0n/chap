@@ -111,6 +111,17 @@ class AuthManager
     }
 
     /**
+     * Authenticate a user for the current request without creating or validating a browser session.
+     *
+     * This is used for Bearer-token API authentication.
+     */
+    public static function authenticateOnce(User $user): void
+    {
+        self::$user = $user;
+        self::$checked = true;
+    }
+
+    /**
      * Get authenticated user ID
      */
     public static function id(): ?int

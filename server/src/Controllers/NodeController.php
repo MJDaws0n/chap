@@ -100,6 +100,7 @@ class NodeController extends BaseController
             'name' => $data['name'],
             'description' => $data['description'] ?? null,
             'logs_websocket_url' => $data['logs_websocket_url'] ?? null,
+            'api_url' => $data['api_url'] ?? null,
             'token' => $token,
             'status' => 'pending',
         ]);
@@ -210,6 +211,7 @@ class NodeController extends BaseController
             'name' => $data['name'] ?? $node->name,
             'description' => $data['description'] ?? $node->description,
             'logs_websocket_url' => $data['logs_websocket_url'] ?? $node->logs_websocket_url,
+            'api_url' => $data['api_url'] ?? $node->api_url,
         ]);
 
         PortAllocator::saveRangesForNode((int)$node->id, $parsed['ranges']);

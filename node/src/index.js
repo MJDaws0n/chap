@@ -891,6 +891,40 @@ async function handleDeploy(message) {
     }
 }
 
+// Node API v2: allow an authorized client to trigger a deploy directly on the node.
+// This uses the same compose deploy pipeline as the server-driven task.
+async function deployComposeForNodeApi({ deployment_id, application }) {
+    const deploymentId = String(deployment_id || '').trim();
+    const appConfig = application && typeof application === 'object' ? application : null;
+    if (!deploymentId || !appConfig) {
+        return { ok: false, error: 'Invalid request' };
+    }
+
+    try {
+        const buildPack = String(appConfig.build_pack || 'docker-compose').trim();
+        if (buildPack !== 'docker-compose' && buildPack !== 'compose') {
+            throw new Error(`Unsupported build_pack "${buildPack}" (compose-only)`);
+        }
+
+        sendLog(deploymentId, '🚀 Node API deployment started', 'info');
+        await deployCompose(deploymentId, appConfig);
+        return { ok: true };
+    } catch (err) {
+        const msg = String(err && err.message ? err.message : err);
+        sendLog(deploymentId, `❌ Node API deployment failed: ${msg}`, 'error');
+        try {
+            send('task:failed', {
+                payload: {
+                    deployment_id: deploymentId,
+                    error: msg,
+                    source: 'node_api',
+                }
+            });
+        } catch {}
+        return { ok: false, error: msg };
+    }
+}
+
 /**
  * Deploy Docker Compose (with security hardening)
  */
@@ -2134,6 +2168,9 @@ if (!liveLogsWs) {
         isServerConnected: () => isConnected && ws && ws.readyState === WebSocket.OPEN,
         execCommand,
         safeId,
+        storage,
+        agentVersion: AGENT_VERSION,
+        deployComposeForNodeApi,
     });
 }
 liveLogsWs.start();

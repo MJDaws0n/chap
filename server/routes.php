@@ -153,6 +153,8 @@ Route::middleware(['auth'], function() {
     // Settings
     Route::get('/settings', 'SettingsController@index');
     Route::post('/settings', 'SettingsController@update');
+    Route::post('/settings/api-tokens', 'SettingsController@createApiToken');
+    Route::post('/settings/api-tokens/{tokenId}/revoke', 'SettingsController@revokeApiToken');
     
     // Activity Logs
     Route::get('/activity', 'ActivityController@index');
@@ -243,6 +245,31 @@ Route::prefix('/api/v1', function() {
         // Templates
         Route::get('/templates', 'Api\TemplateController@index');
         Route::get('/templates/{slug}', 'Api\TemplateController@show');
+    });
+});
+
+// Client API v2 (proposed in API.md)
+Route::prefix('/api/v2', function() {
+    // Public
+    Route::get('/health', 'ApiV2\\HealthController@health');
+    Route::get('/capabilities', 'ApiV2\\HealthController@capabilities');
+    Route::post('/auth/session', 'ApiV2\\AuthController@session');
+
+    // Protected (Bearer token)
+    Route::middleware(['api.v2'], function() {
+        Route::get('/me', 'ApiV2\\MeController@show');
+        Route::get('/teams', 'ApiV2\\TeamsController@index');
+        Route::post('/teams/{team_id}/select', 'ApiV2\\TeamsController@select');
+
+        Route::get('/auth/tokens', 'ApiV2\\AuthController@listTokens');
+        Route::post('/auth/tokens', 'ApiV2\\AuthController@createToken');
+        Route::delete('/auth/tokens/{token_id}', 'ApiV2\\AuthController@revokeToken');
+
+        Route::get('/projects', 'ApiV2\\ProjectsController@index');
+
+        Route::get('/nodes', 'ApiV2\\NodesController@index');
+        Route::get('/nodes/{node_id}', 'ApiV2\\NodesController@show');
+        Route::post('/nodes/{node_id}/sessions', 'ApiV2\\NodesController@mintSession');
     });
 });
 

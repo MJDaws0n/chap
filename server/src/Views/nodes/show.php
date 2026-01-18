@@ -90,6 +90,14 @@ $statusBadge = [
                         </dd>
                     </div>
                     <div class="flex items-center justify-between gap-4 text-sm">
+                        <dt class="text-tertiary">Node API URL</dt>
+                        <dd class="m-0 break-all">
+                            <?= $node->api_url
+                                ? '<code>' . e($node->api_url) . '</code>'
+                                : '<span class="text-secondary">Not configured</span>' ?>
+                        </dd>
+                    </div>
+                    <div class="flex items-center justify-between gap-4 text-sm">
                         <dt class="text-tertiary">Last Seen</dt>
                         <dd class="m-0"><?= $node->last_seen_at ? time_ago($node->last_seen_at) : '<span class="text-secondary">Never</span>' ?></dd>
                     </div>
@@ -129,6 +137,19 @@ $statusBadge = [
                                 placeholder="wss://node.example.com:6002"
                                 value="<?= e($node->logs_websocket_url ?? '') ?>"
                             >
+                        </div>
+
+                        <div class="form-group">
+                            <label for="api_url" class="form-label">Node API URL</label>
+                            <input
+                                type="text"
+                                id="api_url"
+                                name="api_url"
+                                class="input"
+                                placeholder="https://node.example.com:6002"
+                                value="<?= e($node->api_url ?? '') ?>"
+                            >
+                            <p class="text-xs text-tertiary mt-2">Base URL used for client Node API calls (e.g. /node/v2/health).</p>
                         </div>
 
                         <div class="form-group">

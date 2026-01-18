@@ -135,9 +135,11 @@ Examples:
 - `databases:read`, `databases:write`
 - `nodes:read`
 - `nodes:session:mint` (ability to mint node access tokens)
+- `containers:read`, `containers:write`
 - `files:read`, `files:write`, `files:delete`
 - `exec:run` (interactive exec)
 - `volumes:read`, `volumes:write`
+- `metrics:read`
 - `activity:read`
 - `webhooks:read`, `webhooks:write`
 - `git_sources:read`, `git_sources:write`
@@ -551,8 +553,16 @@ Returns supported features: build engines, filesystem providers, metrics availab
 #### GET `/node/v2/applications`
 Lists applications the token is allowed to see (often constrained to one app).
 
+Implementation notes:
+- Requires `applications:read`.
+- If the token has `constraints.application_id`, only that app is returned.
+
 #### GET `/node/v2/applications/{application_id}/status`
 Includes containers, health, resource usage summary.
+
+Implementation notes:
+- Requires `applications:read`.
+- Currently returns a best-effort view of Chap-managed containers (`chap.managed=true`) for that application.
 
 ---
 
@@ -577,8 +587,18 @@ Response:
 { "job_id": "job_...", "status": "running" }
 ```
 
+Implementation notes:
+- Requires `applications:deploy`.
+- This endpoint is “advanced”: the node agent currently expects the `application` object in the same shape as the server’s `task:deploy` payload (compose-only). The simplified `source/build/limits` shape may be added later.
+
+#### GET `/node/v2/deployments/{deployment_id}`
+Returns a best-effort job status for deployments started via the Node API.
+
 #### POST `/node/v2/deployments/{deployment_id}:cancel`
 Attempts graceful cancel; returns `409` if too late.
+
+Implementation notes:
+- The current agent cannot cancel mid-flight; this returns `409` (best-effort no-op).
 
 ---
 
@@ -587,18 +607,37 @@ Attempts graceful cancel; returns `409` if too late.
 #### GET `/node/v2/containers`
 Optional filter: `filter[application_id]`.
 
+Implementation notes:
+- Requires `containers:read`.
+- Only returns Chap-managed containers (`chap.managed=true`).
+
 #### GET `/node/v2/containers/{container_id}`
+
+Implementation notes:
+- Requires `containers:read`.
+- Access is further limited by `constraints.application_id` (when present).
 
 #### POST `/node/v2/containers/{container_id}:restart`
 #### POST `/node/v2/containers/{container_id}:stop`
+
+Implementation notes:
+- Requires `containers:write`.
 
 #### GET `/node/v2/containers/{container_id}/logs`
 Query:
 - `since` (RFC3339)
 - `tail` (default 200)
 
+Implementation notes:
+- Requires `logs:read`.
+- Response is currently JSON: `{ "data": { "text": "..." } }`.
+
 #### GET `/node/v2/containers/{container_id}/logs/stream` (SSE)
 Streaming logs.
+
+Implementation notes:
+- Requires `logs:stream`.
+- Emits SSE events `meta`, `log`, `stderr`, `end`.
 
 ---
 
@@ -676,8 +715,11 @@ Security requirements:
 ### 6.7 Volumes
 
 #### GET `/node/v2/volumes`
-#### POST `/node/v2/volumes`
-Creates a volume (if allowed).
+Lists filesystem-backed volume directories for the token’s `constraints.application_id`.
+
+Implementation notes:
+- Requires `volumes:read`.
+- This is currently the on-disk volume directory view (not Docker named volumes).
 
 #### POST `/node/v2/volumes/{volume_id}:attach`
 #### POST `/node/v2/volumes/{volume_id}:detach`
@@ -692,8 +734,16 @@ Creates a snapshot artifact.
 #### GET `/node/v2/metrics/host`
 CPU, memory, disk, load, network.
 
+Implementation notes:
+- Requires `metrics:read`.
+- Disk usage is best-effort.
+
 #### GET `/node/v2/metrics/containers`
 Per-container CPU/mem IO.
+
+Implementation notes:
+- Requires `metrics:read`.
+- Currently returns Docker’s human-formatted stats fields (best-effort) for Chap-managed containers.
 
 #### GET `/node/v2/metrics/containers/{container_id}`
 
