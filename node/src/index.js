@@ -554,6 +554,15 @@ function handleMessage(message) {
     switch (message.type) {
         case 'server:auth:success':
             console.log('[Agent] Successfully authenticated with server');
+            try {
+                const nodeUuid = String((message.payload && message.payload.node_id) || '').trim();
+                if (nodeUuid) {
+                    config.nodeId = nodeUuid;
+                    console.log(`[Agent] Node UUID from server: ${nodeUuid}`);
+                }
+            } catch {
+                // ignore
+            }
             // Send system info and start heartbeat
             sendSystemInfo();
             startHeartbeat();

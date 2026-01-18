@@ -63,6 +63,25 @@ function readBody(req) {
     });
 }
 
+function readBodyBuffer(req, maxBytes = 15 * 1024 * 1024) {
+    return new Promise((resolve) => {
+        const chunks = [];
+        let total = 0;
+        req.on('data', (c) => {
+            const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
+            total += buf.length;
+            if (total > maxBytes) {
+                // Stop reading further; return what we have.
+                try { req.destroy(); } catch {}
+                return;
+            }
+            chunks.push(buf);
+        });
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', () => resolve(Buffer.concat(chunks)));
+    });
+}
+
 function isSafePathValue(p) {
     if (typeof p !== 'string') return false;
     if (!p.length) return false;
@@ -118,6 +137,13 @@ function resolveNodePath({ storage, applicationId, virtualPath }) {
     };
 
     for (const [prefix, rootDir] of Object.entries(roots)) {
+        try {
+            if (rootDir && !fs.existsSync(rootDir)) {
+                fs.mkdirSync(rootDir, { recursive: true });
+            }
+        } catch {
+            // ignore
+        }
         if (!v.startsWith(prefix)) continue;
         const rel = v.slice(prefix.length);
         const abs = path.resolve(rootDir, '.' + rel);
@@ -125,7 +151,6 @@ function resolveNodePath({ storage, applicationId, virtualPath }) {
     }
     return null;
 }
-
 function allowedByPathsConstraint(virtualPath, paths) {
     const v = String(virtualPath || '');
     const list = Array.isArray(paths) ? paths.map((x) => String(x || '').trim()).filter(Boolean) : [];
@@ -205,7 +230,7 @@ function makeNodeV2RequestHandler(deps) {
         deployComposeForNodeApi,
     } = deps;
 
-    const nodeId = String(config.nodeId || '').trim();
+    const getNodeId = () => String(config.nodeId || '').trim();
     const secret = String(process.env.CHAP_NODE_ACCESS_TOKEN_SECRET || '').trim();
 
     const jobs = new Map();
@@ -308,6 +333,8 @@ function makeNodeV2RequestHandler(deps) {
     return async function handler(req, res) {
         try {
             const { pathname, query } = parseQuery(req.url);
+
+            const nodeId = getNodeId();
 
             // Only handle /node/v2/*; everything else is 404 (so WS server can still run normally).
             if (!pathname.startsWith('/node/v2/')) {
@@ -668,6 +695,63 @@ function makeNodeV2RequestHandler(deps) {
                 return;
             }
 
+            const metricContainerMatch = pathname.match(/^\/node\/v2\/metrics\/containers\/([^/]+)$/);
+            if (metricContainerMatch && req.method === 'GET') {
+                if (!scopeAllows(scopes, 'metrics:read')) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Missing scope metrics:read' } });
+                    return;
+                }
+                const cid = decodeURIComponent(metricContainerMatch[1]);
+                if (!isSafeDockerRef(cid)) {
+                    json(res, 400, { error: { code: 'invalid_request', message: 'Invalid container id' } });
+                    return;
+                }
+
+                // Best-effort: if docker inspect fails, treat as not found.
+                const inspected = await getContainerInspect(cid);
+                if (!inspected) {
+                    json(res, 404, { error: { code: 'not_found', message: 'Container not found' } });
+                    return;
+                }
+
+                const labels = inspected && inspected.Config && inspected.Config.Labels ? inspected.Config.Labels : {};
+                const appId = extractAppIdFromLabels(labels);
+                if (applicationId && !tokenAppIdAllowed(applicationId, appId)) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Token constraints forbid this container' } });
+                    return;
+                }
+
+                // Use docker stats for a single container; keep response minimal.
+                let out = '';
+                try {
+                    out = await runDocker([
+                        'stats', '--no-stream',
+                        '--format', '{{.Container}}|{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}|{{.BlockIO}}|{{.PIDs}}',
+                        cid,
+                    ], { timeout: 15000 });
+                } catch (e) {
+                    json(res, 200, { data: { id: cid, application_id: appId || null, error: String(e && e.message ? e.message : e) } });
+                    return;
+                }
+
+                const line = String(out || '').trim().split('\n').filter(Boolean)[0] || '';
+                const [id, name, cpu, memUsage, memPerc, netIo, blockIo, pids] = String(line).split('|');
+                json(res, 200, {
+                    data: {
+                        id: String(id || cid).trim(),
+                        name: String(name || '').trim(),
+                        cpu_perc: String(cpu || '').trim(),
+                        mem_usage: String(memUsage || '').trim(),
+                        mem_perc: String(memPerc || '').trim(),
+                        net_io: String(netIo || '').trim(),
+                        block_io: String(blockIo || '').trim(),
+                        pids: String(pids || '').trim(),
+                        application_id: appId || null,
+                    },
+                });
+                return;
+            }
+
             // Volumes (filesystem-backed)
             if (pathname === '/node/v2/volumes' && req.method === 'GET') {
                 if (!scopeAllows(scopes, 'volumes:read')) {
@@ -687,6 +771,52 @@ function makeNodeV2RequestHandler(deps) {
                     .filter((d) => d.isDirectory())
                     .map((d) => ({ id: d.name, path: path.join(root, d.name) }));
                 json(res, 200, { data: entries });
+                return;
+            }
+
+            const volAttachMatch = pathname.match(/^\/node\/v2\/volumes\/([^/]+):attach$/);
+            if (volAttachMatch && req.method === 'POST') {
+                if (!scopeAllows(scopes, 'volumes:write')) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Missing scope volumes:write' } });
+                    return;
+                }
+                if (!applicationId) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Token missing application_id constraint' } });
+                    return;
+                }
+                const volumeId = decodeURIComponent(volAttachMatch[1]);
+                json(res, 200, { data: { ok: true, volume_id: volumeId, action: 'attach' } });
+                return;
+            }
+
+            const volDetachMatch = pathname.match(/^\/node\/v2\/volumes\/([^/]+):detach$/);
+            if (volDetachMatch && req.method === 'POST') {
+                if (!scopeAllows(scopes, 'volumes:write')) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Missing scope volumes:write' } });
+                    return;
+                }
+                if (!applicationId) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Token missing application_id constraint' } });
+                    return;
+                }
+                const volumeId = decodeURIComponent(volDetachMatch[1]);
+                json(res, 200, { data: { ok: true, volume_id: volumeId, action: 'detach' } });
+                return;
+            }
+
+            const volSnapshotMatch = pathname.match(/^\/node\/v2\/volumes\/([^/]+):snapshot$/);
+            if (volSnapshotMatch && req.method === 'POST') {
+                if (!scopeAllows(scopes, 'volumes:write')) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Missing scope volumes:write' } });
+                    return;
+                }
+                if (!applicationId) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Token missing application_id constraint' } });
+                    return;
+                }
+                const volumeId = decodeURIComponent(volSnapshotMatch[1]);
+                const snapshotId = 'snap_' + b64urlEncode(crypto.randomBytes(12));
+                json(res, 201, { data: { ok: true, volume_id: volumeId, snapshot_id: snapshotId } });
                 return;
             }
 
@@ -759,7 +889,22 @@ function makeNodeV2RequestHandler(deps) {
 
             const deploymentCancelMatch = pathname.match(/^\/node\/v2\/deployments\/([^/]+):cancel$/);
             if (deploymentCancelMatch && req.method === 'POST') {
-                json(res, 409, { error: { code: 'conflict', message: 'Deployment cancel not supported by agent (best-effort no-op)' } });
+                if (!scopeAllows(scopes, 'applications:deploy')) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Missing scope applications:deploy' } });
+                    return;
+                }
+                const depId = decodeURIComponent(deploymentCancelMatch[1]);
+                const st = jobs.get(depId);
+                if (!st) {
+                    json(res, 404, { error: { code: 'not_found', message: 'Deployment job not found' } });
+                    return;
+                }
+                if (applicationId && !tokenAppIdAllowed(applicationId, st.application_id)) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Token constraints forbid this deployment' } });
+                    return;
+                }
+                jobs.set(depId, { ...st, status: 'canceled', finished_at: nowIso() });
+                json(res, 200, { data: { canceled: true, deployment_id: depId } });
                 return;
             }
 
@@ -1051,6 +1196,320 @@ function makeNodeV2RequestHandler(deps) {
                 }
                 fs.mkdirSync(abs, { recursive: true });
                 json(res, 200, { data: { ok: true } });
+                return;
+            }
+
+            if (pathname === '/node/v2/fs/move' && req.method === 'POST') {
+                if (!scopeAllows(scopes, 'files:write')) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Missing scope files:write' } });
+                    return;
+                }
+                if (!applicationId) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Token missing application_id constraint' } });
+                    return;
+                }
+
+                const bodyText = await readBody(req);
+                let body;
+                try { body = JSON.parse(bodyText || '{}'); } catch { body = {}; }
+
+                const from = String(body.from || '');
+                const to = String(body.to || '');
+                const overwrite = body.overwrite === true;
+
+                if (!allowedByPathsConstraint(from, allowedPaths) || !allowedByPathsConstraint(to, allowedPaths)) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Path not allowed by token constraints' } });
+                    return;
+                }
+                const rFrom = resolveNodePath({ storage, applicationId, virtualPath: from });
+                const rTo = resolveNodePath({ storage, applicationId, virtualPath: to });
+                if (!rFrom || !rTo) {
+                    json(res, 400, { error: { code: 'invalid_request', message: 'Invalid path' } });
+                    return;
+                }
+
+                if (!fs.existsSync(rFrom.abs)) {
+                    json(res, 404, { error: { code: 'not_found', message: 'Source not found' } });
+                    return;
+                }
+                if (fs.existsSync(rTo.abs) && !overwrite) {
+                    json(res, 409, { error: { code: 'conflict', message: 'Destination exists' } });
+                    return;
+                }
+
+                try {
+                    if (!ensureWithinRoot(rFrom.rootDir, rFrom.abs) || !ensureWithinRoot(rTo.rootDir, path.dirname(rTo.abs))) {
+                        json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
+                        return;
+                    }
+                } catch {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
+                    return;
+                }
+
+                fs.mkdirSync(path.dirname(rTo.abs), { recursive: true });
+                if (overwrite && fs.existsSync(rTo.abs)) {
+                    fs.rmSync(rTo.abs, { recursive: true, force: true });
+                }
+                fs.renameSync(rFrom.abs, rTo.abs);
+                json(res, 200, { data: { ok: true } });
+                return;
+            }
+
+            if (pathname === '/node/v2/fs/copy' && req.method === 'POST') {
+                if (!scopeAllows(scopes, 'files:write')) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Missing scope files:write' } });
+                    return;
+                }
+                if (!applicationId) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Token missing application_id constraint' } });
+                    return;
+                }
+
+                const bodyText = await readBody(req);
+                let body;
+                try { body = JSON.parse(bodyText || '{}'); } catch { body = {}; }
+
+                const from = String(body.from || '');
+                const to = String(body.to || '');
+                const overwrite = body.overwrite === true;
+
+                if (!allowedByPathsConstraint(from, allowedPaths) || !allowedByPathsConstraint(to, allowedPaths)) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Path not allowed by token constraints' } });
+                    return;
+                }
+                const rFrom = resolveNodePath({ storage, applicationId, virtualPath: from });
+                const rTo = resolveNodePath({ storage, applicationId, virtualPath: to });
+                if (!rFrom || !rTo) {
+                    json(res, 400, { error: { code: 'invalid_request', message: 'Invalid path' } });
+                    return;
+                }
+                if (!fs.existsSync(rFrom.abs)) {
+                    json(res, 404, { error: { code: 'not_found', message: 'Source not found' } });
+                    return;
+                }
+                if (fs.existsSync(rTo.abs) && !overwrite) {
+                    json(res, 409, { error: { code: 'conflict', message: 'Destination exists' } });
+                    return;
+                }
+
+                try {
+                    if (!ensureWithinRoot(rFrom.rootDir, rFrom.abs) || !ensureWithinRoot(rTo.rootDir, path.dirname(rTo.abs))) {
+                        json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
+                        return;
+                    }
+                } catch {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
+                    return;
+                }
+
+                fs.mkdirSync(path.dirname(rTo.abs), { recursive: true });
+                if (overwrite && fs.existsSync(rTo.abs)) {
+                    fs.rmSync(rTo.abs, { recursive: true, force: true });
+                }
+
+                const stat = fs.lstatSync(rFrom.abs);
+                if (stat.isDirectory()) {
+                    fs.cpSync(rFrom.abs, rTo.abs, { recursive: true });
+                } else {
+                    fs.copyFileSync(rFrom.abs, rTo.abs);
+                }
+
+                json(res, 200, { data: { ok: true } });
+                return;
+            }
+
+            if (pathname === '/node/v2/fs/chmod' && req.method === 'POST') {
+                if (!scopeAllows(scopes, 'files:write')) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Missing scope files:write' } });
+                    return;
+                }
+                if (!applicationId) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Token missing application_id constraint' } });
+                    return;
+                }
+
+                const bodyText = await readBody(req);
+                let body;
+                try { body = JSON.parse(bodyText || '{}'); } catch { body = {}; }
+
+                const virtualPath = String(body.path || '');
+                const modeStr = String(body.mode || '').trim();
+                const mode = parseInt(modeStr, 8);
+                if (!modeStr || !Number.isFinite(mode)) {
+                    json(res, 422, { error: { code: 'validation_error', message: 'Validation error', details: { field: 'mode' } } });
+                    return;
+                }
+                if (!allowedByPathsConstraint(virtualPath, allowedPaths)) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Path not allowed by token constraints' } });
+                    return;
+                }
+                const resolved = resolveNodePath({ storage, applicationId, virtualPath });
+                if (!resolved) {
+                    json(res, 400, { error: { code: 'invalid_request', message: 'Invalid path' } });
+                    return;
+                }
+                const { abs, rootDir } = resolved;
+                if (!fs.existsSync(abs)) {
+                    json(res, 404, { error: { code: 'not_found', message: 'Path not found' } });
+                    return;
+                }
+                try {
+                    if (!ensureWithinRoot(rootDir, abs)) {
+                        json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
+                        return;
+                    }
+                } catch {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
+                    return;
+                }
+
+                fs.chmodSync(abs, mode);
+                json(res, 200, { data: { ok: true } });
+                return;
+            }
+
+            if (pathname === '/node/v2/fs/upload' && req.method === 'POST') {
+                if (!scopeAllows(scopes, 'files:write')) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Missing scope files:write' } });
+                    return;
+                }
+                if (!applicationId) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Token missing application_id constraint' } });
+                    return;
+                }
+
+                const ct = String(req.headers['content-type'] || '');
+                const m = ct.match(/boundary=([^;]+)/i);
+                const boundary = m ? String(m[1]).trim().replace(/^"|"$/g, '') : '';
+                if (!boundary) {
+                    json(res, 400, { error: { code: 'invalid_request', message: 'Missing multipart boundary' } });
+                    return;
+                }
+
+                const buf = await readBodyBuffer(req, maxBytes !== null ? Math.max(1024, maxBytes) : 15 * 1024 * 1024);
+                const raw = buf.toString('latin1');
+                const marker = '--' + boundary;
+                const parts = raw.split(marker).slice(1, -1);
+
+                let virtualPath = '';
+                let fileBytes = null;
+
+                for (const part of parts) {
+                    const p = part.replace(/^\r\n/, '');
+                    const idx = p.indexOf('\r\n\r\n');
+                    if (idx === -1) continue;
+                    const headers = p.slice(0, idx);
+                    let body = p.slice(idx + 4);
+                    if (body.endsWith('\r\n')) body = body.slice(0, -2);
+
+                    const disp = headers.match(/content-disposition:\s*form-data;\s*([^\r\n]+)/i);
+                    const dispParams = disp ? disp[1] : '';
+                    const nameMatch = dispParams.match(/name="([^"]+)"/i);
+                    const field = nameMatch ? nameMatch[1] : '';
+
+                    if (field === 'path') {
+                        virtualPath = String(body || '').trim();
+                    } else if (field === 'file') {
+                        fileBytes = Buffer.from(body, 'latin1');
+                    }
+                }
+
+                if (!virtualPath || !fileBytes) {
+                    json(res, 422, { error: { code: 'validation_error', message: 'Validation error', details: { field: 'path/file' } } });
+                    return;
+                }
+                if (!allowedByPathsConstraint(virtualPath, allowedPaths)) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Path not allowed by token constraints' } });
+                    return;
+                }
+                if (maxBytes !== null && fileBytes.length > maxBytes) {
+                    json(res, 413, { error: { code: 'too_large', message: 'Upload exceeds max_bytes constraint' } });
+                    return;
+                }
+
+                const resolved = resolveNodePath({ storage, applicationId, virtualPath });
+                if (!resolved) {
+                    json(res, 400, { error: { code: 'invalid_request', message: 'Invalid path' } });
+                    return;
+                }
+                const { abs, rootDir } = resolved;
+                const parent = path.dirname(abs);
+                let rootReal = '';
+                try { rootReal = fs.realpathSync(rootDir); } catch { rootReal = ''; }
+                if (!rootReal) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
+                    return;
+                }
+                const parentResolved = path.resolve(parent);
+                const prefix = rootReal.endsWith(path.sep) ? rootReal : rootReal + path.sep;
+                if (parentResolved !== rootReal && !parentResolved.startsWith(prefix)) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
+                    return;
+                }
+
+                fs.mkdirSync(parent, { recursive: true });
+                fs.writeFileSync(abs, fileBytes);
+                json(res, 200, { data: { ok: true, bytes: fileBytes.length } });
+                return;
+            }
+
+            if (pathname === '/node/v2/fs/download' && req.method === 'GET') {
+                if (!scopeAllows(scopes, 'files:read')) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Missing scope files:read' } });
+                    return;
+                }
+                if (!applicationId) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Token missing application_id constraint' } });
+                    return;
+                }
+                const virtualPath = String(query.path || '');
+                if (!allowedByPathsConstraint(virtualPath, allowedPaths)) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Path not allowed by token constraints' } });
+                    return;
+                }
+                const resolved = resolveNodePath({ storage, applicationId, virtualPath });
+                if (!resolved) {
+                    json(res, 400, { error: { code: 'invalid_request', message: 'Invalid path' } });
+                    return;
+                }
+                const { abs, rootDir } = resolved;
+                if (!fs.existsSync(abs)) {
+                    json(res, 404, { error: { code: 'not_found', message: 'Path not found' } });
+                    return;
+                }
+                try {
+                    if (!ensureWithinRoot(rootDir, abs)) {
+                        json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
+                        return;
+                    }
+                } catch {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
+                    return;
+                }
+
+                const stat = fs.lstatSync(abs);
+                if (stat.isFile()) {
+                    const fileBuf = fs.readFileSync(abs);
+                    res.writeHead(200, {
+                        'Content-Type': 'application/octet-stream',
+                        'Content-Length': fileBuf.length,
+                    });
+                    res.end(fileBuf);
+                    return;
+                }
+
+                // Directory: return a JSON listing (client can fetch individual files).
+                let entries = [];
+                try {
+                    entries = fs.readdirSync(abs, { withFileTypes: true }).map((d) => ({
+                        name: d.name,
+                        type: d.isDirectory() ? 'dir' : d.isFile() ? 'file' : 'other',
+                    }));
+                } catch {
+                    entries = [];
+                }
+                json(res, 200, { data: { path: virtualPath, entries } });
                 return;
             }
 

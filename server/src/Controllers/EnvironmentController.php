@@ -9,6 +9,7 @@ use Chap\Services\NodeAccess;
 use Chap\Services\ApplicationCleanupService;
 use Chap\Services\ResourceAllocator;
 use Chap\Services\ResourceHierarchy;
+use Chap\Services\LimitCascadeService;
 
 /**
  * Environment Controller
@@ -198,12 +199,23 @@ class EnvironmentController extends BaseController
 
         $data = $this->all();
 
-        $cpuMillicoresLimit = ResourceHierarchy::parseCpuMillicores((string)($data['cpu_limit_cores'] ?? '-1'));
+            $oldLimits = ResourceHierarchy::environmentConfigured($environment);
+
+            $cpuMillicoresLimit = ResourceHierarchy::parseCpuMillicores((string)($data['cpu_limit_cores'] ?? '-1'));
         $ramMbLimit = ResourceHierarchy::parseMb((string)($data['ram_mb_limit'] ?? '-1'));
         $storageMbLimit = ResourceHierarchy::parseMb((string)($data['storage_mb_limit'] ?? '-1'));
         $portLimit = ResourceHierarchy::parseIntOrAuto((string)($data['port_limit'] ?? '-1'));
         $bandwidthLimit = ResourceHierarchy::parseIntOrAuto((string)($data['bandwidth_mbps_limit'] ?? '-1'));
         $pidsLimit = ResourceHierarchy::parseIntOrAuto((string)($data['pids_limit'] ?? '-1'));
+
+            $newLimits = [
+                'cpu_millicores' => $cpuMillicoresLimit,
+                'ram_mb' => $ramMbLimit,
+                'storage_mb' => $storageMbLimit,
+                'ports' => $portLimit,
+                'bandwidth_mbps' => $bandwidthLimit,
+                'pids' => $pidsLimit,
+            ];
 
         $restrictNodes = !empty($data['restrict_nodes']);
         $nodeIds = $data['allowed_node_ids'] ?? [];
@@ -282,6 +294,19 @@ class EnvironmentController extends BaseController
             'pids_limit' => $pidsLimit,
             'allowed_node_ids' => $restrictNodes ? NodeAccess::encodeNodeIds($nodeIds) : null,
         ]);
+
+            if (LimitCascadeService::anyReduction($oldLimits, $newLimits)) {
+                $enforced = LimitCascadeService::enforceUnderEnvironment($environment);
+                $apps = LimitCascadeService::applicationIdsForEnvironment((int)$environment->id);
+                $redeploy = LimitCascadeService::redeployApplications($apps, $this->user, 'limits');
+
+                $details = [];
+                if (($enforced['changed_fields'] ?? 0) > 0) {
+                    $details[] = 'auto-adjusted app limits';
+                }
+                $details[] = 'redeploy started: ' . ($redeploy['started'] ?? 0);
+                flash('info', 'Limits reduced: ' . implode(', ', $details));
+            }
 
         if ($this->isApiRequest()) {
             $this->json(['environment' => $environment->toArray()]);

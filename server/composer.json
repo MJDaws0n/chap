@@ -1,6 +1,7 @@
 {
     "name": "chap/server",
     "description": "Chap - Self-hosted deployment platform server",
+    "version": "0.1.0",
     "type": "project",
     "license": "MIT",
     "autoload": {

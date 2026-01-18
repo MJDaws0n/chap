@@ -212,7 +212,7 @@
             <div class="card-body">
                 <div class="flex items-center justify-between gap-4">
                     <span class="text-secondary text-sm">Server Version</span>
-                    <code><?= e(\Chap\Config::SERVER_VERSION) ?></code>
+                    <code><?= e(\Chap\Config::serverVersion()) ?></code>
                 </div>
             </div>
         </div>

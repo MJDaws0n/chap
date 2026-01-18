@@ -32,7 +32,7 @@ unset($_SESSION['_errors'], $_SESSION['_old_input']);
     </div>
 
     <div class="w-full max-w-2xl">
-        <form action="/environments/<?= e($environment->uuid) ?>" method="POST" class="card card-glass">
+        <form action="/environments/<?= e($environment->uuid) ?>" method="POST" class="card card-glass" data-confirm-resource-limits="1">
             <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
             <input type="hidden" name="_method" value="PUT">
 

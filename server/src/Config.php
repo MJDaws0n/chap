@@ -12,8 +12,29 @@ class Config
      *
      * Update this value when you release a new server version.
      */
-    public const SERVER_VERSION = '1.0.0';
+    public const SERVER_VERSION = '0.1.0';
 
+    /**
+     * Return server version.
+     * Priority: APP_VERSION env var -> composer.json "version" -> fallback const
+     */
+    public static function serverVersion(): string
+    {
+        $env = getenv('APP_VERSION');
+        if ($env !== false && $env !== '') {
+            return $env;
+        }
+
+        $composerPath = __DIR__ . '/../composer.json';
+        if (is_readable($composerPath)) {
+            $data = json_decode(file_get_contents($composerPath), true);
+            if (is_array($data) && !empty($data['version'])) {
+                return (string)$data['version'];
+            }
+        }
+
+        return self::SERVER_VERSION;
+    }
     private static array $config = [];
     private static bool $loaded = false;
 

@@ -259,7 +259,7 @@ $canEditResourceLimits = $canEditResourceLimits ?? false;
                     <h2 class="card-title">Configuration</h2>
                 </div>
                 <div class="card-body">
-                    <form method="POST" action="/applications/<?= $application->uuid ?>" id="config-form">
+                    <form method="POST" action="/applications/<?= $application->uuid ?>" id="config-form" data-confirm-resource-limits="1">
                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                         <input type="hidden" name="_method" value="PUT">
                         <input type="hidden" name="_redirect_tab" value="config">

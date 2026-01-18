@@ -11,7 +11,7 @@ class HealthController extends BaseApiV2Controller
         $this->ok([
             'status' => 'ok',
             'server_time' => gmdate('c'),
-            'version' => Config::SERVER_VERSION,
+            'version' => Config::serverVersion(),
         ]);
     }
 

@@ -26,7 +26,7 @@ unset($_SESSION['_old_input']);
 
     <div class="card">
         <div class="card-body">
-            <form method="POST" action="/admin/users/<?= (int)$editUser->id ?>" class="form" id="update-user-form">
+            <form method="POST" action="/admin/users/<?= (int)$editUser->id ?>" class="form" id="update-user-form" data-confirm-resource-limits="1">
                 <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                 <input type="hidden" name="_method" value="PUT">
 

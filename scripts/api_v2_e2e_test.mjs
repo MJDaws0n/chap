@@ -30,11 +30,17 @@ Run:
 const CONFIG = {
   baseUrl: 'http://localhost:8080',
 
+  // How strict should this runner be?
+  // - If you provide an "admin" PAT with broad scopes, set these to true.
+  // - If you provide a limited PAT, keep them false so 401/403 become SKIP.
+  expectAuthorized: true,
+  expectImplemented: true,
+
   // Auth: provide ONE of:
-  pat: '0899479da564fdd9f6cca782d8034aa5dc6c55b124cec8450db93eee33bc7ba9',
+  pat: '',
 
   // Node tests (optional)
-  applicationId: '091c054d-f7de-44ec-8a26-f11a56f6ec70',
+  applicationId: '',
   nodeId: '', // optional; otherwise first node from /api/v2/nodes
 };
 
@@ -206,7 +212,7 @@ function pick(obj, path, fallback = null) {
 }
 
 function printResult(r) {
-  const tag = r.ok ? 'PASS' : (r.status === 404 ? 'SKIP' : 'FAIL');
+  const tag = r.tag || (r.ok ? 'PASS' : (r.status === 404 ? 'SKIP' : 'FAIL'));
   const ms = fmtMs(r.durationMs ?? 0);
   console.log(`[${tag}] ${r.method} ${r.url} (${r.status || 'ERR'}, ${ms}) — ${r.name}`);
   if (!r.ok && r.status !== 404) {
@@ -215,6 +221,30 @@ function printResult(r) {
     const code = pick(r.json, 'error.code', null);
     if (code || msg) console.log(`  api_error: ${code || ''} ${msg || ''}`.trim());
   }
+}
+
+function tagFor({ ok, status }, { allow404Skip, allowAuthSkip }) {
+  if (ok) return 'PASS';
+  if (status === 404 && allow404Skip) return 'SKIP';
+  if ((status === 401 || status === 403) && allowAuthSkip) return 'SKIP';
+  return 'FAIL';
+}
+
+async function runStep(opts, policy = {}) {
+  const r = await httpRequest(opts);
+  const allow404Skip = policy.allow404Skip ?? !CONFIG.expectImplemented;
+  const allowAuthSkip = policy.allowAuthSkip ?? !CONFIG.expectAuthorized;
+  r.tag = tagFor(r, { allow404Skip, allowAuthSkip });
+  r.ok = r.tag === 'PASS';
+  printResult(r);
+  await sleep(policy.sleepMs ?? 150);
+  return r;
+}
+
+function requireId(id, label) {
+  if (id) return { ok: true, id };
+  console.log(`[SKIP] Missing required id for ${label}`);
+  return { ok: false, id: '' };
 }
 
 async function main() {
@@ -235,22 +265,19 @@ async function main() {
   if (!patLooksUnset) console.log(`Using PAT=${redact(existingPat)}`);
 
   // Basic health
-  results.push(await httpRequest({ name: 'server health', method: 'GET', url: `${API}/health` }));
-  results.push(await httpRequest({ name: 'server capabilities', method: 'GET', url: `${API}/capabilities` }));
-  for (const r of results.slice(-2)) printResult(r);
-  await sleep(150);
+  results.push(await runStep({ name: 'server health', method: 'GET', url: `${API}/health` }, { allowAuthSkip: false }));
+  results.push(await runStep({ name: 'server capabilities', method: 'GET', url: `${API}/capabilities` }, { allowAuthSkip: false }));
 
   // Auth session (optional)
   if (!token && email && password) {
-    const r = await httpRequest({
+    const r = await runStep({
       name: 'auth session',
       method: 'POST',
       url: `${API}/auth/session`,
       json: { email, password, ...(totp ? { totp } : {}) },
       expectStatus: 200,
-    });
+    }, { allowAuthSkip: false });
     results.push(r);
-    printResult(r);
 
     if (r.ok) {
       sessionToken = pick(r.json, 'access_token', '');
@@ -269,43 +296,37 @@ async function main() {
     process.exit(2);
   }
 
-  // Authenticated server calls
+  // Authenticated server calls (context discovery)
   for (const step of [
     { name: 'me', method: 'GET', path: '/me' },
     { name: 'teams', method: 'GET', path: '/teams' },
     { name: 'projects (limit=5)', method: 'GET', path: '/projects?page[limit]=5' },
     { name: 'nodes', method: 'GET', path: '/nodes' },
   ]) {
-    const r = await httpRequest({ name: step.name, method: step.method, url: `${API}${step.path}`, token, allowStatuses: [200, 401, 403, 404] });
+    const r = await runStep({ name: step.name, method: step.method, url: `${API}${step.path}`, token });
     results.push(r);
-    printResult(r);
-    await sleep(150);
   }
 
   // Select first team (best-effort)
   const teamsRes = results.find((x) => x.name === 'teams' && x.ok);
   const teamId = teamsRes ? (pick(teamsRes.json, 'data.0.uuid', '') || pick(teamsRes.json, 'data.0.id', '')) : '';
   if (teamId) {
-    const r = await httpRequest({ name: 'select team', method: 'POST', url: `${API}/teams/${encodeURIComponent(teamId)}/select`, token, allowStatuses: [200, 403, 404] });
+    const r = await runStep({ name: 'select team', method: 'POST', url: `${API}/teams/${encodeURIComponent(teamId)}/select`, token });
     results.push(r);
-    printResult(r);
-    await sleep(150);
   }
+
+  const projectsRes = results.find((x) => x.name === 'projects (limit=5)' && x.ok);
+  const projectId = projectsRes ? (pick(projectsRes.json, 'data.0.id', '') || pick(projectsRes.json, 'data.0.uuid', '')) : '';
+
+  const nodesRes = results.find((x) => x.name === 'nodes' && x.ok);
+  const nodeFromList = nodesRes ? (pick(nodesRes.json, 'data.0.id', '') || pick(nodesRes.json, 'data.0.uuid', '')) : '';
+  const nodeUrlFromList = nodesRes ? (pick(nodesRes.json, 'data.0.node_url', '') || '') : '';
 
   // Token lifecycle (only if we have a session token or a sufficiently scoped PAT)
   const tokenName = `e2e-${Date.now()}`;
-  const desiredScopes = [
-    'settings:read', 'settings:write',
-    'teams:read', 'teams:write',
-    'projects:read',
-    'nodes:read', 'nodes:session:mint',
-    'applications:read', 'applications:deploy',
-    'containers:read', 'containers:write',
-    'logs:read', 'logs:stream',
-    'files:read', 'files:write', 'files:delete',
-    'volumes:read',
-    'metrics:read',
-  ];
+  // Keep the requested scopes minimal here: this section is about *token management*.
+  // (Requesting broader scopes will 403 unless the caller token already has them.)
+  const desiredScopes = ['settings:read', 'settings:write'];
 
   const idempotencyKey = cryptoRandomUuid();
   const createPatReq = {
@@ -316,7 +337,7 @@ async function main() {
 
   // Create PAT
   {
-    const r1 = await httpRequest({
+    const r1 = await runStep({
       name: 'create PAT',
       method: 'POST',
       url: `${API}/auth/tokens`,
@@ -324,14 +345,11 @@ async function main() {
       headers: { 'Idempotency-Key': idempotencyKey },
       json: createPatReq,
       expectStatus: 201,
-      allowStatuses: [201, 403, 404],
-    });
+    }, { sleepMs: 200 });
     results.push(r1);
-    printResult(r1);
-    await sleep(200);
 
     // Idempotency replay
-    const r2 = await httpRequest({
+    const r2 = await runStep({
       name: 'create PAT (idempotent replay)',
       method: 'POST',
       url: `${API}/auth/tokens`,
@@ -339,11 +357,8 @@ async function main() {
       headers: { 'Idempotency-Key': idempotencyKey },
       json: createPatReq,
       expectStatus: 201,
-      allowStatuses: [201, 403, 404],
-    });
+    }, { sleepMs: 200 });
     results.push(r2);
-    printResult(r2);
-    await sleep(200);
 
     if (r1.ok) {
       const tokenId = pick(r1.json, 'token_id', '');
@@ -357,240 +372,290 @@ async function main() {
 
   // List PATs
   {
-    const r = await httpRequest({ name: 'list PATs', method: 'GET', url: `${API}/auth/tokens?page[limit]=10`, token, allowStatuses: [200, 403, 404] });
+    const r = await runStep({ name: 'list PATs', method: 'GET', url: `${API}/auth/tokens?page[limit]=10`, token });
     results.push(r);
-    printResult(r);
-    await sleep(150);
   }
 
   // Use the newly created PAT for a quick auth check, then revoke it
   if (createdPat && createdPat.token && createdPat.token_id) {
     const patToken = createdPat.token;
 
-    const rUse = await httpRequest({ name: 'PAT works (me)', method: 'GET', url: `${API}/me`, token: patToken, allowStatuses: [200, 401, 403] });
-    results.push(rUse);
-    printResult(rUse);
-    await sleep(150);
-
-    const rRevoke = await httpRequest({ name: 'revoke PAT', method: 'DELETE', url: `${API}/auth/tokens/${encodeURIComponent(createdPat.token_id)}`, token, allowStatuses: [200, 404, 403] });
-    results.push(rRevoke);
-    printResult(rRevoke);
-    await sleep(150);
-
-    const rAfter = await httpRequest({ name: 'revoked PAT rejected', method: 'GET', url: `${API}/me`, token: patToken, allowStatuses: [401, 403, 200] });
-    results.push(rAfter);
-    printResult(rAfter);
-    await sleep(150);
+    results.push(await runStep({ name: 'PAT works (me)', method: 'GET', url: `${API}/me`, token: patToken, expectStatus: 200 }, { sleepMs: 150 }));
+    results.push(await runStep({ name: 'revoke PAT', method: 'DELETE', url: `${API}/auth/tokens/${encodeURIComponent(createdPat.token_id)}`, token, expectStatus: 200 }, { sleepMs: 150 }));
+    results.push(await runStep({ name: 'revoked PAT rejected', method: 'GET', url: `${API}/me`, token: patToken, expectStatus: 401 }, { allowAuthSkip: false, sleepMs: 150 }));
   }
 
-  // Node tests (requires application_id)
+  // --- Full Server API sweep (from API.md) ---
+  // For endpoints that require IDs we don't have, we still hit them with a dummy id to ensure routing/404 behavior.
+  const dummy = {
+    projectId: projectId || '00000000-0000-0000-0000-000000000000',
+    environmentId: '00000000-0000-0000-0000-000000000000',
+    applicationId: (CONFIG.applicationId || '').trim() || '00000000-0000-0000-0000-000000000000',
+    deploymentId: `dep_${Date.now()}`,
+    databaseId: '00000000-0000-0000-0000-000000000000',
+    serviceId: '00000000-0000-0000-0000-000000000000',
+    templateSlug: 'minecraft-vanilla',
+    gitSourceId: '00000000-0000-0000-0000-000000000000',
+    webhookId: '00000000-0000-0000-0000-000000000000',
+    userId: '00000000-0000-0000-0000-000000000000',
+  };
+
+  // Projects CRUD + members
+  results.push(await runStep({ name: 'projects list', method: 'GET', url: `${API}/projects`, token }));
+  results.push(await runStep({ name: 'projects create', method: 'POST', url: `${API}/projects`, token, json: { name: `p-${Date.now()}` } }));
+  results.push(await runStep({ name: 'project show', method: 'GET', url: `${API}/projects/${encodeURIComponent(dummy.projectId)}`, token }));
+  results.push(await runStep({ name: 'project patch', method: 'PATCH', url: `${API}/projects/${encodeURIComponent(dummy.projectId)}`, token, json: { name: `p-${Date.now()}-x` } }));
+  results.push(await runStep({ name: 'project delete', method: 'DELETE', url: `${API}/projects/${encodeURIComponent(dummy.projectId)}`, token }));
+  results.push(await runStep({ name: 'project members list', method: 'GET', url: `${API}/projects/${encodeURIComponent(dummy.projectId)}/members`, token }));
+  results.push(await runStep({ name: 'project member role update', method: 'PATCH', url: `${API}/projects/${encodeURIComponent(dummy.projectId)}/members/${encodeURIComponent(dummy.userId)}`, token, json: { role: 'member' } }));
+
+  // Environments
+  results.push(await runStep({ name: 'environments list', method: 'GET', url: `${API}/projects/${encodeURIComponent(dummy.projectId)}/environments`, token }));
+  results.push(await runStep({ name: 'environments create', method: 'POST', url: `${API}/projects/${encodeURIComponent(dummy.projectId)}/environments`, token, json: { name: `env-${Date.now()}` } }));
+  results.push(await runStep({ name: 'environment show', method: 'GET', url: `${API}/environments/${encodeURIComponent(dummy.environmentId)}`, token }));
+  results.push(await runStep({ name: 'environment patch', method: 'PATCH', url: `${API}/environments/${encodeURIComponent(dummy.environmentId)}`, token, json: { name: `env-${Date.now()}-x` } }));
+  results.push(await runStep({ name: 'environment delete', method: 'DELETE', url: `${API}/environments/${encodeURIComponent(dummy.environmentId)}`, token }));
+
+  // Applications
+  results.push(await runStep({ name: 'applications list', method: 'GET', url: `${API}/environments/${encodeURIComponent(dummy.environmentId)}/applications`, token }));
+  results.push(await runStep({ name: 'applications create', method: 'POST', url: `${API}/environments/${encodeURIComponent(dummy.environmentId)}/applications`, token, json: { name: `app-${Date.now()}` } }));
+  results.push(await runStep({ name: 'application show', method: 'GET', url: `${API}/applications/${encodeURIComponent(dummy.applicationId)}`, token }));
+  results.push(await runStep({ name: 'application patch', method: 'PATCH', url: `${API}/applications/${encodeURIComponent(dummy.applicationId)}`, token, json: { name: `app-${Date.now()}-x` } }));
+  results.push(await runStep({ name: 'application delete', method: 'DELETE', url: `${API}/applications/${encodeURIComponent(dummy.applicationId)}`, token }));
+  results.push(await runStep({ name: 'application stop', method: 'POST', url: `${API}/applications/${encodeURIComponent(dummy.applicationId)}:stop`, token, json: {} }));
+  results.push(await runStep({ name: 'application restart', method: 'POST', url: `${API}/applications/${encodeURIComponent(dummy.applicationId)}:restart`, token, json: {} }));
+  results.push(await runStep({ name: 'application reserve port', method: 'POST', url: `${API}/applications/${encodeURIComponent(dummy.applicationId)}:reserve-port`, token, json: {} }));
+  results.push(await runStep({ name: 'application release port', method: 'POST', url: `${API}/applications/${encodeURIComponent(dummy.applicationId)}:release-port`, token, json: {} }));
+
+  // Deployments
+  results.push(await runStep({ name: 'deployment trigger', method: 'POST', url: `${API}/applications/${encodeURIComponent(dummy.applicationId)}/deployments`, token, json: { reason: 'e2e', git: { ref: 'main' } } }));
+  results.push(await runStep({ name: 'deployments list', method: 'GET', url: `${API}/applications/${encodeURIComponent(dummy.applicationId)}/deployments`, token }));
+  results.push(await runStep({ name: 'deployment show', method: 'GET', url: `${API}/deployments/${encodeURIComponent(dummy.deploymentId)}`, token }));
+  results.push(await runStep({ name: 'deployment cancel', method: 'POST', url: `${API}/deployments/${encodeURIComponent(dummy.deploymentId)}:cancel`, token, json: {} }));
+  results.push(await runStep({ name: 'deployment rollback', method: 'POST', url: `${API}/deployments/${encodeURIComponent(dummy.deploymentId)}:rollback`, token, json: {} }));
+  results.push(await runStep({ name: 'deployment logs', method: 'GET', url: `${API}/deployments/${encodeURIComponent(dummy.deploymentId)}/logs`, token }));
+
+  // Streams
+  results.push(await runStep({ name: 'events SSE (connect)', method: 'GET', url: `${API}/streams/events`, token }));
+  results.push(await runStep({ name: 'logs SSE (connect)', method: 'GET', url: `${API}/streams/logs`, token }));
+
+  // Nodes
+  results.push(await runStep({ name: 'nodes list (repeat)', method: 'GET', url: `${API}/nodes`, token }));
+  results.push(await runStep({ name: 'node show', method: 'GET', url: `${API}/nodes/${encodeURIComponent(nodeFromList || '00000000-0000-0000-0000-000000000000')}`, token }));
+
+  // Databases
+  results.push(await runStep({ name: 'databases list', method: 'GET', url: `${API}/environments/${encodeURIComponent(dummy.environmentId)}/databases`, token }));
+  results.push(await runStep({ name: 'databases create', method: 'POST', url: `${API}/environments/${encodeURIComponent(dummy.environmentId)}/databases`, token, json: { name: `db-${Date.now()}` } }));
+  results.push(await runStep({ name: 'database show', method: 'GET', url: `${API}/databases/${encodeURIComponent(dummy.databaseId)}`, token }));
+  results.push(await runStep({ name: 'database patch', method: 'PATCH', url: `${API}/databases/${encodeURIComponent(dummy.databaseId)}`, token, json: { name: `db-${Date.now()}-x` } }));
+  results.push(await runStep({ name: 'database delete', method: 'DELETE', url: `${API}/databases/${encodeURIComponent(dummy.databaseId)}`, token }));
+  results.push(await runStep({ name: 'database start', method: 'POST', url: `${API}/databases/${encodeURIComponent(dummy.databaseId)}:start`, token, json: {} }));
+  results.push(await runStep({ name: 'database stop', method: 'POST', url: `${API}/databases/${encodeURIComponent(dummy.databaseId)}:stop`, token, json: {} }));
+
+  // Services
+  results.push(await runStep({ name: 'services list', method: 'GET', url: `${API}/environments/${encodeURIComponent(dummy.environmentId)}/services`, token }));
+  results.push(await runStep({ name: 'services create', method: 'POST', url: `${API}/environments/${encodeURIComponent(dummy.environmentId)}/services`, token, json: { name: `svc-${Date.now()}` } }));
+  results.push(await runStep({ name: 'service show', method: 'GET', url: `${API}/services/${encodeURIComponent(dummy.serviceId)}`, token }));
+  results.push(await runStep({ name: 'service patch', method: 'PATCH', url: `${API}/services/${encodeURIComponent(dummy.serviceId)}`, token, json: { name: `svc-${Date.now()}-x` } }));
+  results.push(await runStep({ name: 'service delete', method: 'DELETE', url: `${API}/services/${encodeURIComponent(dummy.serviceId)}`, token }));
+  results.push(await runStep({ name: 'service start', method: 'POST', url: `${API}/services/${encodeURIComponent(dummy.serviceId)}:start`, token, json: {} }));
+  results.push(await runStep({ name: 'service stop', method: 'POST', url: `${API}/services/${encodeURIComponent(dummy.serviceId)}:stop`, token, json: {} }));
+
+  // Templates
+  results.push(await runStep({ name: 'templates list', method: 'GET', url: `${API}/templates`, token }));
+  results.push(await runStep({ name: 'template show', method: 'GET', url: `${API}/templates/${encodeURIComponent(dummy.templateSlug)}`, token }));
+
+  // Git sources
+  results.push(await runStep({ name: 'git sources list', method: 'GET', url: `${API}/git-sources`, token }));
+  results.push(await runStep({ name: 'git sources create', method: 'POST', url: `${API}/git-sources`, token, json: { provider: 'github', name: `gs-${Date.now()}` } }));
+  results.push(await runStep({ name: 'git source show', method: 'GET', url: `${API}/git-sources/${encodeURIComponent(dummy.gitSourceId)}`, token }));
+  results.push(await runStep({ name: 'git source delete', method: 'DELETE', url: `${API}/git-sources/${encodeURIComponent(dummy.gitSourceId)}`, token }));
+  results.push(await runStep({ name: 'git source test', method: 'POST', url: `${API}/git-sources/${encodeURIComponent(dummy.gitSourceId)}:test`, token, json: {} }));
+  results.push(await runStep({ name: 'git source repositories', method: 'GET', url: `${API}/git-sources/${encodeURIComponent(dummy.gitSourceId)}/repositories`, token }));
+
+  // Webhooks
+  results.push(await runStep({ name: 'webhooks create', method: 'POST', url: `${API}/applications/${encodeURIComponent(dummy.applicationId)}/webhooks`, token, json: { events: ['push'] } }));
+  results.push(await runStep({ name: 'webhook rotate secret', method: 'POST', url: `${API}/webhooks/${encodeURIComponent(dummy.webhookId)}:rotate-secret`, token, json: {} }));
+  results.push(await runStep({ name: 'webhook delete', method: 'DELETE', url: `${API}/webhooks/${encodeURIComponent(dummy.webhookId)}`, token }));
+
+  // Settings + activity
+  results.push(await runStep({ name: 'settings get', method: 'GET', url: `${API}/settings`, token }));
+  results.push(await runStep({ name: 'settings patch', method: 'PATCH', url: `${API}/settings`, token, json: { updated_at: new Date().toISOString() } }));
+  results.push(await runStep({ name: 'activity', method: 'GET', url: `${API}/activity`, token }));
+
+  // --- Node API sweep (from API.md) ---
   const appId = (CONFIG.applicationId || '').trim();
   const preferredNodeId = (CONFIG.nodeId || '').trim();
+  const nodeUrl = String(nodeUrlFromList || '').replace(/\/$/, '');
+  const nodeId = preferredNodeId || nodeFromList;
 
-  if (!appId || appId === 'PASTE_APPLICATION_ID_HERE') {
-    console.log('\n[SKIP] Node tests: set CONFIG.applicationId to enable.');
+  if (!nodeUrl) {
+    console.log('[SKIP] Node API: missing node_url from /api/v2/nodes');
   } else {
-    const nodesRes = results.find((x) => x.name === 'nodes' && x.ok);
-    let nodeId = preferredNodeId;
-    if (!nodeId && nodesRes) nodeId = pick(nodesRes.json, 'data.0.uuid', '') || pick(nodesRes.json, 'data.0.id', '');
+    // Public node endpoints (no token)
+    results.push(await runStep({ name: 'node health', method: 'GET', url: `${nodeUrl}/node/v2/health` }, { allowAuthSkip: true }));
+    const nodeCaps = await runStep({ name: 'node capabilities', method: 'GET', url: `${nodeUrl}/node/v2/capabilities` }, { allowAuthSkip: true });
+    results.push(nodeCaps);
 
+    // Attempt to mint a node token (best-effort) if we have node id + app id
+    let nodeToken = '';
     if (!nodeId) {
-      console.log('\n[SKIP] Node tests: no node id available (set CONFIG.nodeId or create a node in UI).');
+      console.log('[SKIP] Node API auth: missing node id');
+    } else if (!appId) {
+      console.log('[SKIP] Node API auth: missing CONFIG.applicationId');
     } else {
-      // Mint node access token
-      const mint = await httpRequest({
+      const mint = await runStep({
         name: 'mint node session',
         method: 'POST',
         url: `${API}/nodes/${encodeURIComponent(nodeId)}/sessions`,
         token,
         json: {
+          // Request scopes used by the node suite below.
           scopes: [
             'applications:read',
-            'containers:read', 'containers:write',
-            'logs:read', 'logs:stream',
-            'files:read', 'files:write', 'files:delete',
-            'volumes:read',
-            'metrics:read',
             'applications:deploy',
+            'containers:read',
+            'containers:write',
+            'logs:read',
+            'logs:stream',
+            'files:read',
+            'files:write',
+            'files:delete',
+            'volumes:read',
+            'volumes:write',
+            'metrics:read',
+            'exec:run',
           ],
-          constraints: {
-            application_id: appId,
-            paths: ['/app', '/data'],
-            max_bytes: 1024 * 1024,
-          },
+          constraints: { application_id: appId, paths: ['/app', '/data'], max_bytes: 1024 * 1024 },
           ttl_sec: 120,
         },
         expectStatus: 200,
-        allowStatuses: [200, 403, 404, 409, 422, 503],
-      });
+      }, { sleepMs: 250 });
       results.push(mint);
-      printResult(mint);
-      await sleep(250);
 
-      if (!mint.ok) {
-        console.log('[SKIP] Node tests: node session mint failed (needs nodes:session:mint + correct constraints).');
+      if (mint.tag === 'PASS') {
+        nodeToken = pick(mint.json, 'node_access_token', '');
       } else {
-        const nodeUrlRaw = pick(mint.json, 'node_url', '');
-        const nodeUrl = String(nodeUrlRaw || '').replace(/\/$/, '');
-        const nodeToken = pick(mint.json, 'node_access_token', '');
+        console.log('[SKIP] Node API auth: could not mint node token; authenticated node endpoints will be skipped.');
+      }
+    }
 
-        if (!nodeUrl || !nodeToken) {
-          console.log('[SKIP] Node tests: missing node_url or node_access_token in response.');
-          return;
-        }
+    if (nodeToken) {
+      const deploymentId = `dep_${Date.now()}`;
 
-        // Node health/capabilities (no token)
-        for (const step of [
-          { name: 'node health', method: 'GET', url: `${nodeUrl}/node/v2/health`, expectStatus: 200 },
-          { name: 'node capabilities', method: 'GET', url: `${nodeUrl}/node/v2/capabilities`, expectStatus: 200 },
-        ]) {
-          const r = await httpRequest({ ...step, token: undefined });
-          results.push(r);
-          printResult(r);
-          await sleep(150);
-        }
+      // Authenticated node calls
+      results.push(await runStep({ name: 'node applications', method: 'GET', url: `${nodeUrl}/node/v2/applications`, token: nodeToken }));
+      results.push(await runStep({ name: 'node app status', method: 'GET', url: `${nodeUrl}/node/v2/applications/${encodeURIComponent(appId)}/status`, token: nodeToken }));
+      results.push(await runStep({
+        name: 'node deployments start',
+        method: 'POST',
+        url: `${nodeUrl}/node/v2/deployments`,
+        token: nodeToken,
+        json: {
+          deployment_id: deploymentId,
+          application_id: appId,
+          application: { id: appId, uuid: appId },
+        },
+        expectStatus: 202,
+      }));
+      results.push(await runStep({ name: 'node deployments show', method: 'GET', url: `${nodeUrl}/node/v2/deployments/${encodeURIComponent(deploymentId)}`, token: nodeToken }));
+      results.push(await runStep({ name: 'node deployments cancel', method: 'POST', url: `${nodeUrl}/node/v2/deployments/${encodeURIComponent(deploymentId)}:cancel`, token: nodeToken, json: {} }));
+      results.push(await runStep({ name: 'node containers list', method: 'GET', url: `${nodeUrl}/node/v2/containers?filter[application_id]=${encodeURIComponent(appId)}`, token: nodeToken }));
 
-        // Authenticated node calls
-        for (const step of [
-          { name: 'node applications', method: 'GET', url: `${nodeUrl}/node/v2/applications`, token: nodeToken, allowStatuses: [200, 401, 403, 404] },
-          { name: 'node app status', method: 'GET', url: `${nodeUrl}/node/v2/applications/${encodeURIComponent(appId)}/status`, token: nodeToken, allowStatuses: [200, 401, 403, 404] },
-          { name: 'node containers (filtered)', method: 'GET', url: `${nodeUrl}/node/v2/containers?filter[application_id]=${encodeURIComponent(appId)}`, token: nodeToken, allowStatuses: [200, 401, 403, 404] },
-          { name: 'node metrics host', method: 'GET', url: `${nodeUrl}/node/v2/metrics/host`, token: nodeToken, allowStatuses: [200, 401, 403, 404] },
-          { name: 'node metrics containers', method: 'GET', url: `${nodeUrl}/node/v2/metrics/containers`, token: nodeToken, allowStatuses: [200, 401, 403, 404] },
-          { name: 'node volumes', method: 'GET', url: `${nodeUrl}/node/v2/volumes`, token: nodeToken, allowStatuses: [200, 401, 403, 404] },
-          { name: 'fs ls /data', method: 'GET', url: `${nodeUrl}/node/v2/fs/ls?path=/data&recursive=false&limit=200`, token: nodeToken, allowStatuses: [200, 400, 401, 403, 404] },
-        ]) {
-          const r = await httpRequest(step);
-          results.push(r);
-          printResult(r);
-          await sleep(150);
-        }
+      const containersRes = results.find((x) => x.name === 'node containers list' && x.tag === 'PASS');
+      const containerId = containersRes ? pick(containersRes.json, 'data.0.id', '') : '';
+      const cid = containerId || '0000000000000000000000000000000000000000000000000000000000000000';
+      results.push(await runStep({ name: 'node container inspect', method: 'GET', url: `${nodeUrl}/node/v2/containers/${encodeURIComponent(cid)}`, token: nodeToken }));
+      results.push(await runStep({ name: 'node container restart', method: 'POST', url: `${nodeUrl}/node/v2/containers/${encodeURIComponent(cid)}:restart`, token: nodeToken, json: {} }));
+      results.push(await runStep({ name: 'node container stop', method: 'POST', url: `${nodeUrl}/node/v2/containers/${encodeURIComponent(cid)}:stop`, token: nodeToken, json: {}, timeoutMs: 60000 }));
+      results.push(await runStep({ name: 'node container logs (bounded)', method: 'GET', url: `${nodeUrl}/node/v2/containers/${encodeURIComponent(cid)}/logs?tail=10`, token: nodeToken }));
+      results.push(await runStep({ name: 'node container logs stream (connect)', method: 'GET', url: `${nodeUrl}/node/v2/containers/${encodeURIComponent(cid)}/logs/stream?tail=2`, token: nodeToken }));
 
-        // FS write/read/delete roundtrip in /data
-        const dir = '/data/__chap_api_test';
-        const file = `${dir}/hello.txt`;
-        const content = `hello from api test at ${new Date().toISOString()}\n`;
-        const b64 = Buffer.from(content, 'utf8').toString('base64');
+      // Exec (high-risk): only exercise if the agent reports it supports exec.
+      const execSupported = !!pick(nodeCaps?.json, 'data.features.exec', false);
+      if (execSupported) {
+        results.push(await runStep({ name: 'node exec start', method: 'POST', url: `${nodeUrl}/node/v2/containers/${encodeURIComponent(cid)}/exec`, token: nodeToken, json: { cmd: ['/bin/sh'], tty: false } }));
+      } else {
+        console.log('[SKIP] Node exec: not supported by agent capabilities');
+      }
 
-        const mkdir = await httpRequest({
-          name: 'fs mkdir',
+      // Filesystem
+      results.push(await runStep({ name: 'fs ls', method: 'GET', url: `${nodeUrl}/node/v2/fs/ls?path=/data&recursive=false&limit=200`, token: nodeToken }));
+      results.push(await runStep({ name: 'fs stat', method: 'GET', url: `${nodeUrl}/node/v2/fs/stat?path=/data`, token: nodeToken }));
+      results.push(await runStep({ name: 'fs mkdir', method: 'POST', url: `${nodeUrl}/node/v2/fs/mkdir`, token: nodeToken, json: { path: '/data/__chap_api_test' } }));
+      results.push(await runStep({ name: 'fs write', method: 'PUT', url: `${nodeUrl}/node/v2/fs/write`, token: nodeToken, json: { path: '/data/__chap_api_test/hello.txt', mode: '0644', atomic: true, content_base64: Buffer.from('hello\n', 'utf8').toString('base64') } }));
+      results.push(await runStep({ name: 'fs read', method: 'GET', url: `${nodeUrl}/node/v2/fs/read?path=${encodeURIComponent('/data/__chap_api_test/hello.txt')}&offset=0&length=4096`, token: nodeToken, headers: { Accept: 'application/json' } }));
+      results.push(await runStep({ name: 'fs move', method: 'POST', url: `${nodeUrl}/node/v2/fs/move`, token: nodeToken, json: { from: '/data/__chap_api_test/hello.txt', to: '/data/__chap_api_test/hello2.txt' } }));
+      results.push(await runStep({ name: 'fs copy', method: 'POST', url: `${nodeUrl}/node/v2/fs/copy`, token: nodeToken, json: { from: '/data/__chap_api_test/hello2.txt', to: '/data/__chap_api_test/hello3.txt' } }));
+      results.push(await runStep({ name: 'fs chmod', method: 'POST', url: `${nodeUrl}/node/v2/fs/chmod`, token: nodeToken, json: { path: '/data/__chap_api_test/hello3.txt', mode: '0644' } }));
+      results.push(await runStep({ name: 'fs delete file', method: 'DELETE', url: `${nodeUrl}/node/v2/fs/delete?path=${encodeURIComponent('/data/__chap_api_test/hello3.txt')}`, token: nodeToken }));
+      results.push(await runStep({ name: 'fs delete dir', method: 'DELETE', url: `${nodeUrl}/node/v2/fs/delete?path=${encodeURIComponent('/data/__chap_api_test')}`, token: nodeToken }));
+
+      // Multipart upload
+      {
+        const started = Date.now();
+        const form = new FormData();
+        form.append('path', '/data/__chap_api_test/upload.txt');
+        form.append('file', new Blob([Buffer.from('upload-test\n', 'utf8')]), 'upload.txt');
+
+        const res = await fetch(`${nodeUrl}/node/v2/fs/upload`, {
           method: 'POST',
-          url: `${nodeUrl}/node/v2/fs/mkdir`,
-          token: nodeToken,
-          json: { path: dir },
-          allowStatuses: [200, 401, 403, 404],
+          headers: { Authorization: `Bearer ${nodeToken}` },
+          body: form,
         });
-        results.push(mkdir);
-        printResult(mkdir);
-        await sleep(150);
+        const bodyText = await res.text();
+        let parsed;
+        try { parsed = bodyText ? JSON.parse(bodyText) : null; } catch { parsed = null; }
 
-        const write = await httpRequest({
-          name: 'fs write',
-          method: 'PUT',
-          url: `${nodeUrl}/node/v2/fs/write`,
-          token: nodeToken,
-          json: { path: file, mode: '0644', atomic: true, content_base64: b64 },
-          allowStatuses: [200, 401, 403, 404, 413],
-        });
-        results.push(write);
-        printResult(write);
-        await sleep(150);
-
-        const read = await httpRequest({
-          name: 'fs read (json)',
-          method: 'GET',
-          url: `${nodeUrl}/node/v2/fs/read?path=${encodeURIComponent(file)}&offset=0&length=4096`,
-          token: nodeToken,
-          headers: { Accept: 'application/json' },
-          allowStatuses: [200, 401, 403, 404],
-        });
-        results.push(read);
-        printResult(read);
-        await sleep(150);
-
-        const del = await httpRequest({
-          name: 'fs delete file',
-          method: 'DELETE',
-          url: `${nodeUrl}/node/v2/fs/delete?path=${encodeURIComponent(file)}`,
-          token: nodeToken,
-          allowStatuses: [200, 401, 403, 404],
-        });
-        results.push(del);
-        printResult(del);
-        await sleep(150);
-
-        const delDir = await httpRequest({
-          name: 'fs delete dir',
-          method: 'DELETE',
-          url: `${nodeUrl}/node/v2/fs/delete?path=${encodeURIComponent(dir)}`,
-          token: nodeToken,
-          allowStatuses: [200, 401, 403, 404],
-        });
-        results.push(delDir);
-        printResult(delDir);
-        await sleep(150);
-
-        // Container log smoke (only if we have a container id)
-        const containersRes = results.find((x) => x.name === 'node containers (filtered)' && x.ok);
-        const containerId = containersRes ? pick(containersRes.json, 'data.0.id', '') : '';
-        if (containerId) {
-          const logs = await httpRequest({
-            name: 'container logs (bounded)',
-            method: 'GET',
-            url: `${nodeUrl}/node/v2/containers/${encodeURIComponent(containerId)}/logs?tail=50`,
-            token: nodeToken,
-            allowStatuses: [200, 401, 403, 404],
-          });
-          results.push(logs);
-          printResult(logs);
-          await sleep(150);
-
-          const sse = await readSseFor({
-            url: `${nodeUrl}/node/v2/containers/${encodeURIComponent(containerId)}/logs/stream?tail=5`,
-            token: nodeToken,
-            durationMs: 2000,
-            maxEvents: 8,
-          });
-          if (sse.ok) {
-            console.log(`[PASS] SSE logs stream read ${sse.events.length} event(s)`);
-          } else {
-            console.log(`[FAIL] SSE logs stream (${sse.status}) ${String(sse.text || '').slice(0, 200)}`);
-          }
-        } else {
-          console.log('[SKIP] Container logs: no containers found for app');
-        }
-
-        // Optional: attempt a Node-side deployment start (advanced; will likely be rejected unless appConfig is provided)
-        const depTry = await httpRequest({
-          name: 'node deployments (expected validation)',
+        const durationMs = Date.now() - started;
+        const statusOk = res.status >= 200 && res.status < 300;
+        const r = {
+          ok: statusOk,
+          name: 'fs upload (multipart)',
           method: 'POST',
-          url: `${nodeUrl}/node/v2/deployments`,
-          token: nodeToken,
-          json: { deployment_id: `dep_${Date.now()}`, application_id: appId },
-          allowStatuses: [202, 422, 403, 404, 501],
-        });
-        results.push(depTry);
-        printResult(depTry);
+          url: `${nodeUrl}/node/v2/fs/upload`,
+          status: res.status,
+          durationMs,
+          bodyText,
+          json: parsed,
+        };
+        r.tag = tagFor(r, { allow404Skip: !CONFIG.expectImplemented, allowAuthSkip: !CONFIG.expectAuthorized });
+        r.ok = r.tag === 'PASS';
+        printResult(r);
+        results.push(r);
+        await sleep(150);
+      }
+
+      results.push(await runStep({ name: 'fs download', method: 'GET', url: `${nodeUrl}/node/v2/fs/download?path=${encodeURIComponent('/data')}`, token: nodeToken }));
+
+      // Volumes
+      results.push(await runStep({ name: 'node volumes list', method: 'GET', url: `${nodeUrl}/node/v2/volumes`, token: nodeToken }));
+      results.push(await runStep({ name: 'node volume attach', method: 'POST', url: `${nodeUrl}/node/v2/volumes/${encodeURIComponent('vol_1')}:attach`, token: nodeToken, json: {} }));
+      results.push(await runStep({ name: 'node volume detach', method: 'POST', url: `${nodeUrl}/node/v2/volumes/${encodeURIComponent('vol_1')}:detach`, token: nodeToken, json: {} }));
+      results.push(await runStep({ name: 'node volume snapshot', method: 'POST', url: `${nodeUrl}/node/v2/volumes/${encodeURIComponent('vol_1')}:snapshot`, token: nodeToken, json: {} }));
+
+      // Metrics
+      results.push(await runStep({ name: 'node metrics host', method: 'GET', url: `${nodeUrl}/node/v2/metrics/host`, token: nodeToken }));
+      results.push(await runStep({ name: 'node metrics containers', method: 'GET', url: `${nodeUrl}/node/v2/metrics/containers`, token: nodeToken }));
+      results.push(await runStep({ name: 'node metrics container', method: 'GET', url: `${nodeUrl}/node/v2/metrics/containers/${encodeURIComponent(cid)}`, token: nodeToken }));
+    } else {
+      // Still "tests" the existence of routes by reaching them unauthenticated (they should 401/403).
+      const unauth = [
+        { name: 'node applications (unauth)', method: 'GET', url: `${nodeUrl}/node/v2/applications` },
+        { name: 'node containers (unauth)', method: 'GET', url: `${nodeUrl}/node/v2/containers` },
+        { name: 'node metrics host (unauth)', method: 'GET', url: `${nodeUrl}/node/v2/metrics/host` },
+        { name: 'fs ls (unauth)', method: 'GET', url: `${nodeUrl}/node/v2/fs/ls?path=/data&recursive=false&limit=5` },
+      ];
+      for (const ep of unauth) {
+        results.push(await runStep(ep, { allowAuthSkip: true }));
       }
     }
   }
 
-  // Attempt a few server endpoints from API.md that may not exist yet (report as SKIP if 404)
-  for (const ep of [
-    { name: 'projects create (not implemented)', method: 'POST', url: `${API}/projects`, token, json: { name: `p-${Date.now()}` }, allowStatuses: [200, 201, 400, 401, 403, 404] },
-    { name: 'events SSE (not implemented)', method: 'GET', url: `${API}/streams/events`, token, allowStatuses: [200, 401, 403, 404] },
-    { name: 'logs SSE (not implemented)', method: 'GET', url: `${API}/streams/logs`, token, allowStatuses: [200, 401, 403, 404] },
-  ]) {
-    const r = await httpRequest(ep);
-    results.push(r);
-    printResult(r);
-    await sleep(150);
-  }
-
   // Summary
-  const pass = results.filter((r) => r.ok).length;
-  const fail = results.filter((r) => !r.ok && r.status !== 404).length;
-  const skip = results.filter((r) => !r.ok && r.status === 404).length;
+  const pass = results.filter((r) => r.tag === 'PASS').length;
+  const fail = results.filter((r) => r.tag === 'FAIL').length;
+  const skip = results.filter((r) => r.tag === 'SKIP').length;
 
   console.log('\n==== Summary ====');
   console.log(`PASS: ${pass}`);

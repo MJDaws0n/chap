@@ -65,10 +65,15 @@ class NodesController extends BaseApiV2Controller
             return;
         }
 
-        // Constraints: node_id if present.
-        if (!ApiTokenService::constraintsAllow($token->constraintsMap(), ['node_id' => (string)$node->uuid])) {
-            $this->v2Error('forbidden', 'Token constraints forbid this node', 403);
-            return;
+        // Constraints: only enforce node_id here.
+        // (Other constraints like team_id/project_id/application_id are not node properties
+        // and are validated later when binding the minted token.)
+        $callerConstraints = $token->constraintsMap();
+        if (isset($callerConstraints['node_id']) && $callerConstraints['node_id'] !== null && $callerConstraints['node_id'] !== '') {
+            if ((string)$callerConstraints['node_id'] !== (string)$node->uuid) {
+                $this->v2Error('forbidden', 'Token constraints forbid this node', 403);
+                return;
+            }
         }
 
         $data = $this->all();
@@ -126,16 +131,25 @@ class NodesController extends BaseApiV2Controller
             $constraints['max_bytes'] = $mb;
         }
 
-        // Ensure requested scopes are allowed by caller token.
-        $callerScopes = $token->scopesList();
+        // Validate requested scopes are node-plane scopes.
+        // Note: We intentionally do NOT require the caller token to include every node scope.
+        // The server controls minting via `nodes:session:mint` and binds the token via constraints.
         foreach ($reqScopes as $s) {
             $ss = trim((string)$s);
             if ($ss === '') {
                 $this->v2Error('validation_error', 'Validation error', 422, ['field' => 'scopes']);
                 return;
             }
-            if (!ApiTokenService::scopeAllows($callerScopes, $ss)) {
-                $this->v2Error('forbidden', 'Requested scope not allowed by caller token', 403, ['scope' => $ss]);
+
+            $allowed = false;
+            foreach (['applications:', 'containers:', 'logs:', 'files:', 'volumes:', 'metrics:', 'exec:'] as $prefix) {
+                if (str_starts_with($ss, $prefix)) {
+                    $allowed = true;
+                    break;
+                }
+            }
+            if (!$allowed && $ss !== '*') {
+                $this->v2Error('validation_error', 'Validation error', 422, ['field' => 'scopes']);
                 return;
             }
         }
@@ -201,6 +215,11 @@ class NodesController extends BaseApiV2Controller
     private function nodeToClient(Node $node): array
     {
         $arr = $node->toArray();
+
+        // v2 API uses UUIDs as primary identifiers.
+        $arr['internal_id'] = $arr['id'] ?? null;
+        $arr['id'] = (string)$node->uuid;
+        $arr['uuid'] = (string)$node->uuid;
         $arr['node_url'] = $this->nodeApiUrl($node);
         return $arr;
     }

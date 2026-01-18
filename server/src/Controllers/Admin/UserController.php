@@ -8,6 +8,8 @@ use Chap\Models\User;
 use Chap\Models\ActivityLog;
 use Chap\Models\Node;
 use Chap\App;
+use Chap\Services\LimitCascadeService;
+use Chap\Services\ResourceHierarchy;
 
 class UserController extends BaseController
 {
@@ -160,12 +162,23 @@ class UserController extends BaseController
             $nodeAccessMode = 'allow_selected';
         }
 
+        $oldTotals = ResourceHierarchy::userMax($user);
+
         $maxCpuMillicores = (int)$this->input('max_cpu_millicores', (string)$user->max_cpu_millicores);
         $maxRamMb = (int)$this->input('max_ram_mb', (string)$user->max_ram_mb);
         $maxStorageMb = (int)$this->input('max_storage_mb', (string)$user->max_storage_mb);
         $maxPorts = (int)$this->input('max_ports', (string)$user->max_ports);
         $maxBandwidth = (int)$this->input('max_bandwidth_mbps', (string)$user->max_bandwidth_mbps);
         $maxPids = (int)$this->input('max_pids', (string)$user->max_pids);
+
+        $newTotals = [
+            'cpu_millicores' => $maxCpuMillicores,
+            'ram_mb' => $maxRamMb,
+            'storage_mb' => $maxStorageMb,
+            'ports' => $maxPorts,
+            'bandwidth_mbps' => $maxBandwidth,
+            'pids' => $maxPids,
+        ];
 
         $errors = [];
 
@@ -263,6 +276,20 @@ class UserController extends BaseController
         }
 
         $user->update($update);
+
+        // If max limits were reduced, enforce owned-team hierarchy + redeploy descendant applications.
+        if (LimitCascadeService::anyReduction($oldTotals, $newTotals)) {
+            $enforced = LimitCascadeService::enforceUnderUser($user);
+            $apps = LimitCascadeService::applicationIdsForUserOwnedTeams((int)$user->id);
+            $redeploy = LimitCascadeService::redeployApplications($apps, $this->user, 'limits');
+
+            $details = [];
+            if (($enforced['changed_fields'] ?? 0) > 0) {
+                $details[] = 'auto-adjusted child limits';
+            }
+            $details[] = 'redeploy started: ' . ($redeploy['started'] ?? 0);
+            flash('info', 'User max limits reduced: ' . implode(', ', $details));
+        }
 
         // Node access assignments
         $nodeIds = $this->input('node_access', []);

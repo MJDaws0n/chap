@@ -11,6 +11,7 @@ use Chap\Services\ApplicationCleanupService;
 use Chap\Services\ResourceHierarchy;
 use Chap\Services\NodeAccess;
 use Chap\Services\ResourceAllocator;
+use Chap\Services\LimitCascadeService;
 
 /**
  * Team Controller
@@ -194,12 +195,23 @@ class TeamController extends BaseController
         $name = trim($_POST['name'] ?? '');
         $description = trim($_POST['description'] ?? '');
 
+        $oldLimits = ResourceHierarchy::teamConfigured($team);
+
         $cpuMillicoresLimit = ResourceHierarchy::parseCpuMillicores((string)($_POST['cpu_limit_cores'] ?? '-1'));
         $ramMbLimit = ResourceHierarchy::parseMb((string)($_POST['ram_mb_limit'] ?? '-1'));
         $storageMbLimit = ResourceHierarchy::parseMb((string)($_POST['storage_mb_limit'] ?? '-1'));
         $portLimit = ResourceHierarchy::parseIntOrAuto((string)($_POST['port_limit'] ?? '-1'));
         $bandwidthLimit = ResourceHierarchy::parseIntOrAuto((string)($_POST['bandwidth_mbps_limit'] ?? '-1'));
         $pidsLimit = ResourceHierarchy::parseIntOrAuto((string)($_POST['pids_limit'] ?? '-1'));
+
+        $newLimits = [
+            'cpu_millicores' => $cpuMillicoresLimit,
+            'ram_mb' => $ramMbLimit,
+            'storage_mb' => $storageMbLimit,
+            'ports' => $portLimit,
+            'bandwidth_mbps' => $bandwidthLimit,
+            'pids' => $pidsLimit,
+        ];
 
         $restrictNodes = !empty($_POST['restrict_nodes']);
         $nodeIds = $_POST['allowed_node_ids'] ?? [];
@@ -286,6 +298,20 @@ class TeamController extends BaseController
             'pids_limit' => $pidsLimit,
             'allowed_node_ids' => $restrictNodes ? NodeAccess::encodeNodeIds($nodeIds) : null,
         ]);
+
+        // If limits were reduced, enforce hierarchy + redeploy descendant applications for security.
+        if (LimitCascadeService::anyReduction($oldLimits, $newLimits)) {
+            $enforced = LimitCascadeService::enforceUnderTeam($team);
+            $apps = LimitCascadeService::applicationIdsForTeam((int)$team->id);
+            $redeploy = LimitCascadeService::redeployApplications($apps, $this->user, 'limits');
+
+            $details = [];
+            if (($enforced['changed_fields'] ?? 0) > 0) {
+                $details[] = 'auto-adjusted child limits';
+            }
+            $details[] = 'redeploy started: ' . ($redeploy['started'] ?? 0);
+            flash('info', 'Limits reduced: ' . implode(', ', $details));
+        }
 
         flash('success', 'Team updated successfully');
         redirect('/teams/' . $id);

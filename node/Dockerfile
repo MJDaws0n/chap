@@ -19,15 +19,6 @@ COPY src/ ./src/
 # This will be mounted as a volume in production
 RUN mkdir -p /data/apps /data/repos /data/builds /data/compose /data/volumes /data/logs
 
-# Environment variables
-ENV NODE_ENV=production
-ENV CHAP_SERVER_URL=ws://chap-server:8081
-ENV CHAP_DATA_DIR=/data
-ENV NODE_ID=
-ENV NODE_TOKEN=
-ENV BROWSER_WS_PORT=6002
-ENV BROWSER_WS_HOST=0.0.0.0
-
 # Expose browser WebSocket port for direct log streaming
 EXPOSE 6002
 

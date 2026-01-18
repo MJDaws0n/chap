@@ -9,6 +9,7 @@ use Chap\Services\ApplicationCleanupService;
 use Chap\Services\NodeAccess;
 use Chap\Services\ResourceAllocator;
 use Chap\Services\ResourceHierarchy;
+use Chap\Services\LimitCascadeService;
 
 /**
  * Project Controller
@@ -167,7 +168,6 @@ class ProjectController extends BaseController
     public function update(string $uuid): void
     {
         $project = Project::findByUuid($uuid);
-    $this->requireTeamPermission('projects', 'write', (int)$project->team_id);
 
         if (!$project || !$this->canAccessTeamId($project->team_id)) {
             if ($this->isApiRequest()) {
@@ -176,7 +176,10 @@ class ProjectController extends BaseController
                 flash('error', 'Project not found');
                 $this->redirect('/projects');
             }
+            return;
         }
+
+        $this->requireTeamPermission('projects', 'write', (int)$project->team_id);
 
         if (!$this->isApiRequest() && !verify_csrf($this->input('_csrf_token', ''))) {
             flash('error', 'Invalid request');
@@ -185,12 +188,23 @@ class ProjectController extends BaseController
 
         $data = $this->all();
 
+        $oldLimits = ResourceHierarchy::projectConfigured($project);
+
         $cpuMillicoresLimit = ResourceHierarchy::parseCpuMillicores((string)($data['cpu_limit_cores'] ?? '-1'));
         $ramMbLimit = ResourceHierarchy::parseMb((string)($data['ram_mb_limit'] ?? '-1'));
         $storageMbLimit = ResourceHierarchy::parseMb((string)($data['storage_mb_limit'] ?? '-1'));
         $portLimit = ResourceHierarchy::parseIntOrAuto((string)($data['port_limit'] ?? '-1'));
         $bandwidthLimit = ResourceHierarchy::parseIntOrAuto((string)($data['bandwidth_mbps_limit'] ?? '-1'));
         $pidsLimit = ResourceHierarchy::parseIntOrAuto((string)($data['pids_limit'] ?? '-1'));
+
+        $newLimits = [
+            'cpu_millicores' => $cpuMillicoresLimit,
+            'ram_mb' => $ramMbLimit,
+            'storage_mb' => $storageMbLimit,
+            'ports' => $portLimit,
+            'bandwidth_mbps' => $bandwidthLimit,
+            'pids' => $pidsLimit,
+        ];
 
         $restrictNodes = !empty($data['restrict_nodes']);
         $nodeIds = $data['allowed_node_ids'] ?? [];
@@ -268,6 +282,19 @@ class ProjectController extends BaseController
             'pids_limit' => $pidsLimit,
             'allowed_node_ids' => $restrictNodes ? NodeAccess::encodeNodeIds($nodeIds) : null,
         ]);
+
+        if (LimitCascadeService::anyReduction($oldLimits, $newLimits)) {
+            $enforced = LimitCascadeService::enforceUnderProject($project);
+            $apps = LimitCascadeService::applicationIdsForProject((int)$project->id);
+            $redeploy = LimitCascadeService::redeployApplications($apps, $this->user, 'limits');
+
+            $details = [];
+            if (($enforced['changed_fields'] ?? 0) > 0) {
+                $details[] = 'auto-adjusted child limits';
+            }
+            $details[] = 'redeploy started: ' . ($redeploy['started'] ?? 0);
+            flash('info', 'Limits reduced: ' . implode(', ', $details));
+        }
 
         if ($this->isApiRequest()) {
             $this->json(['project' => $project->toArray()]);

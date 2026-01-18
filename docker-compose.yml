@@ -46,6 +46,9 @@ services:
       - APP_DEBUG=${APP_DEBUG:-true}
       - APP_URL=${APP_URL:-http://localhost:8080}
       - APP_SECRET=${APP_SECRET:-change_this_to_random_secret_key}
+
+      # Used to mint node access tokens (JWTs). Must match the node agent.
+      - CHAP_NODE_ACCESS_TOKEN_SECRET=${CHAP_NODE_ACCESS_TOKEN_SECRET:-change_this_to_random_secret_key}
       
       - DB_HOST=mysql
       - DB_PORT=3306
@@ -95,6 +98,8 @@ services:
       - NODE_ID=${NODE_ID:?NODE_ID is required - get this from the Chap dashboard}
       - NODE_TOKEN=${NODE_TOKEN:?NODE_TOKEN is required - get this from the Chap dashboard}
       - CHAP_SERVER_URL=${CHAP_SERVER_URL:?CHAP_SERVER_URL is required - e.g. ws://your-server:8081}
+      # Must match server's CHAP_NODE_ACCESS_TOKEN_SECRET
+      - CHAP_NODE_ACCESS_TOKEN_SECRET=${CHAP_NODE_ACCESS_TOKEN_SECRET:-change_this_to_random_secret_key}
       - CHAP_DATA_DIR=/data
       # Security settings
       - CHAP_MAX_CPUS=${CHAP_MAX_CPUS:-20}
