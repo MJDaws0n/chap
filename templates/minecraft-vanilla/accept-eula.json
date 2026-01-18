@@ -11,6 +11,9 @@
           "var": "accept_eula",
           "title": "Accept Minecraft EULA",
           "description": "To run a Minecraft server you must accept Mojang/Microsoft's EULA. Do you accept it?",
+          "links": [
+            { "label": "Open Minecraft EULA", "url": "https://www.minecraft.net/en-us/eula" }
+          ],
           "confirm": { "text": "Accept", "variant": "danger" },
           "cancel": { "text": "Cancel" }
         },

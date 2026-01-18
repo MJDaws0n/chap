@@ -811,10 +811,18 @@ async function deployCompose(deploymentId, appConfig) {
         const cpuRaw = appConfig.cpu_limit ?? appConfig.cpuLimit ?? appConfig.cpu_limit_cores ?? appConfig.cpuLimitCores;
         const memRaw = appConfig.memory_limit ?? appConfig.memoryLimit ?? appConfig.ram_limit ?? appConfig.ramLimit;
 
-        const cpuTotal = cpuRaw === null || cpuRaw === undefined ? null : parseFloat(String(cpuRaw).trim());
+        const cpuRequested = cpuRaw === null || cpuRaw === undefined ? null : parseFloat(String(cpuRaw).trim());
+        const cpuRequestedLimited = Number.isFinite(cpuRequested) && cpuRequested > 0;
+
+        const maxCpu = Number.isFinite(security?.SECURITY_CONFIG?.maxCpus) ? security.SECURITY_CONFIG.maxCpus : null;
+        const cpuTotal = cpuRequestedLimited && Number.isFinite(maxCpu) && maxCpu > 0 ? Math.min(cpuRequested, maxCpu) : cpuRequested;
         const cpuLimited = Number.isFinite(cpuTotal) && cpuTotal > 0;
 
-        const memTotalBytes = parseDockerMemoryToBytes(memRaw);
+        const memRequestedBytes = parseDockerMemoryToBytes(memRaw);
+        const maxMemBytes = parseDockerMemoryToBytes(security?.SECURITY_CONFIG?.maxMemory);
+        const memTotalBytes = Number.isFinite(memRequestedBytes) && memRequestedBytes > 0 && Number.isFinite(maxMemBytes) && maxMemBytes > 0
+            ? Math.min(memRequestedBytes, maxMemBytes)
+            : memRequestedBytes;
         const memLimited = Number.isFinite(memTotalBytes) && memTotalBytes > 0;
 
         if (!cpuLimited && !memLimited) {
@@ -890,6 +898,10 @@ async function deployCompose(deploymentId, appConfig) {
                 service.deploy.resources = service.deploy.resources && typeof service.deploy.resources === 'object' ? service.deploy.resources : {};
                 service.deploy.resources.limits = service.deploy.resources.limits && typeof service.deploy.resources.limits === 'object' ? service.deploy.resources.limits : {};
                 service.deploy.resources.limits.cpus = cpuCores.toFixed(3);
+
+                // Also set non-swarm compose keys so limits apply without relying on deploy.* semantics.
+                // docker compose supports `cpus` for service-level CPU quota.
+                service.cpus = Number(cpuCores.toFixed(3));
             }
 
             if (memLimited) {
@@ -909,6 +921,11 @@ async function deployCompose(deploymentId, appConfig) {
 
                 // Best-effort: prevent swap abuse as well.
                 service.memswap_limit = String(Math.max(0, memBytes));
+
+                // Also set non-swarm compose keys.
+                // `mem_limit`/`memswap_limit` are accepted by docker compose and translate to container HostConfig.*.
+                service.mem_limit = Math.max(0, Math.floor(memBytes));
+                service.memswap_limit = Math.max(0, Math.floor(memBytes));
             }
 
             doc.services[name] = service;
@@ -916,8 +933,12 @@ async function deployCompose(deploymentId, appConfig) {
 
         // Log what we did (helpful for debugging)
         try {
-            const cpuMsg = cpuLimited ? `${cpuTotal} CPU` : 'CPU unlimited';
-            const memMsg = memLimited ? `${memRaw}` : 'memory unlimited';
+            const cpuMsg = cpuLimited
+                ? `${cpuTotal} CPU${(cpuRequestedLimited && cpuTotal !== cpuRequested) ? ` (clamped from ${cpuRequested})` : ''}`
+                : 'CPU unlimited';
+            const memMsg = memLimited
+                ? `${memRaw}${(Number.isFinite(memRequestedBytes) && memRequestedBytes > 0 && Number.isFinite(memTotalBytes) && memTotalBytes !== memRequestedBytes) ? ` (clamped to ${security?.SECURITY_CONFIG?.maxMemory || 'node max'})` : ''}`
+                : 'memory unlimited';
             sendLog(deploymentId, `🔧 App resource caps applied (${cpuMsg}, ${memMsg}) across ${serviceEntries.length} service(s)`, 'info');
         } catch (_) {}
 

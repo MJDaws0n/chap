@@ -5,7 +5,7 @@
   "description": "A vanilla Minecraft server using Docker Compose.",
   "category": "Minecraft",
   "doc_url": "https://minecraft.wiki/Java_Edition_server",
-  "chap_script": "chap-script.json",
+  "chap_script": "accept-eula.json",
   "env_variables": {
     "EULA": "FALSE",
     "MINECRAFT_VERSION": "latest",

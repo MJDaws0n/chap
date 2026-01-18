@@ -77,6 +77,35 @@ Supported condition operators:
 - `eq` / `neq` (case-insensitive for strings)
 - `is_truthy` / `not_truthy`
 
+#### `eq` / `neq` examples
+
+Compare an env var to a string:
+
+```json
+{
+  "type": "if",
+  "condition": { "op": "eq", "left": { "env": "MODE" }, "right": "paper" },
+  "then": [ { "type": "set_env", "key": "SERVER_JAR", "value": "paper.jar" } ],
+  "else": [ { "type": "set_env", "key": "SERVER_JAR", "value": "vanilla.jar" } ]
+}
+```
+
+Compare a prompted variable:
+
+```json
+{
+  "type": "if",
+  "condition": { "op": "neq", "left": { "var": "difficulty" }, "right": "hard" },
+  "then": [ { "type": "set_env", "key": "ALLOW_CHEATS", "value": "TRUE" } ],
+  "else": [ { "type": "set_env", "key": "ALLOW_CHEATS", "value": "FALSE" } ]
+}
+```
+
+Notes:
+- String comparisons are case-insensitive (`"TRUE"` equals `"true"`).
+- If both sides are numeric, comparison is numeric (`"2"` equals `2`).
+- If either side is boolean, values are compared using ChapScribe truthiness rules.
+
 Truthiness accepts common values like: `true`, `1`, `yes`, `on` (case-insensitive).
 
 ### `prompt_confirm`
@@ -88,6 +117,9 @@ Asks for a confirmation.
   "var": "accept_eula",
   "title": "Accept EULA",
   "description": "You must accept the EULA to proceed.",
+  "links": [
+    { "label": "View EULA", "url": "https://example.com/eula" }
+  ],
   "confirm": { "text": "Accept", "variant": "danger" },
   "cancel": { "text": "Cancel" }
 }
@@ -106,9 +138,14 @@ String:
   "input_type": "string",
   "title": "Server name",
   "description": "Choose a display name",
+  "links": [
+    { "label": "Naming rules", "url": "https://example.com/rules" }
+  ],
   "placeholder": "My Server"
 }
 ```
+
+Links are strictly limited to safe external `http(s)` URLs (no HTML, no `javascript:`).
 
 Number:
 ```json

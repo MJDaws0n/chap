@@ -98,6 +98,50 @@ class ChapScriptRunnerTest extends TestCase
         $this->assertSame('stopped', $resumeNo['status']);
     }
 
+    public function testPromptLinksIncludedInPayload(): void
+    {
+        $script = [
+            'chap_script_version' => 1,
+            'steps' => [
+                [
+                    'type' => 'prompt_confirm',
+                    'var' => 'ok',
+                    'title' => 'T',
+                    'description' => 'D',
+                    'links' => [
+                        ['label' => 'EULA', 'url' => 'https://www.minecraft.net/en-us/eula'],
+                    ],
+                ],
+            ],
+        ];
+
+        $res = ChapScriptRunner::run($script, [], []);
+        $this->assertSame('waiting', $res['status']);
+        $this->assertIsArray($res['prompt']['links']);
+        $this->assertSame('EULA', $res['prompt']['links'][0]['label']);
+        $this->assertSame('https://www.minecraft.net/en-us/eula', $res['prompt']['links'][0]['url']);
+    }
+
+    public function testPromptLinksRejectsJavascriptUrl(): void
+    {
+        $this->expectException(ChapScriptValidationException::class);
+
+        ChapScriptRunner::validateScript([
+            'chap_script_version' => 1,
+            'steps' => [
+                [
+                    'type' => 'prompt_confirm',
+                    'var' => 'ok',
+                    'title' => 'T',
+                    'description' => 'D',
+                    'links' => [
+                        ['label' => 'Bad', 'url' => 'javascript:alert(1)'],
+                    ],
+                ],
+            ],
+        ]);
+    }
+
     public function testMinecraftEulaGateScriptFlow(): void
     {
         $script = [
@@ -129,5 +173,52 @@ class ChapScriptRunnerTest extends TestCase
 
         $noPrompt = ChapScriptRunner::run($script, [], ['EULA' => 'TRUE']);
         $this->assertSame('completed', $noPrompt['status']);
+    }
+
+    public function testPromptValueNumberParsesToFloat(): void
+    {
+        $script = [
+            'chap_script_version' => 1,
+            'steps' => [
+                ['type' => 'prompt_value', 'var' => 'n', 'input_type' => 'number', 'title' => 'N'],
+                ['type' => 'set_env', 'key' => 'NUM', 'value' => ['var' => 'n']],
+            ],
+        ];
+
+        $first = ChapScriptRunner::run($script, [], []);
+        $this->assertSame('waiting', $first['status']);
+        $this->assertSame('value', $first['prompt']['type']);
+        $this->assertSame('number', $first['prompt']['input']['type']);
+
+        $done = ChapScriptRunner::resume($script, $first['state'], $first['env'], ['value' => '12.5']);
+        $this->assertSame('completed', $done['status']);
+        $this->assertSame('12.5', $done['env']['NUM']);
+    }
+
+    public function testPromptValueSelectAcceptsString(): void
+    {
+        $script = [
+            'chap_script_version' => 1,
+            'steps' => [
+                [
+                    'type' => 'prompt_value',
+                    'var' => 'mode',
+                    'input_type' => 'select',
+                    'title' => 'Mode',
+                    'options' => [
+                        ['label' => 'A', 'value' => 'a'],
+                        ['label' => 'B', 'value' => 'b'],
+                    ],
+                ],
+                ['type' => 'set_env', 'key' => 'MODE', 'value' => ['var' => 'mode']],
+            ],
+        ];
+
+        $first = ChapScriptRunner::run($script, [], []);
+        $this->assertSame('waiting', $first['status']);
+
+        $done = ChapScriptRunner::resume($script, $first['state'], $first['env'], ['value' => 'b']);
+        $this->assertSame('completed', $done['status']);
+        $this->assertSame('b', $done['env']['MODE']);
     }
 }

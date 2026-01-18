@@ -97,9 +97,21 @@
             const placeholder = options.input.placeholder || '';
             const value = options.input.value || '';
             const required = options.input.required ? 'required' : '';
+
+            // Optional select options: [{label,value}] or [{value,label}]
+            const selectOptions = Array.isArray(options.input.options) ? options.input.options : [];
             
             if (inputType === 'textarea') {
                 html += `<textarea class="input ${CLASSES.input}" placeholder="${escapeHtml(placeholder)}" ${required}>${escapeHtml(value)}</textarea>`;
+            } else if (inputType === 'select') {
+                html += `<select class="input ${CLASSES.input}" ${required}>`;
+                selectOptions.forEach((opt) => {
+                    const v = (opt && (opt.value !== undefined)) ? String(opt.value) : '';
+                    const l = (opt && (opt.label !== undefined)) ? String(opt.label) : v;
+                    const selected = String(value) === v ? 'selected' : '';
+                    html += `<option value="${escapeHtml(v)}" ${selected}>${escapeHtml(l)}</option>`;
+                });
+                html += `</select>`;
             } else {
                 html += `<input type="${inputType}" class="input ${CLASSES.input}" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(value)}" ${required}>`;
             }

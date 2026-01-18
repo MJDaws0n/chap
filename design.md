@@ -513,6 +513,10 @@ All messages are JSON with a `type` field:
 }
 ```
 
+Notes:
+- For `docker-compose` deployments, `memory_limit` and `cpu_limit` are treated as application-level caps.
+- The node agent enforces this by dividing the limits across all services/containers in the generated `docker-compose.yml` (so adding more services cannot exceed the app's total cap).
+
 **task:ack** (Node → Server)
 ```json
 {

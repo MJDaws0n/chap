@@ -114,6 +114,7 @@ final class ChapScriptRunner
                     'type' => 'confirm',
                     'title' => (string)($step['title'] ?? 'Confirm'),
                     'description' => (string)($step['description'] ?? ''),
+                    'links' => self::normalizeLinks($step['links'] ?? null),
                     'confirm' => [
                         'text' => (string)($step['confirm']['text'] ?? ($step['confirm_text'] ?? 'Confirm')),
                         'variant' => (string)($step['confirm']['variant'] ?? 'neutral'),
@@ -151,6 +152,7 @@ final class ChapScriptRunner
                     'type' => 'value',
                     'title' => (string)($step['title'] ?? 'Enter a value'),
                     'description' => (string)($step['description'] ?? ''),
+                    'links' => self::normalizeLinks($step['links'] ?? null),
                     'confirm' => [
                         'text' => (string)($step['confirm']['text'] ?? ($step['confirm_text'] ?? 'Submit')),
                         'variant' => (string)($step['confirm']['variant'] ?? 'neutral'),
@@ -354,6 +356,13 @@ final class ChapScriptRunner
                 }
             }
 
+            if ($type === 'prompt_confirm' || $type === 'prompt_value') {
+                // Validate optional links (safe external URLs only)
+                if (array_key_exists('links', $step)) {
+                    self::normalizeLinks($step['links']);
+                }
+            }
+
             if ($type === 'if') {
                 $then = $step['then'] ?? [];
                 $else = $step['else'] ?? [];
@@ -509,6 +518,70 @@ final class ChapScriptRunner
         if ($name === '') return false;
         if (strlen($name) > 64) return false;
         return (bool)preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $name);
+    }
+
+    /**
+     * @param mixed $links
+     * @return array<int,array{label:string,url:string}>
+     */
+    private static function normalizeLinks(mixed $links): array
+    {
+        if ($links === null) {
+            return [];
+        }
+        if (!is_array($links)) {
+            throw new ChapScriptValidationException(['links must be an array']);
+        }
+
+        $out = [];
+        $max = 5;
+        foreach (array_values($links) as $i => $link) {
+            if (count($out) >= $max) {
+                break;
+            }
+            if (!is_array($link)) {
+                throw new ChapScriptValidationException(["links[{$i}] must be an object"]);
+            }
+
+            $label = trim((string)($link['label'] ?? ''));
+            $url = trim((string)($link['url'] ?? ''));
+            if ($label === '' || strlen($label) > 80) {
+                throw new ChapScriptValidationException(["links[{$i}].label is required"]);
+            }
+            if (!self::isSafeHttpUrl($url)) {
+                throw new ChapScriptValidationException(["links[{$i}].url must be a safe http(s) URL"]);
+            }
+
+            $out[] = ['label' => $label, 'url' => $url];
+        }
+
+        return $out;
+    }
+
+    private static function isSafeHttpUrl(string $url): bool
+    {
+        if ($url === '' || strlen($url) > 2048) {
+            return false;
+        }
+        if (str_contains($url, "\n") || str_contains($url, "\r") || str_contains($url, "\0")) {
+            return false;
+        }
+
+        $parts = @parse_url($url);
+        if (!is_array($parts)) {
+            return false;
+        }
+
+        $scheme = strtolower((string)($parts['scheme'] ?? ''));
+        if (!in_array($scheme, ['https', 'http'], true)) {
+            return false;
+        }
+        $host = (string)($parts['host'] ?? '');
+        if ($host === '') {
+            return false;
+        }
+
+        return true;
     }
 
     /**

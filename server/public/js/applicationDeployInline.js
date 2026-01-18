@@ -16,6 +16,73 @@
     if (type === 'error') alert(message);
   }
 
+  async function runChapPrompt(prompt) {
+    if (!prompt || !window.Chap || !window.Chap.modal) {
+      throw new Error('Prompt requested but modal system unavailable');
+    }
+
+    const variant = (prompt.confirm && prompt.confirm.variant) ? String(prompt.confirm.variant) : 'neutral';
+    const modalType = (variant === 'danger') ? 'danger' : (variant === 'success') ? 'success' : 'confirm';
+
+    function safePromptHtml(desc, links) {
+      const d = escapeHtml(String(desc || ''));
+      const ls = Array.isArray(links) ? links : [];
+      const items = ls
+        .map((l) => {
+          const label = escapeHtml(l && l.label ? String(l.label) : 'Link');
+          const url = l && l.url ? String(l.url) : '';
+          // basic client-side safety; server already validates.
+          if (!/^https?:\/\//i.test(url)) return '';
+          const href = escapeHtml(url);
+          return `<li><a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a></li>`;
+        })
+        .filter(Boolean)
+        .join('');
+      if (!items) return `<p class="modal-message">${d}</p>`;
+      return `<p class="modal-message">${d}</p><ul class="text-sm" style="margin: 0.5rem 0 0 1.25rem;">${items}</ul>`;
+    }
+
+    if (String(prompt.type) === 'confirm') {
+      const res = await window.Chap.modal.show({
+        type: modalType,
+        title: String(prompt.title || 'Confirm'),
+        html: safePromptHtml(prompt.description, prompt.links),
+        showCancel: true,
+        confirmText: (prompt.confirm && prompt.confirm.text) ? String(prompt.confirm.text) : 'Confirm',
+        cancelText: (prompt.cancel && prompt.cancel.text) ? String(prompt.cancel.text) : 'Cancel',
+      });
+      return { confirmed: !!(res && res.confirmed) };
+    }
+
+    if (String(prompt.type) === 'value') {
+      const input = prompt.input || {};
+      const inputType = (input.type === 'number' || input.type === 'select') ? input.type : 'text';
+
+      const res = await window.Chap.modal.show({
+        type: 'info',
+        title: String(prompt.title || 'Enter a value'),
+        html: safePromptHtml(prompt.description, prompt.links),
+        showCancel: true,
+        confirmText: (prompt.confirm && prompt.confirm.text) ? String(prompt.confirm.text) : 'Submit',
+        cancelText: (prompt.cancel && prompt.cancel.text) ? String(prompt.cancel.text) : 'Cancel',
+        input: {
+          type: inputType === 'number' ? 'number' : (inputType === 'select' ? 'select' : 'text'),
+          placeholder: String(input.placeholder || ''),
+          value: (input.default !== undefined && input.default !== null) ? String(input.default) : '',
+          required: input.required !== false,
+          options: Array.isArray(input.options) ? input.options : [],
+        },
+      });
+
+      if (!res || !res.confirmed) {
+        return { value: null };
+      }
+      return { value: res.value };
+    }
+
+    throw new Error('Unknown prompt type');
+  }
+
   function escapeHtml(str) {
     return String(str || '')
       .replace(/&/g, '&amp;')
@@ -142,7 +209,7 @@
 
       try {
         const csrf = getCsrfToken(deployForm);
-        const res = await fetch(deployForm.action, {
+        let startRes = await fetch(deployForm.action, {
           method: 'POST',
           headers: {
             'Accept': 'application/json',
@@ -153,8 +220,29 @@
           body: JSON.stringify({ _csrf_token: csrf }),
         });
 
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
+        let data = await startRes.json().catch(() => ({}));
+
+        // Handle ChapScribe prompt flow (409 action_required).
+        while (startRes.status === 409 && data && data.error === 'action_required') {
+          const runUuid = data && data.script_run && data.script_run.uuid ? String(data.script_run.uuid) : '';
+          if (!runUuid) throw new Error('Template script requires action but no script_run UUID was returned');
+
+          const response = await runChapPrompt(data.prompt);
+
+          startRes = await fetch(`/chap-scripts/${encodeURIComponent(runUuid)}/respond`, {
+            method: 'POST',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+              ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+            },
+            body: JSON.stringify({ _csrf_token: csrf, response }),
+          });
+          data = await startRes.json().catch(() => ({}));
+        }
+
+        if (!startRes.ok) {
           throw new Error((data && (data.error || data.message)) ? (data.error || data.message) : 'Failed to start deployment');
         }
 
