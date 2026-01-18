@@ -58,6 +58,14 @@ services:
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:8080/auth/github/callback}
+
+      # Human verification (captcha)
+      - CAPTCHA_PROVIDER=${CAPTCHA_PROVIDER:-none}
+      - CAPTCHA_THEME=${CAPTCHA_THEME:-dark}
+      - RECAPTCHA_SITE_KEY=${RECAPTCHA_SITE_KEY:-}
+      - RECAPTCHA_SECRET_KEY=${RECAPTCHA_SECRET_KEY:-}
+      - AUTOGATE_PUBLIC_KEY=${AUTOGATE_PUBLIC_KEY:-}
+      - AUTOGATE_PRIVATE_KEY=${AUTOGATE_PRIVATE_KEY:-}
     ports:
       - "${APP_PORT:-8080}:80"
       - "${WS_PORT:-8081}:8081"

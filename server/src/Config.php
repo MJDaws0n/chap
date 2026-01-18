@@ -57,6 +57,20 @@ class Config
                 'max_size' => env('UPLOAD_MAX_SIZE', 104857600), // 100MB
                 'allowed_types' => ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
             ],
+            'captcha' => [
+                // Provider: none | recaptcha | autogate
+                'provider' => env('CAPTCHA_PROVIDER', 'none'),
+                // Widget theme hint for providers that support it
+                'theme' => env('CAPTCHA_THEME', 'dark'),
+                'recaptcha' => [
+                    'site_key' => env('RECAPTCHA_SITE_KEY', ''),
+                    'secret_key' => env('RECAPTCHA_SECRET_KEY', ''),
+                ],
+                'autogate' => [
+                    'public_key' => env('AUTOGATE_PUBLIC_KEY', ''),
+                    'private_key' => env('AUTOGATE_PRIVATE_KEY', ''),
+                ],
+            ],
         ];
 
         self::$loaded = true;

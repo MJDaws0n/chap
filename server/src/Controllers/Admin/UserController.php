@@ -301,6 +301,32 @@ class UserController extends BaseController
         $this->redirect('/admin/users/' . $user->id . '/edit');
     }
 
+    public function resetMfa(string $id): void
+    {
+        $user = User::find((int)$id);
+        if (!$user) {
+            flash('error', 'User not found');
+            $this->redirect('/admin/users');
+        }
+
+        if (!verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/admin/users/' . (int)$id . '/edit');
+        }
+
+        $user->update([
+            'two_factor_secret' => null,
+            'two_factor_enabled' => false,
+        ]);
+
+        ActivityLog::log('admin.user.mfa_reset', 'User', $user->id, [
+            'email' => $user->email,
+        ]);
+
+        flash('success', 'User MFA has been reset');
+        $this->redirect('/admin/users/' . $user->id . '/edit');
+    }
+
     public function destroy(string $id): void
     {
         $user = User::find((int)$id);

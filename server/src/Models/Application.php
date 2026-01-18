@@ -292,6 +292,17 @@ class Application extends BaseModel
         if ($this->node_id) {
             $node = Node::find($this->node_id);
             if ($node) {
+                $deploymentIds = [];
+                try {
+                    foreach ($this->deployments() as $d) {
+                        if (!empty($d->id)) {
+                            $deploymentIds[] = (int)$d->id;
+                        }
+                    }
+                } catch (\Throwable) {
+                    // ignore
+                }
+
                 $taskId = bin2hex(random_bytes(16));
                 $task = [
                     'type' => 'application:delete',
@@ -299,6 +310,7 @@ class Application extends BaseModel
                         'task_id' => $taskId,
                         'application_uuid' => $this->uuid,
                         'application_id' => $this->uuid,
+                        'deployment_ids' => $deploymentIds,
                     ],
                 ];
                 

@@ -7,6 +7,7 @@ use Chap\Models\User;
 use Chap\Models\ActivityLog;
 use Chap\Auth\OAuth\GitHubProvider;
 use Chap\Services\Mailer;
+use Chap\Security\Captcha\CaptchaVerifier;
 
 /**
  * Authentication Controller
@@ -43,7 +44,25 @@ class AuthController extends BaseController
             $this->redirect('/login');
         }
 
-        if (AuthManager::attempt($email, $password)) {
+        if (!CaptchaVerifier::verify($_POST, $_SERVER['REMOTE_ADDR'] ?? null)) {
+            flash('error', 'Please complete the captcha verification.');
+            $_SESSION['_old_input'] = ['email' => $email];
+            $this->redirect('/login');
+        }
+
+        $user = AuthManager::verifyCredentials($email, $password);
+
+        if ($user && (bool)$user->two_factor_enabled) {
+            // Store a short-lived MFA challenge in the session.
+            $_SESSION['mfa_pending_user_id'] = (int)$user->id;
+            $_SESSION['mfa_pending_started_at'] = time();
+            $_SESSION['mfa_pending_remember'] = $remember ? 1 : 0;
+            $_SESSION['_old_input'] = ['email' => $email];
+            $this->redirect('/mfa');
+        }
+
+        if ($user) {
+            AuthManager::login($user);
             // Log activity
             ActivityLog::log('user.login');
 
@@ -97,6 +116,11 @@ class AuthController extends BaseController
         $email = trim($this->input('email', ''));
         $password = $this->input('password', '');
         $passwordConfirmation = $this->input('password_confirmation', '');
+
+        if (!CaptchaVerifier::verify($_POST, $_SERVER['REMOTE_ADDR'] ?? null)) {
+            flash('error', 'Please complete the captcha verification.');
+            $this->redirect('/register');
+        }
 
         // Validation
         $errors = [];

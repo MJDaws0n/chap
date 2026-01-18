@@ -5,6 +5,7 @@ namespace Chap\Controllers\Api;
 use Chap\Controllers\BaseController;
 use Chap\Models\User;
 use Chap\App;
+use Chap\Security\TwoFactorService;
 
 /**
  * API Authentication Controller
@@ -28,6 +29,19 @@ class AuthController extends BaseController
         if (!$user || !$user->verifyPassword($data['password'])) {
             $this->json(['error' => 'Invalid credentials'], 401);
             return;
+        }
+
+        if ((bool)$user->two_factor_enabled) {
+            $code = (string)($data['mfa_code'] ?? '');
+            if ($code === '') {
+                $this->json(['error' => 'MFA required', 'mfa_required' => true], 401);
+                return;
+            }
+
+            if (!TwoFactorService::verifyCode((string)$user->two_factor_secret, $code)) {
+                $this->json(['error' => 'Invalid MFA code', 'mfa_required' => true], 401);
+                return;
+            }
         }
 
         // Generate API token

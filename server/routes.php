@@ -9,6 +9,8 @@ use Chap\Router\Route;
 Route::get('/', 'HomeController@index');
 Route::get('/login', 'AuthController@showLogin');
 Route::post('/login', 'AuthController@login');
+Route::get('/mfa', 'TwoFactorController@showChallenge');
+Route::post('/mfa', 'TwoFactorController@verifyChallenge');
 Route::get('/register', 'AuthController@showRegister');
 Route::post('/register', 'AuthController@register');
 Route::post('/logout', 'AuthController@logout');
@@ -32,6 +34,10 @@ Route::middleware(['auth'], function() {
     Route::get('/profile', 'ProfileController@index');
     Route::post('/profile', 'ProfileController@update');
     Route::post('/profile/password', 'ProfileController@updatePassword');
+    Route::get('/profile/mfa', 'TwoFactorController@showProfile');
+    Route::post('/profile/mfa/start', 'TwoFactorController@startSetup');
+    Route::post('/profile/mfa/confirm', 'TwoFactorController@confirmSetup');
+    Route::post('/profile/mfa/disable', 'TwoFactorController@disable');
     Route::delete('/profile', 'ProfileController@destroy');
     
     // Teams
@@ -185,6 +191,7 @@ Route::middleware(['auth', 'admin'], function() {
     Route::post('/admin/users', 'Admin\\UserController@store');
     Route::get('/admin/users/{id}/edit', 'Admin\\UserController@edit');
     Route::put('/admin/users/{id}', 'Admin\\UserController@update');
+    Route::post('/admin/users/{id}/mfa/reset', 'Admin\\UserController@resetMfa');
     Route::delete('/admin/users/{id}', 'Admin\\UserController@destroy');
 
     // Admin settings (email)

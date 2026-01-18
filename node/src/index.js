@@ -39,7 +39,14 @@ const config = {
 
     // SSL config for browser WebSocket (WSS)
     browserWsSslCert: process.env.BROWSER_WS_SSL_CERT || null,
-    browserWsSslKey: process.env.BROWSER_WS_SSL_KEY || null
+    browserWsSslKey: process.env.BROWSER_WS_SSL_KEY || null,
+
+    // Cleanup sweeper (best-effort, conservative)
+    sweeperEnabled: (process.env.CHAP_SWEEPER_ENABLED ?? '1') !== '0',
+    sweeperIntervalSeconds: parseInt(process.env.CHAP_SWEEPER_INTERVAL_SECONDS || '3600', 10),
+    sweeperMinAgeSeconds: parseInt(process.env.CHAP_SWEEPER_MIN_AGE_SECONDS || '86400', 10),
+    sweeperBuildMinAgeSeconds: parseInt(process.env.CHAP_SWEEPER_BUILD_MIN_AGE_SECONDS || '21600', 10),
+    sweeperDryRun: (process.env.CHAP_SWEEPER_DRY_RUN ?? '0') === '1',
 };
 
 // Images to use for port bind checks (first successful start wins)
@@ -204,6 +211,7 @@ async function gitCloneOrUpdateWithAuthAttempts({ deploymentId, repoDir, repoUrl
 // State
 let ws = null;
 let heartbeatTimer = null;
+let sweeperTimer = null;
 let reconnectTimer = null;
 let isConnected = false;
 
@@ -1692,6 +1700,192 @@ function scheduleReconnect() {
     console.log(`[Agent] Reconnecting in ${config.reconnectInterval / 1000}s...`);
 }
 
+function statMtimeMsSafe(p) {
+    try {
+        return fs.statSync(p).mtimeMs;
+    } catch {
+        return 0;
+    }
+}
+
+function listChildDirsSafe(parentDir) {
+    try {
+        return fs.readdirSync(parentDir, { withFileTypes: true })
+            .filter(d => d.isDirectory())
+            .map(d => d.name);
+    } catch {
+        return [];
+    }
+}
+
+function safeStorageRemove(targetPath, label, dryRun = false) {
+    try {
+        if (!targetPath) return false;
+        const resolved = path.resolve(targetPath);
+
+        const allowedBases = [
+            path.resolve(storage.baseDir),
+            path.resolve(storage.dirs.apps),
+            path.resolve(storage.dirs.builds),
+            path.resolve(storage.dirs.volumes),
+            path.resolve(storage.dirs.compose),
+            path.resolve(storage.dirs.logs),
+        ];
+
+        const isInside = allowedBases.some(base => resolved === base || resolved.startsWith(base + path.sep));
+        if (!isInside) {
+            console.warn(`[Sweeper] Refusing to delete outside storage: ${resolved} (${label})`);
+            return false;
+        }
+        if (allowedBases.includes(resolved)) {
+            console.warn(`[Sweeper] Refusing to delete storage root: ${resolved} (${label})`);
+            return false;
+        }
+
+        if (!fs.existsSync(resolved)) return false;
+        if (dryRun) {
+            console.log(`[Sweeper] DRY RUN delete ${label}: ${resolved}`);
+            return true;
+        }
+        fs.rmSync(resolved, { recursive: true, force: true });
+        console.log(`[Sweeper] Deleted ${label}: ${resolved}`);
+        return true;
+    } catch (err) {
+        console.warn(`[Sweeper] Failed deleting ${label}: ${err.message}`);
+        return false;
+    }
+}
+
+async function composeProjectHasContainers(projectName) {
+    const proj = dockerSafeName(projectName);
+    if (!proj) return false;
+    try {
+        const out = await execCommand(`docker ps -aq --filter "label=com.docker.compose.project=${proj}"`, { timeout: 15000 });
+        return out.split('\n').map(s => s.trim()).filter(Boolean).length > 0;
+    } catch {
+        return false;
+    }
+}
+
+async function cleanupDockerByComposeProject(projectName, dryRun = false) {
+    const proj = dockerSafeName(projectName);
+    if (!proj) return;
+
+    const run = async (cmd) => {
+        if (dryRun) {
+            console.log(`[Sweeper] DRY RUN ${cmd}`);
+            return '';
+        }
+        return execCommand(cmd, { timeout: 20000 });
+    };
+
+    // Containers
+    try {
+        const ids = (await execCommand(`docker ps -aq --filter "label=com.docker.compose.project=${proj}"`, { timeout: 15000 }))
+            .split('\n').map(s => s.trim()).filter(Boolean);
+        for (const cid of ids) {
+            try { await run(`docker rm -f ${dockerSafeName(cid)}`); } catch {}
+        }
+    } catch {}
+
+    // Volumes
+    try {
+        const vols = (await execCommand(`docker volume ls -q --filter "label=com.docker.compose.project=${proj}"`, { timeout: 15000 }))
+            .split('\n').map(s => s.trim()).filter(Boolean);
+        for (const v of vols) {
+            try { await run(`docker volume rm -f ${dockerSafeName(v)}`); } catch {}
+        }
+    } catch {}
+
+    // Networks
+    try {
+        const nets = (await execCommand(`docker network ls -q --filter "label=com.docker.compose.project=${proj}"`, { timeout: 15000 }))
+            .split('\n').map(s => s.trim()).filter(Boolean);
+        for (const n of nets) {
+            try { await run(`docker network rm ${dockerSafeName(n)}`); } catch {}
+        }
+    } catch {}
+}
+
+async function runSweeperOnce() {
+    const enabled = !!config.sweeperEnabled;
+    if (!enabled) return;
+
+    const now = Date.now();
+    const minAgeMs = Math.max(60, config.sweeperMinAgeSeconds || 86400) * 1000;
+    const buildMinAgeMs = Math.max(60, config.sweeperBuildMinAgeSeconds || 21600) * 1000;
+    const dryRun = !!config.sweeperDryRun;
+
+    // 1) Old build directories: remove build-* older than threshold.
+    for (const name of listChildDirsSafe(storage.dirs.builds)) {
+        if (!name.startsWith('build-')) continue;
+        const p = path.join(storage.dirs.builds, name);
+        const ageMs = now - statMtimeMsSafe(p);
+        if (ageMs < buildMinAgeMs) continue;
+        safeStorageRemove(p, `build dir ${name}`, dryRun);
+    }
+
+    // 2) Orphan compose/app/volume directories keyed by UUID.
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    const composeDirs = listChildDirsSafe(storage.dirs.compose)
+        .filter(n => n.startsWith('service-') && uuidRe.test(n.slice('service-'.length)));
+
+    for (const name of composeDirs) {
+        const uuid = name.slice('service-'.length).toLowerCase();
+        const project = `chap-${uuid}`;
+        const pCompose = path.join(storage.dirs.compose, name);
+        const ageMs = now - statMtimeMsSafe(pCompose);
+        if (ageMs < minAgeMs) continue;
+
+        // Only sweep when there are no containers.
+        const hasContainers = await composeProjectHasContainers(project);
+        if (hasContainers) continue;
+
+        // Clean docker resources that may remain.
+        await cleanupDockerByComposeProject(project, dryRun);
+
+        // Remove directories
+        safeStorageRemove(pCompose, `compose dir ${name}`, dryRun);
+        safeStorageRemove(path.join(storage.dirs.apps, `app-${uuid}`), `app dir app-${uuid}`, dryRun);
+        safeStorageRemove(path.join(storage.dirs.volumes, `app-${uuid}`), `volume dir app-${uuid}`, dryRun);
+    }
+}
+
+function startSweeper() {
+    if (!config.sweeperEnabled) {
+        console.log('[Sweeper] Disabled via CHAP_SWEEPER_ENABLED=0');
+        return;
+    }
+    const intervalMs = Math.max(60, config.sweeperIntervalSeconds || 3600) * 1000;
+    let running = false;
+
+    const tick = async () => {
+        if (running) return;
+        running = true;
+        try {
+            await runSweeperOnce();
+        } catch (err) {
+            console.warn(`[Sweeper] Error: ${err.message}`);
+        } finally {
+            running = false;
+        }
+    };
+
+    console.log(`[Sweeper] Enabled interval=${Math.round(intervalMs / 1000)}s minAge=${config.sweeperMinAgeSeconds}s dryRun=${config.sweeperDryRun ? 1 : 0}`);
+
+    // Run once shortly after boot.
+    setTimeout(() => tick().catch(() => {}), 10_000);
+    sweeperTimer = setInterval(() => tick().catch(() => {}), intervalMs);
+}
+
+function stopSweeper() {
+    if (sweeperTimer) {
+        clearInterval(sweeperTimer);
+        sweeperTimer = null;
+    }
+}
+
 // ============================================
 // Browser WebSocket Server for Direct Log Streaming
 // ============================================
@@ -1700,6 +1894,7 @@ function scheduleReconnect() {
 process.on('SIGTERM', () => {
     console.log('[Agent] Received SIGTERM, shutting down...');
     stopHeartbeat();
+    stopSweeper();
     if (ws) ws.close();
     if (liveLogsWs) {
         liveLogsWs.close();
@@ -1711,6 +1906,7 @@ process.on('SIGTERM', () => {
 process.on('SIGINT', () => {
     console.log('[Agent] Received SIGINT, shutting down...');
     stopHeartbeat();
+    stopSweeper();
     if (ws) ws.close();
     if (liveLogsWs) {
         liveLogsWs.close();
@@ -1741,6 +1937,9 @@ if (!liveLogsWs) {
     });
 }
 liveLogsWs.start();
+
+// Start local sweeper (best-effort orphan cleanup)
+startSweeper();
 
 // Connect to Chap server
 connect();

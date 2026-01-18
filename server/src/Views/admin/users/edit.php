@@ -207,11 +207,20 @@ unset($_SESSION['_old_input']);
                     <a href="/admin/users" class="btn btn-secondary">Cancel</a>
                 </div>
 
+                <div class="flex items-center gap-3">
+                    <?php if ((bool)$editUser->two_factor_enabled): ?>
+                        <form method="POST" action="/admin/users/<?= (int)$editUser->id ?>/mfa/reset" onsubmit="return confirm('Reset MFA for this user? They will need to set up MFA again.');">
+                            <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                            <button type="submit" class="btn btn-secondary">Reset MFA</button>
+                        </form>
+                    <?php endif; ?>
+
                 <form method="POST" action="/admin/users/<?= (int)$editUser->id ?>" id="delete-user-form">
                     <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                     <input type="hidden" name="_method" value="DELETE">
                     <button type="button" class="btn btn-danger" id="delete-user-btn">Delete</button>
                 </form>
+                </div>
             </div>
         </div>
     </div>

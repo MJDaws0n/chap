@@ -18,25 +18,36 @@ class AuthManager
      */
     public static function attempt(string $email, string $password): bool
     {
+        $user = self::verifyCredentials($email, $password);
+        if (!$user) {
+            return false;
+        }
+
+        self::login($user);
+        return true;
+    }
+
+    /**
+     * Verify credentials without creating a session.
+     */
+    public static function verifyCredentials(string $email, string $password): ?User
+    {
         $db = App::db();
-        
+
         $userData = $db->fetch(
             "SELECT * FROM users WHERE email = ? LIMIT 1",
             [$email]
         );
 
         if (!$userData) {
-            return false;
+            return null;
         }
 
         if (!password_verify($password, $userData['password_hash'])) {
-            return false;
+            return null;
         }
 
-        // Create session
-        self::createSession($userData);
-        
-        return true;
+        return User::fromArray($userData);
     }
 
     /**

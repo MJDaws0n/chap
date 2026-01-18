@@ -89,6 +89,24 @@
             </div>
         </form>
 
+        <!-- Multi-Factor Authentication -->
+        <div class="card card-glass">
+            <div class="card-header">
+                <div>
+                    <h2 class="card-title">Multi-Factor Authentication</h2>
+                    <p class="text-secondary text-sm">Add an authenticator app code to protect your account.</p>
+                </div>
+            </div>
+
+            <div class="card-body">
+                <?php $mfaEnabled = (bool)($user['two_factor_enabled'] ?? false); ?>
+                <p class="text-secondary text-sm mb-4">
+                    Status: <strong><?= $mfaEnabled ? 'Enabled' : 'Disabled' ?></strong>
+                </p>
+                <a href="/profile/mfa" class="btn btn-secondary">Manage MFA</a>
+            </div>
+        </div>
+
         <!-- Delete Account -->
         <form action="/profile" method="POST" id="delete-account-form" class="card card-glass border-red">
             <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">

@@ -224,6 +224,19 @@ curl -X POST https://your-chap-server/api/v1/applications/{id}/deploy \
 | `DB_PASSWORD` | MySQL password | (required) |
 | `GITHUB_CLIENT_ID` | For GitHub OAuth | (optional) |
 | `GITHUB_CLIENT_SECRET` | For GitHub OAuth | (optional) |
+| `CAPTCHA_PROVIDER` | Human check provider: `none`, `recaptcha`, `autogate` | `none` |
+| `CAPTCHA_THEME` | Widget theme hint (e.g. `dark`) | `dark` |
+| `RECAPTCHA_SITE_KEY` | Google reCAPTCHA site key (required if using `recaptcha`) | (optional) |
+| `RECAPTCHA_SECRET_KEY` | Google reCAPTCHA secret key (required if using `recaptcha`) | (optional) |
+| `AUTOGATE_PUBLIC_KEY` | AutoGate public key (required if using `autogate`) | (optional) |
+| `AUTOGATE_PRIVATE_KEY` | AutoGate private key (required if using `autogate`) | (optional) |
+
+### MFA (TOTP)
+
+Chap supports TOTP-based MFA (Authenticator apps) for the dashboard.
+
+- Users can enable/disable MFA at `/profile/mfa` (QR code, clickable `otpauth://` link, and manual secret are shown).
+- Admins can reset any user's MFA from the Admin → Users → Edit page (this disables MFA and clears the stored secret).
 
 ### Node Environment Variables
 
