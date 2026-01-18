@@ -9,6 +9,7 @@ const WebSocket = require('ws');
 const { WebSocketServer } = require('ws');
 const { spawn } = require('child_process');
 const net = require('net');
+const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const security = require('./security');
@@ -257,6 +258,78 @@ function getDockerSocketPath() {
         if (p) return p;
     }
     return '/var/run/docker.sock';
+}
+
+function dockerApiJson(method, pathAndQuery) {
+    return new Promise((resolve, reject) => {
+        const socketPath = getDockerSocketPath();
+        const req = http.request(
+            {
+                socketPath,
+                path: pathAndQuery,
+                method,
+                headers: {
+                    Host: 'docker',
+                    Accept: 'application/json',
+                },
+            },
+            (res) => {
+                let body = '';
+                res.setEncoding('utf8');
+                res.on('data', (c) => { body += c; });
+                res.on('end', () => {
+                    const code = res.statusCode || 0;
+                    if (code < 200 || code >= 300) {
+                        return reject(new Error(`Docker API ${method} ${pathAndQuery} failed (${code})`));
+                    }
+                    try {
+                        resolve(JSON.parse(body || '{}'));
+                    } catch (e) {
+                        reject(new Error(`Docker API invalid JSON response for ${pathAndQuery}`));
+                    }
+                });
+            }
+        );
+        req.on('error', reject);
+        req.end();
+    });
+}
+
+function parseCpusetCores(cpuset) {
+    const s = String(cpuset || '').trim();
+    if (!s) return null;
+    const parts = s.split(',').map((p) => p.trim()).filter(Boolean);
+    const set = new Set();
+    for (const p of parts) {
+        const m = p.match(/^(\d+)(?:-(\d+))?$/);
+        if (!m) continue;
+        const a = parseInt(m[1], 10);
+        const b = m[2] ? parseInt(m[2], 10) : a;
+        if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        for (let i = lo; i <= hi; i++) set.add(i);
+    }
+    return set.size ? set.size : null;
+}
+
+function computeCpuLimitCores(inspect, fallbackOnlineCpus) {
+    const hostCfg = inspect && inspect.HostConfig ? inspect.HostConfig : null;
+    if (!hostCfg) return Number.isFinite(fallbackOnlineCpus) && fallbackOnlineCpus > 0 ? fallbackOnlineCpus : null;
+
+    const nano = typeof hostCfg.NanoCpus === 'number' ? hostCfg.NanoCpus : 0;
+    if (Number.isFinite(nano) && nano > 0) return nano / 1e9;
+
+    const quota = typeof hostCfg.CpuQuota === 'number' ? hostCfg.CpuQuota : 0;
+    const period = typeof hostCfg.CpuPeriod === 'number' ? hostCfg.CpuPeriod : 0;
+    if (Number.isFinite(quota) && Number.isFinite(period) && quota > 0 && period > 0) {
+        return quota / period;
+    }
+
+    const cpuset = parseCpusetCores(hostCfg.CpusetCpus);
+    if (cpuset) return cpuset;
+
+    return Number.isFinite(fallbackOnlineCpus) && fallbackOnlineCpus > 0 ? fallbackOnlineCpus : null;
 }
 
 function openDockerHijackedConnection({ method, pathAndQuery }) {
@@ -2509,6 +2582,12 @@ function createLiveLogsWs(deps) {
             case 'ping':
                 safeJsonSend(browserWs, { type: 'pong' });
                 break;
+            case 'stats:subscribe':
+                handleBrowserStatsSubscribe(browserWs, message);
+                break;
+            case 'stats:unsubscribe':
+                stopStatsPolling(browserWs);
+                break;
             case 'files:request':
                 handleFilesRequest(browserWs, message);
                 break;
@@ -2526,6 +2605,177 @@ function createLiveLogsWs(deps) {
                     safeJsonSend(browserWs, { type: 'error', error: 'Not authenticated' });
                 }
         }
+    }
+
+    function stopStatsPolling(browserWs) {
+        if (!browserWs) return;
+        if (browserWs._statsTimer) {
+            try { clearInterval(browserWs._statsTimer); } catch {}
+            browserWs._statsTimer = null;
+        }
+        browserWs._statsContainerId = null;
+        browserWs._statsInspect = null;
+        browserWs._statsPrev = null;
+        browserWs._statsLastErrorAt = 0;
+    }
+
+    async function handleBrowserStatsSubscribe(browserWs, message) {
+        const containerIdRaw = typeof message.container_id === 'string' ? message.container_id.trim() : '';
+        if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+        if (!browserWs.authenticated) {
+            return safeJsonSend(browserWs, { type: 'stats:rejected', error: 'Not authenticated', timestamp: Date.now() });
+        }
+        if (!hasPerm(browserWs, 'logs', 'read')) {
+            return safeJsonSend(browserWs, { type: 'stats:rejected', error: 'Not authorized', timestamp: Date.now() });
+        }
+        if (!containerIdRaw) {
+            return safeJsonSend(browserWs, { type: 'stats:rejected', error: 'Missing container_id', timestamp: Date.now() });
+        }
+
+        const appUuid = browserWs.applicationUuid;
+        const all = await getAllAppContainers(appUuid);
+        const target = findContainerById(all, containerIdRaw);
+        if (!target) {
+            return safeJsonSend(browserWs, { type: 'stats:rejected', error: 'Container not found for application', timestamp: Date.now() });
+        }
+
+        const canonicalContainerId = dockerSafeIdToken(target.id);
+        if (!canonicalContainerId) {
+            return safeJsonSend(browserWs, { type: 'stats:rejected', error: 'Invalid container id', timestamp: Date.now() });
+        }
+
+        stopStatsPolling(browserWs);
+        browserWs._statsContainerId = canonicalContainerId;
+
+        try {
+            browserWs._statsInspect = await dockerApiJson('GET', `/containers/${canonicalContainerId}/json`);
+        } catch {
+            browserWs._statsInspect = null;
+        }
+
+        const tick = async () => {
+            if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
+            if (!browserWs._statsContainerId) return;
+            const cid = browserWs._statsContainerId;
+
+            let stats;
+            try {
+                // stream=false returns a single snapshot.
+                stats = await dockerApiJson('GET', `/containers/${cid}/stats?stream=false`);
+            } catch (e) {
+                const now = Date.now();
+                // Avoid spamming errors.
+                if (!browserWs._statsLastErrorAt || now - browserWs._statsLastErrorAt > 5000) {
+                    browserWs._statsLastErrorAt = now;
+                    safeJsonSend(browserWs, {
+                        type: 'stats',
+                        ok: false,
+                        container_id: cid,
+                        error: e && e.message ? e.message : 'Failed to fetch stats',
+                        timestamp: now,
+                    });
+                }
+                return;
+            }
+
+            const now = Date.now();
+            const cpuStats = stats && stats.cpu_stats ? stats.cpu_stats : null;
+            const precpu = stats && stats.precpu_stats ? stats.precpu_stats : null;
+
+            const onlineCpus =
+                (cpuStats && Number.isFinite(cpuStats.online_cpus) && cpuStats.online_cpus > 0)
+                    ? cpuStats.online_cpus
+                    : (cpuStats && cpuStats.cpu_usage && Array.isArray(cpuStats.cpu_usage.percpu_usage) && cpuStats.cpu_usage.percpu_usage.length)
+                        ? cpuStats.cpu_usage.percpu_usage.length
+                        : null;
+
+            // Compute CPU% using previous sample (preferred) or Docker's precpu fallback.
+            const prev = browserWs._statsPrev;
+            const curCpuTotal = cpuStats && cpuStats.cpu_usage ? cpuStats.cpu_usage.total_usage : null;
+            const curSystem = cpuStats ? cpuStats.system_cpu_usage : null;
+
+            const prevCpuTotal = prev && prev.cpuTotal !== null ? prev.cpuTotal : (precpu && precpu.cpu_usage ? precpu.cpu_usage.total_usage : null);
+            const prevSystem = prev && prev.system !== null ? prev.system : (precpu ? precpu.system_cpu_usage : null);
+            const cpusForPercent = Number.isFinite(onlineCpus) && onlineCpus > 0 ? onlineCpus : 1;
+
+            let cpuPercent = 0;
+            let cpuUsageCores = null;
+            if (Number.isFinite(curCpuTotal) && Number.isFinite(curSystem) && Number.isFinite(prevCpuTotal) && Number.isFinite(prevSystem)) {
+                const cpuDelta = curCpuTotal - prevCpuTotal;
+                const sysDelta = curSystem - prevSystem;
+                if (sysDelta > 0 && cpuDelta >= 0) {
+                    cpuPercent = (cpuDelta / sysDelta) * cpusForPercent * 100;
+                    cpuUsageCores = (cpuDelta / sysDelta) * cpusForPercent;
+                }
+            }
+
+            const memStats = stats && stats.memory_stats ? stats.memory_stats : null;
+            const memUsage = memStats && Number.isFinite(memStats.usage) ? memStats.usage : null;
+            const memLimitFromStats = memStats && Number.isFinite(memStats.limit) ? memStats.limit : null;
+            const memLimitFromInspect = browserWs._statsInspect && browserWs._statsInspect.HostConfig && Number.isFinite(browserWs._statsInspect.HostConfig.Memory)
+                ? browserWs._statsInspect.HostConfig.Memory
+                : null;
+            const memLimit = memLimitFromInspect && memLimitFromInspect > 0 ? memLimitFromInspect : memLimitFromStats;
+
+            // Network totals (bytes) -> derive per-second rate.
+            let rxBytes = 0;
+            let txBytes = 0;
+            const nets = stats && stats.networks && typeof stats.networks === 'object' ? stats.networks : null;
+            if (nets) {
+                for (const v of Object.values(nets)) {
+                    if (!v) continue;
+                    if (Number.isFinite(v.rx_bytes)) rxBytes += v.rx_bytes;
+                    if (Number.isFinite(v.tx_bytes)) txBytes += v.tx_bytes;
+                }
+            }
+
+            let rxBps = null;
+            let txBps = null;
+            if (prev && Number.isFinite(prev.rxBytes) && Number.isFinite(prev.txBytes) && Number.isFinite(prev.ts)) {
+                const dt = (now - prev.ts) / 1000;
+                if (dt > 0) {
+                    rxBps = Math.max(0, (rxBytes - prev.rxBytes) / dt);
+                    txBps = Math.max(0, (txBytes - prev.txBytes) / dt);
+                }
+            }
+
+            const cpuLimitCores = computeCpuLimitCores(browserWs._statsInspect, onlineCpus);
+
+            browserWs._statsPrev = {
+                ts: now,
+                cpuTotal: Number.isFinite(curCpuTotal) ? curCpuTotal : null,
+                system: Number.isFinite(curSystem) ? curSystem : null,
+                rxBytes,
+                txBytes,
+            };
+
+            safeJsonSend(browserWs, {
+                type: 'stats',
+                ok: true,
+                container_id: cid,
+                cpu_percent: Number.isFinite(cpuPercent) ? cpuPercent : 0,
+                cpu_usage_cores: Number.isFinite(cpuUsageCores) ? cpuUsageCores : null,
+                cpu_limit_cores: Number.isFinite(cpuLimitCores) ? cpuLimitCores : null,
+                mem_usage_bytes: Number.isFinite(memUsage) ? memUsage : null,
+                mem_limit_bytes: Number.isFinite(memLimit) ? memLimit : null,
+                net_rx_bps: Number.isFinite(rxBps) ? rxBps : null,
+                net_tx_bps: Number.isFinite(txBps) ? txBps : null,
+                timestamp: now,
+            });
+        };
+
+        // Immediate sample, then poll.
+        tick().catch(() => {});
+        browserWs._statsTimer = setInterval(() => {
+            tick().catch(() => {});
+        }, 1000);
+
+        safeJsonSend(browserWs, {
+            type: 'stats:subscribed',
+            container_id: canonicalContainerId,
+            container: target.name,
+            timestamp: Date.now(),
+        });
     }
 
     async function handleBrowserConsoleInput(browserWs, message) {
@@ -2911,6 +3161,9 @@ function createLiveLogsWs(deps) {
 
                 // Stop per-connection helper containers (volume filesystem).
                 cleanupVolumeFsHelpers(browserWs).catch(() => {});
+
+                // Stop stats polling.
+                stopStatsPolling(browserWs);
 
                 stopAllLogProcesses(browserWs);
                 if (browserWs._containerDiscoveryTimer) {

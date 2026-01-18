@@ -1146,6 +1146,51 @@ class ApplicationController extends BaseController
     }
 
     /**
+     * Resource usage page for application (WebSocket-only, browser connects to node).
+     */
+    public function usage(string $uuid): void
+    {
+        $team = $this->currentTeam();
+        $application = Application::findByUuid($uuid);
+
+        if (!$this->canAccessApplication($application, $team)) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Application not found'], 404);
+            } else {
+                flash('error', 'Application not found');
+                $this->redirect('/projects');
+            }
+            return;
+        }
+
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        $this->requireTeamPermission('logs', 'read', $teamId);
+
+        if ($this->isApiRequest()) {
+            $this->json(['error' => 'Usage requires WebSocket'], 400);
+            return;
+        }
+
+        $node = $application->node();
+        if (!$node && $application->node_id) {
+            $node = \Chap\Models\Node::find($application->node_id);
+        }
+
+        $logsWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
+        $latest = Deployment::forApplication((int) $application->id, 1);
+
+        $this->view('applications/usage', [
+            'title' => 'Usage - ' . $application->name,
+            'application' => $application,
+            'environment' => $application->environment(),
+            'project' => $application->environment()->project(),
+            'logsWebsocketUrl' => $logsWebsocketUrl,
+            'sessionId' => session_id(),
+            'latestDeployment' => !empty($latest) ? $latest[0] : null,
+        ]);
+    }
+
+    /**
      * Container file manager page for application
      */
     public function files(string $uuid): void

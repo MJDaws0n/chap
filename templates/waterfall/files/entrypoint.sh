@@ -10,7 +10,8 @@ WATERFALL_VERSION="${WATERFALL_VERSION:-latest}"
 
 if [[ -n "${SERVER_JAR_URL}" ]]; then
   echo "Downloading server jar from SERVER_JAR_URL"
-  curl -fsSL "${SERVER_JAR_URL}" -o /data/server.jar || true
+  EXPANDED_URL="${SERVER_JAR_URL//\{version\}/${WATERFALL_VERSION}}"
+  curl -fsSL "${EXPANDED_URL}" -o /data/server.jar || true
 fi
 
 if [[ ! -f /data/server.jar ]]; then

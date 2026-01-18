@@ -19,7 +19,8 @@ SERVER_JAR_URL="${SERVER_JAR_URL:-}"
 
 if [[ -n "${SERVER_JAR_URL}" ]]; then
   echo "Downloading server jar from SERVER_JAR_URL"
-  curl -fsSL "${SERVER_JAR_URL}" -o /data/server.jar || true
+  EXPANDED_URL="${SERVER_JAR_URL//\{version\}/${MINECRAFT_VERSION}}"
+  curl -fsSL "${EXPANDED_URL}" -o /data/server.jar || true
 fi
 
 if [[ -n "${CURSE_PACK}" ]]; then

@@ -780,6 +780,150 @@ async function deployCompose(deploymentId, appConfig) {
         return yaml.stringify(doc);
     };
 
+    const parseDockerMemoryToBytes = (value) => {
+        if (value === null || value === undefined) return null;
+        const s = String(value).trim();
+        if (s === '') return null;
+
+        const m = s.match(/^([0-9]+(?:\.[0-9]+)?)\s*([kmgt])?b?$/i);
+        if (!m) return null;
+
+        const num = parseFloat(m[1]);
+        if (!Number.isFinite(num) || num <= 0) return null;
+
+        const unit = (m[2] || '').toLowerCase();
+        const mul = unit === 't' ? 1024 ** 4
+            : unit === 'g' ? 1024 ** 3
+            : unit === 'm' ? 1024 ** 2
+            : unit === 'k' ? 1024
+            : 1;
+
+        return Math.floor(num * mul);
+    };
+
+    // Enforce app-level resource caps by dividing them across all services.
+    // This prevents users from exceeding a 2GB/1CPU app limit by adding many containers.
+    const applyAppResourceCapsToCompose = (composeContent) => {
+        const raw = String(composeContent || '');
+        if (!raw.trim()) return raw;
+
+        // App-level limits come from the application config.
+        const cpuRaw = appConfig.cpu_limit ?? appConfig.cpuLimit ?? appConfig.cpu_limit_cores ?? appConfig.cpuLimitCores;
+        const memRaw = appConfig.memory_limit ?? appConfig.memoryLimit ?? appConfig.ram_limit ?? appConfig.ramLimit;
+
+        const cpuTotal = cpuRaw === null || cpuRaw === undefined ? null : parseFloat(String(cpuRaw).trim());
+        const cpuLimited = Number.isFinite(cpuTotal) && cpuTotal > 0;
+
+        const memTotalBytes = parseDockerMemoryToBytes(memRaw);
+        const memLimited = Number.isFinite(memTotalBytes) && memTotalBytes > 0;
+
+        if (!cpuLimited && !memLimited) {
+            return raw;
+        }
+
+        let doc;
+        try {
+            doc = yaml.parse(raw);
+        } catch (err) {
+            // If YAML isn't parseable, don't block deploy here (it will fail later anyway).
+            return raw;
+        }
+
+        if (!doc || typeof doc !== 'object' || !doc.services || typeof doc.services !== 'object') {
+            return raw;
+        }
+
+        const serviceEntries = Object.entries(doc.services)
+            .filter(([, service]) => service && typeof service === 'object');
+
+        if (serviceEntries.length === 0) {
+            return raw;
+        }
+
+        // Weight by replicas if present (best-effort; compose may ignore deploy.replicas).
+        const getServiceWeight = (service) => {
+            const replicasRaw = service?.deploy?.replicas;
+            const n = parseInt(replicasRaw, 10);
+            return Number.isFinite(n) && n > 0 ? n : 1;
+        };
+
+        const weights = serviceEntries.map(([name, service]) => ({
+            name,
+            service,
+            weight: getServiceWeight(service),
+        }));
+
+        const totalWeight = weights.reduce((sum, x) => sum + x.weight, 0);
+        if (totalWeight <= 0) return raw;
+
+        // CPU: distribute as milli-cores to avoid rounding making totals exceed the cap.
+        let cpuRemainderMilli = 0;
+        let perWeightCpuMilli = 0;
+        if (cpuLimited) {
+            const cpuTotalMilli = Math.floor(cpuTotal * 1000);
+            perWeightCpuMilli = Math.floor(cpuTotalMilli / totalWeight);
+            cpuRemainderMilli = cpuTotalMilli - (perWeightCpuMilli * totalWeight);
+        }
+
+        // Memory: distribute in bytes exactly.
+        let memRemainderBytes = 0;
+        let perWeightMemBytes = 0;
+        if (memLimited) {
+            perWeightMemBytes = Math.floor(memTotalBytes / totalWeight);
+            memRemainderBytes = memTotalBytes - (perWeightMemBytes * totalWeight);
+        }
+
+        for (const entry of weights) {
+            const { name, service, weight } = entry;
+
+            if (cpuLimited) {
+                let cpuMilli = perWeightCpuMilli * weight;
+                if (cpuRemainderMilli > 0) {
+                    const extra = Math.min(cpuRemainderMilli, weight);
+                    cpuMilli += extra;
+                    cpuRemainderMilli -= extra;
+                }
+
+                // Floor to 0.001 core increments to ensure we never exceed cpuTotal.
+                const cpuCores = Math.max(0, cpuMilli) / 1000;
+                service.deploy = service.deploy && typeof service.deploy === 'object' ? service.deploy : {};
+                service.deploy.resources = service.deploy.resources && typeof service.deploy.resources === 'object' ? service.deploy.resources : {};
+                service.deploy.resources.limits = service.deploy.resources.limits && typeof service.deploy.resources.limits === 'object' ? service.deploy.resources.limits : {};
+                service.deploy.resources.limits.cpus = cpuCores.toFixed(3);
+            }
+
+            if (memLimited) {
+                let memBytes = perWeightMemBytes * weight;
+                if (memRemainderBytes > 0) {
+                    const extra = Math.min(memRemainderBytes, weight);
+                    memBytes += extra;
+                    memRemainderBytes -= extra;
+                }
+
+                service.deploy = service.deploy && typeof service.deploy === 'object' ? service.deploy : {};
+                service.deploy.resources = service.deploy.resources && typeof service.deploy.resources === 'object' ? service.deploy.resources : {};
+                service.deploy.resources.limits = service.deploy.resources.limits && typeof service.deploy.resources.limits === 'object' ? service.deploy.resources.limits : {};
+
+                // Use bytes string to avoid rounding up to MiB and accidentally exceeding the app cap.
+                service.deploy.resources.limits.memory = String(Math.max(0, memBytes));
+
+                // Best-effort: prevent swap abuse as well.
+                service.memswap_limit = String(Math.max(0, memBytes));
+            }
+
+            doc.services[name] = service;
+        }
+
+        // Log what we did (helpful for debugging)
+        try {
+            const cpuMsg = cpuLimited ? `${cpuTotal} CPU` : 'CPU unlimited';
+            const memMsg = memLimited ? `${memRaw}` : 'memory unlimited';
+            sendLog(deploymentId, `🔧 App resource caps applied (${cpuMsg}, ${memMsg}) across ${serviceEntries.length} service(s)`, 'info');
+        } catch (_) {}
+
+        return yaml.stringify(doc);
+    };
+
     // Write docker-compose.yml if provided via config (overrides the one from repo)
     if (dockerCompose) {
         console.log(`[Agent] 📝 Writing docker-compose.yml from config`);
@@ -789,6 +933,9 @@ async function deployCompose(deploymentId, appConfig) {
 
             // Ensure compose services are tagged as Chap-managed so metrics can find them.
             dockerCompose = injectChapLabels(dockerCompose);
+
+            // Enforce app-level CPU/memory caps by dividing across services.
+            dockerCompose = applyAppResourceCapsToCompose(dockerCompose);
 
             console.log(`[Agent] 🔒 Docker Compose file sanitized for security`);
             sendLog(deploymentId, '🔒 Compose file security validated', 'info');
@@ -808,6 +955,9 @@ async function deployCompose(deploymentId, appConfig) {
 
                 // Ensure compose services are tagged as Chap-managed so metrics can find them.
                 sanitizedCompose = injectChapLabels(sanitizedCompose);
+
+                // Enforce app-level CPU/memory caps by dividing across services.
+                sanitizedCompose = applyAppResourceCapsToCompose(sanitizedCompose);
 
                 fs.writeFileSync(existingComposePath, sanitizedCompose);
                 console.log(`[Agent] 🔒 Existing compose file sanitized for security`);
@@ -868,7 +1018,9 @@ async function deployCompose(deploymentId, appConfig) {
     // Start compose services with build (using isolated network)
     try {
         const safeAppId = String(applicationId).trim();
-        const composeOutput = await execCommand(`docker compose -p chap-${safeAppId} up -d --build`, { cwd: composeDir });
+        // NOTE: Without --compatibility, docker compose ignores deploy.resources limits (non-swarm).
+        // Chap uses deploy.resources.limits for CPU/memory; --compatibility translates them into container runtime flags.
+        const composeOutput = await execCommand(`docker compose --compatibility -p chap-${safeAppId} up -d --build`, { cwd: composeDir });
         console.log(`[Agent] ✓ Docker Compose services started`);
         sendLog(deploymentId, '✓ Docker Compose services started', 'info');
     } catch (err) {

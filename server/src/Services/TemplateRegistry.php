@@ -8,6 +8,43 @@ use Chap\Models\Template;
 final class TemplateRegistry
 {
     /**
+     * Load a template package from disk by slug.
+     *
+     * This does not require the template to be synced to the database.
+     */
+    public static function loadPackageBySlug(string $slug): ?TemplatePackage
+    {
+        $slug = trim($slug);
+        if ($slug === '') {
+            return null;
+        }
+
+        $roots = [
+            ['path' => '/var/www/html/templates', 'is_official' => true],
+            ['path' => '/var/www/html/storage/templates', 'is_official' => false],
+        ];
+
+        foreach ($roots as $root) {
+            $base = (string)($root['path'] ?? '');
+            if ($base === '' || !is_dir($base)) {
+                continue;
+            }
+
+            $dir = rtrim($base, '/') . '/' . $slug;
+            if (!is_dir($dir)) {
+                continue;
+            }
+
+            $pkg = self::loadPackageFromDirectory($dir, (bool)($root['is_official'] ?? false));
+            if ($pkg) {
+                return $pkg;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Scan known template directories and sync to the database.
      *
      * @return array{scanned:int, upserted:int, errors: array<int,string>}

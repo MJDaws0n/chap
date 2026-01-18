@@ -104,6 +104,7 @@ Route::middleware(['auth'], function() {
     Route::post('/applications/{id}/ports', 'ApplicationPortController@allocate');
     Route::delete('/applications/{id}/ports/{port}', 'ApplicationPortController@unallocate');
     Route::get('/applications/{id}/logs', 'ApplicationController@logs');
+    Route::get('/applications/{id}/usage', 'ApplicationController@usage');
     Route::get('/applications/{id}/files', 'ApplicationController@files');
     Route::get('/applications/{id}/volumes', 'ApplicationController@volumes');
     Route::get('/applications/{id}/volumes/{volume}/files', 'ApplicationController@volumeFiles');
@@ -119,6 +120,9 @@ Route::middleware(['auth'], function() {
     Route::post('/deployments/{id}/cancel', 'DeploymentController@cancel');
     Route::post('/deployments/{id}/rollback', 'DeploymentController@rollback');
     Route::get('/deployments/{id}/logs', 'DeploymentController@logs');
+
+    // Template scripts (ChapScribe)
+    Route::post('/chap-scripts/{uuid}/respond', 'ChapScriptRunController@respond');
     
     // Databases
     Route::get('/environments/{envId}/databases/create', 'DatabaseController@create');

@@ -39,6 +39,7 @@ $showCancel = $isDeploying && $canCancel;
 $showStop = !$showCancel && in_array(($application->status ?? ''), ['running', 'restarting'], true);
 
 $logsHref = '/applications/' . e($application->uuid) . '/logs';
+$usageHref = '/applications/' . e($application->uuid) . '/usage';
 $volumesHref = '/applications/' . e($application->uuid) . '/volumes';
 $filesHref = '/applications/' . e($application->uuid) . '/files';
 $deployHref = '/applications/' . e($application->uuid) . '?tab=deploy';
@@ -106,6 +107,7 @@ $configHref = '/applications/' . e($application->uuid) . '?tab=config';
             <a class="tab <?= $activeTab === 'logs' ? 'active' : '' ?>" role="tab" aria-selected="<?= $activeTab === 'logs' ? 'true' : 'false' ?>" href="<?= e($logsHref) ?>">Live Logs</a>
             <a class="tab <?= $activeTab === 'volume-files' ? 'active' : '' ?>" role="tab" aria-selected="<?= $activeTab === 'volume-files' ? 'true' : 'false' ?>" href="<?= e($volumesHref) ?>">Volume Files</a>
             <a class="tab <?= $activeTab === 'container-filesystem' ? 'active' : '' ?>" role="tab" aria-selected="<?= $activeTab === 'container-filesystem' ? 'true' : 'false' ?>" href="<?= e($filesHref) ?>">Container filesystem</a>
+            <a class="tab <?= $activeTab === 'usage' ? 'active' : '' ?>" role="tab" aria-selected="<?= $activeTab === 'usage' ? 'true' : 'false' ?>" href="<?= e($usageHref) ?>">Usage</a>
             <a class="tab <?= $activeTab === 'deploy' ? 'active' : '' ?>" role="tab" aria-selected="<?= $activeTab === 'deploy' ? 'true' : 'false' ?>" href="<?= e($deployHref) ?>">Deploy</a>
             <a class="tab <?= $activeTab === 'config' ? 'active' : '' ?>" role="tab" aria-selected="<?= $activeTab === 'config' ? 'true' : 'false' ?>" href="<?= e($configHref) ?>">Configuration</a>
         </div>

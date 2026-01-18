@@ -27,19 +27,51 @@ download_from_url() {
 }
 
 if [[ -n "${SERVER_JAR_URL}" ]]; then
-  download_from_url "${SERVER_JAR_URL}"
+  # expand {version} placeholder to PROXY_VERSION when provided
+  EXPANDED_URL="${SERVER_JAR_URL//\{version\}/${PROXY_VERSION}}"
+  download_from_url "${EXPANDED_URL}"
 fi
 
 if [[ ! -f /data/server.jar ]]; then
-  echo "Attempting to download BungeeCord jar from the official CI..."
-  # Jenkins CDN for BungeeCord
-  JB_URL="https://ci.md-5.net/job/BungeeCord/lastStableBuild/artifact/bootstrap/target/BungeeCord.jar"
-  if download_from_url "${JB_URL}"; then
-    echo "Downloaded BungeeCord from Jenkins: ${JB_URL}"
-  else
-    echo "Failed to download BungeeCord automatically." >&2
-    echo "Place a jar at /data/server.jar or set SERVER_JAR_URL to download one." >&2
-    exit 1
+  echo "Attempting to download BungeeCord jar for proxy version '${PROXY_VERSION}'..."
+  # If user set a specific PROXY_VERSION try GitHub releases first
+  if [[ -n "${PROXY_VERSION}" && "${PROXY_VERSION}" != "latest" ]]; then
+    BG_URL=$(python3 - <<'PY'
+import os,sys,urllib.request,json
+ver=os.environ.get('PROXY_VERSION')
+api='https://api.github.com/repos/SpigotMC/BungeeCord/releases'
+try:
+    with urllib.request.urlopen(api, timeout=30) as r:
+        rels=json.load(r)
+except Exception:
+    sys.exit(0)
+for r in rels:
+    if r.get('tag_name')==ver or r.get('name')==ver:
+        for a in r.get('assets',[]):
+            n=a.get('name','')
+            if n.lower().endswith('.jar'):
+                print(a.get('browser_download_url'))
+                sys.exit(0)
+sys.exit(0)
+PY
+    )
+    if [[ -n "$BG_URL" ]]; then
+      if download_from_url "$BG_URL"; then
+        echo "Downloaded BungeeCord from GitHub releases: $BG_URL"
+      fi
+    fi
+  fi
+
+  if [[ ! -f /data/server.jar ]]; then
+    # Fallback to Jenkins latest stable
+    JB_URL="https://ci.md-5.net/job/BungeeCord/lastStableBuild/artifact/bootstrap/target/BungeeCord.jar"
+    if download_from_url "${JB_URL}"; then
+      echo "Downloaded BungeeCord from Jenkins: ${JB_URL}"
+    else
+      echo "Failed to download BungeeCord automatically." >&2
+      echo "Place a jar at /data/server.jar or set SERVER_JAR_URL to download one." >&2
+      exit 1
+    fi
   fi
 fi
 

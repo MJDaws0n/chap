@@ -21,17 +21,42 @@ SERVER_JAR_URL="${SERVER_JAR_URL:-}"
 
 if [[ -n "${SERVER_JAR_URL}" ]]; then
   echo "Downloading server jar from SERVER_JAR_URL"
-  curl -fsSL "${SERVER_JAR_URL}" -o /data/server.jar || true
+  EXPANDED_URL="${SERVER_JAR_URL//\{version\}/${SPONGE_VERSION}}"
+  curl -fsSL "${EXPANDED_URL}" -o /data/server.jar || true
 fi
 
 if [[ ! -f /data/server.jar ]]; then
   echo "Attempting to download SpongeForge jar from Sponge Maven repo..."
-  if [[ -n "${SPONGE_VERSION}" && "${SPONGE_VERSION}" != "latest" ]]; then
+  SF_URL=""
+  if [[ -z "${SPONGE_VERSION}" || "${SPONGE_VERSION}" == "latest" ]]; then
+    SF_URL=$(python3 - <<'PY'
+import sys,urllib.request,xml.etree.ElementTree as ET
+base='https://repo.spongepowered.org/maven'
+meta=base+'/maven2/org/spongepowered/spongeforge/maven-metadata.xml'
+try:
+    with urllib.request.urlopen(meta, timeout=30) as r:
+        xml=r.read()
+    root=ET.fromstring(xml)
+    ver=root.findtext('./versioning/release') or root.findtext('./versioning/latest')
+    if not ver:
+        # fallback to last version element
+        versions=root.findall('./versioning/versions/version')
+        ver=versions[-1].text if versions else ''
+    if ver:
+        print(f"{base}/maven2/org/spongepowered/spongeforge/{ver}/spongeforge-{ver}.jar")
+except Exception:
+    sys.exit(0)
+PY
+  )
+  else
     SF_URL="https://repo.spongepowered.org/maven/org/spongepowered/spongeforge/${SPONGE_VERSION}/spongeforge-${SPONGE_VERSION}.jar"
+  fi
+
+  if [[ -n "$SF_URL" ]]; then
     if curl -fsSL "$SF_URL" -o /data/server.jar; then
       echo "Downloaded SpongeForge: $SF_URL"
     else
-      echo "SpongeForge automatic download failed for version ${SPONGE_VERSION}." >&2
+      echo "SpongeForge automatic download failed for URL: $SF_URL" >&2
     fi
   fi
 fi

@@ -20,21 +20,43 @@ SERVER_JAR_URL="${SERVER_JAR_URL:-}"
 
 if [[ -n "${SERVER_JAR_URL}" ]]; then
   echo "Downloading server jar from SERVER_JAR_URL"
-  curl -fsSL "${SERVER_JAR_URL}" -o /data/server.jar || true
+  # allow {version} placeholder to expand to FORGE_VERSION
+  EXPANDED_URL="${SERVER_JAR_URL//\{version\}/${FORGE_VERSION}}"
+  curl -fsSL "${EXPANDED_URL}" -o /data/server.jar || true
 fi
 
 if [[ ! -f /data/server.jar ]]; then
   echo "Attempting to download Forge installer/universal from the Forge maven..."
-  if [[ -n "${FORGE_VERSION}" && "${FORGE_VERSION}" != "latest" ]]; then
-    INST_URL="https://maven.minecraftforge.net/net/minecraftforge/forge/${FORGE_VERSION}/forge-${FORGE_VERSION}-installer.jar"
-    UNI_URL="https://maven.minecraftforge.net/net/minecraftforge/forge/${FORGE_VERSION}/forge-${FORGE_VERSION}-universal.jar"
+  RESOLVED_FORGE="${FORGE_VERSION}"
+  if [[ -z "${FORGE_VERSION}" || "${FORGE_VERSION}" == "latest" ]]; then
+    RESOLVED_FORGE=$(python3 - <<'PY'
+import sys,urllib.request,xml.etree.ElementTree as ET
+meta='https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml'
+try:
+    with urllib.request.urlopen(meta, timeout=30) as r:
+        xml=r.read()
+    root=ET.fromstring(xml)
+    ver=root.findtext('./versioning/release') or root.findtext('./versioning/latest')
+    if not ver:
+        versions=root.findall('./versioning/versions/version')
+        ver=versions[-1].text if versions else ''
+    print(ver)
+except Exception:
+    sys.exit(0)
+PY
+)
+  fi
+
+  if [[ -n "${RESOLVED_FORGE}" ]]; then
+    INST_URL="https://maven.minecraftforge.net/net/minecraftforge/forge/${RESOLVED_FORGE}/forge-${RESOLVED_FORGE}-installer.jar"
+    UNI_URL="https://maven.minecraftforge.net/net/minecraftforge/forge/${RESOLVED_FORGE}/forge-${RESOLVED_FORGE}-universal.jar"
     if curl -fsSL "$UNI_URL" -o /data/server.jar; then
       echo "Downloaded Forge universal: $UNI_URL"
     elif curl -fsSL "$INST_URL" -o /data/forge-installer.jar; then
       echo "Downloaded Forge installer: $INST_URL"
       echo "Forge installer saved to /data/forge-installer.jar. Please run it to install the server (or provide SERVER_JAR_URL)." >&2
     else
-      echo "Forge automatic download failed for version ${FORGE_VERSION}." >&2
+      echo "Forge automatic download failed for version ${RESOLVED_FORGE}." >&2
     fi
   fi
 fi

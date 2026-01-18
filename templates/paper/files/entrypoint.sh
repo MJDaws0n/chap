@@ -20,7 +20,10 @@ SERVER_JAR_URL="${SERVER_JAR_URL:-}"
 
 if [[ -n "${SERVER_JAR_URL}" ]]; then
   echo "Downloading server jar from SERVER_JAR_URL"
-  curl -fsSL "${SERVER_JAR_URL}" -o /data/server.jar
+  # prefer explicit SERVER_JAR_URL; allow {version} placeholder to expand to PAPER_VERSION or MINECRAFT_VERSION
+  EXPANDED_URL="${SERVER_JAR_URL//\{paper_version\}/${PAPER_VERSION}}"
+  EXPANDED_URL="${EXPANDED_URL//\{version\}/${MINECRAFT_VERSION}}"
+  curl -fsSL "${EXPANDED_URL}" -o /data/server.jar
 fi
 
 if [[ ! -f /data/server.jar ]]; then

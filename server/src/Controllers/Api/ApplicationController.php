@@ -5,6 +5,7 @@ namespace Chap\Controllers\Api;
 use Chap\Models\Application;
 use Chap\Models\Environment;
 use Chap\Services\DeploymentService;
+use Chap\Services\ChapScript\ChapScriptPreDeploy;
 
 /**
  * API Application Controller
@@ -175,6 +176,32 @@ class ApplicationController extends BaseApiController
 
         if (!$application->node_id) {
             $this->error('No node assigned to application', 400);
+            return;
+        }
+
+        // Run template pre-deploy script (ChapScribe) if configured.
+        try {
+            $pre = ChapScriptPreDeploy::run($application, [
+                'commit_sha' => null,
+                'triggered_by' => $this->user ? 'user' : 'api',
+                'triggered_by_name' => $this->user?->displayName(),
+                'user_id' => (int)($this->user?->id ?? 0),
+            ]);
+            if ($pre['status'] === 'waiting') {
+                $run = $pre['run'] ?? null;
+                $this->json([
+                    'error' => 'action_required',
+                    'script_run' => $run ? ['uuid' => $run->uuid, 'status' => $run->status] : null,
+                    'prompt' => $pre['prompt'] ?? null,
+                ], 409);
+                return;
+            }
+            if ($pre['status'] === 'stopped') {
+                $this->error($pre['message'] ?? 'Deployment blocked by template script', 422);
+                return;
+            }
+        } catch (\Throwable $e) {
+            $this->error($e->getMessage(), 422);
             return;
         }
 

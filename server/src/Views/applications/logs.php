@@ -3,6 +3,7 @@
  * Application Live Logs View
  * Updated to use new design system with vanilla JavaScript
  */
+/** @var \Chap\Models\Application $application */
 $statusColors = [
     'running' => 'badge-success',
     'restarting' => 'badge-warning',
@@ -180,6 +181,47 @@ $isDeploying = method_exists($application, 'isDeploying')
                     </div>
                 </div>
             </div>
+
+            <!-- Resource Usage Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Resource Usage</h3>
+                </div>
+                <div class="card-body">
+                    <div id="usage-empty">
+                        <p class="text-secondary text-sm">Select a container</p>
+                    </div>
+                    <div id="usage" class="hidden">
+                        <div class="flex flex-col gap-4">
+                            <div>
+                                <div class="flex items-center justify-between gap-4 text-sm">
+                                    <span class="text-tertiary">CPU</span>
+                                    <span id="usage-cpu-text" class="text-primary">-</span>
+                                </div>
+                                <div class="progress" aria-hidden="true">
+                                    <div id="usage-cpu-bar" class="progress-bar"></div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <div class="flex items-center justify-between gap-4 text-sm">
+                                    <span class="text-tertiary">RAM</span>
+                                    <span id="usage-ram-text" class="text-primary">-</span>
+                                </div>
+                                <div class="progress" aria-hidden="true">
+                                    <div id="usage-ram-bar" class="progress-bar"></div>
+                                </div>
+                            </div>
+
+                            <div class="flex items-center justify-between gap-4 text-sm">
+                                <span class="text-tertiary">Network</span>
+                                <span id="usage-net-text" class="text-primary">-</span>
+                            </div>
+                            <p class="text-tertiary text-xs">Updates about once per second.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -301,6 +343,27 @@ $isDeploying = method_exists($application, 'isDeploying')
 #pause-btn .icon-pause { display: block; }
 #pause-btn.paused .icon-play { display: block; }
 #pause-btn.paused .icon-pause { display: none; }
+
+.progress {
+    width: 100%;
+    height: 8px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-top: var(--space-2);
+}
+
+.progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent-blue), var(--accent-green));
+    transition: width 150ms linear;
+}
+
+.progress-bar.warn {
+    background: linear-gradient(90deg, var(--accent-yellow), var(--accent-red));
+}
 </style>
 
 <?php $deployInlineVer = @filemtime(__DIR__ . '/../../../public/js/applicationDeployInline.js') ?: time(); ?>
@@ -382,6 +445,15 @@ $isDeploying = method_exists($application, 'isDeploying')
         elements.infoName = document.getElementById('info-name');
         elements.infoStatus = document.getElementById('info-status');
         elements.infoId = document.getElementById('info-id');
+
+        // Usage
+        elements.usageEmpty = document.getElementById('usage-empty');
+        elements.usage = document.getElementById('usage');
+        elements.usageCpuText = document.getElementById('usage-cpu-text');
+        elements.usageCpuBar = document.getElementById('usage-cpu-bar');
+        elements.usageRamText = document.getElementById('usage-ram-text');
+        elements.usageRamBar = document.getElementById('usage-ram-bar');
+        elements.usageNetText = document.getElementById('usage-net-text');
 
         // Exec
         elements.execInput = document.getElementById('exec-input');
@@ -533,6 +605,7 @@ $isDeploying = method_exists($application, 'isDeploying')
                 showStatus('live', 'Live (WebSocket)');
                 startKeepAlive();
                 updateExecControls();
+                subscribeStats();
                 break;
 
             case 'auth:failed':
@@ -547,6 +620,10 @@ $isDeploying = method_exists($application, 'isDeploying')
 
             case 'containers':
                 handleContainersMessage(message);
+                break;
+
+            case 'stats':
+                handleStatsMessage(message);
                 break;
 
             case 'log':
@@ -585,6 +662,106 @@ $isDeploying = method_exists($application, 'isDeploying')
                 handleConsoleStatusMessage(message);
                 break;
         }
+    }
+
+    function subscribeStats() {
+        if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+        if (!state.wsConnected) return;
+        if (state.paused) return;
+        if (!state.selectedContainer) return;
+
+        try {
+            state.ws.send(JSON.stringify({
+                type: 'stats:subscribe',
+                container_id: state.selectedContainer,
+                timestamp: Date.now(),
+            }));
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    function unsubscribeStats() {
+        if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+        try {
+            state.ws.send(JSON.stringify({ type: 'stats:unsubscribe', timestamp: Date.now() }));
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    function formatBytes(bytes) {
+        const n = Number(bytes);
+        if (!Number.isFinite(n) || n < 0) return '-';
+        const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+        let v = n;
+        let i = 0;
+        while (v >= 1024 && i < units.length - 1) {
+            v /= 1024;
+            i++;
+        }
+        const dp = v >= 100 ? 0 : v >= 10 ? 1 : 2;
+        return v.toFixed(dp) + ' ' + units[i];
+    }
+
+    function formatBps(bps) {
+        const n = Number(bps);
+        if (!Number.isFinite(n) || n < 0) return '-';
+        return formatBytes(n) + '/s';
+    }
+
+    function setProgress(el, ratio) {
+        const r = Number(ratio);
+        const clamped = Number.isFinite(r) ? Math.min(Math.max(r, 0), 1) : 0;
+        el.style.width = (clamped * 100).toFixed(1) + '%';
+        el.classList.toggle('warn', clamped >= 0.85);
+    }
+
+    function handleStatsMessage(payload) {
+        const cid = normalizeContainerId(payload.container_id || payload.containerId);
+        if (!cid || cid !== state.selectedContainer) return;
+
+        elements.usageEmpty.classList.add('hidden');
+        elements.usage.classList.remove('hidden');
+
+        if (!payload.ok) {
+            elements.usageCpuText.textContent = 'Unavailable';
+            elements.usageRamText.textContent = 'Unavailable';
+            elements.usageNetText.textContent = payload.error ? String(payload.error) : 'Unavailable';
+            setProgress(elements.usageCpuBar, 0);
+            setProgress(elements.usageRamBar, 0);
+            return;
+        }
+
+        const cpuUsageCores = payload.cpu_usage_cores;
+        const cpuLimitCores = payload.cpu_limit_cores;
+        if (Number.isFinite(cpuUsageCores) && Number.isFinite(cpuLimitCores) && cpuLimitCores > 0) {
+            elements.usageCpuText.textContent = `${cpuUsageCores.toFixed(2)} / ${cpuLimitCores.toFixed(2)} cores`;
+            setProgress(elements.usageCpuBar, cpuUsageCores / cpuLimitCores);
+        } else if (Number.isFinite(payload.cpu_percent)) {
+            elements.usageCpuText.textContent = `${payload.cpu_percent.toFixed(1)}%`;
+            setProgress(elements.usageCpuBar, payload.cpu_percent / 100);
+        } else {
+            elements.usageCpuText.textContent = '-';
+            setProgress(elements.usageCpuBar, 0);
+        }
+
+        const memUsage = payload.mem_usage_bytes;
+        const memLimit = payload.mem_limit_bytes;
+        if (Number.isFinite(memUsage) && Number.isFinite(memLimit) && memLimit > 0) {
+            elements.usageRamText.textContent = `${formatBytes(memUsage)} / ${formatBytes(memLimit)}`;
+            setProgress(elements.usageRamBar, memUsage / memLimit);
+        } else if (Number.isFinite(memUsage)) {
+            elements.usageRamText.textContent = `${formatBytes(memUsage)}`;
+            setProgress(elements.usageRamBar, 0);
+        } else {
+            elements.usageRamText.textContent = '-';
+            setProgress(elements.usageRamBar, 0);
+        }
+
+        const rx = payload.net_rx_bps;
+        const tx = payload.net_tx_bps;
+        elements.usageNetText.textContent = `RX ${formatBps(rx)} • TX ${formatBps(tx)}`;
     }
 
     function getSelectedContainerName() {
@@ -691,10 +868,23 @@ $isDeploying = method_exists($application, 'isDeploying')
 
     function handleContainersMessage(payload) {
         const incoming = Array.isArray(payload.containers) ? payload.containers : [];
+        const prettifyName = (rawName) => {
+            const name = String(rawName || '').replace(/^\//, '');
+            const appUuid = String(config.applicationUuid || '').trim();
+            if (appUuid) {
+                const a = `chap-${appUuid}-`;
+                const b = `chap-${appUuid}_`;
+                if (name.startsWith(a)) return name.slice(a.length);
+                if (name.startsWith(b)) return name.slice(b.length);
+            }
+            const m = name.match(/^chap-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[-_](.+)$/i);
+            if (m && m[1]) return m[1];
+            return name;
+        };
         const normalized = incoming
             .map(c => ({
                 id: normalizeContainerId(c.id || c.container_id),
-                name: String(c.name || c.container || c.id || ''),
+                name: prettifyName(c.name || c.container || c.id || ''),
                 status: String(c.status || 'running')
             }))
             .filter(c => c.id && c.name);
@@ -713,6 +903,7 @@ $isDeploying = method_exists($application, 'isDeploying')
 
         if (previous !== state.selectedContainer) {
             rebuildVisibleLogs();
+            subscribeStats();
         }
 
         updateExecControls();
@@ -850,6 +1041,7 @@ $isDeploying = method_exists($application, 'isDeploying')
         state.selectedContainer = id;
         updateSelectedContainerName();
         updateContainerInfo();
+        subscribeStats();
         rebuildVisibleLogs();
         renderContainerList();
     }
@@ -868,9 +1060,20 @@ $isDeploying = method_exists($application, 'isDeploying')
             elements.infoStatus.textContent = container.status;
             elements.infoStatus.className = 'badge badge-sm ' + (container.status === 'running' ? 'badge-success' : 'badge-neutral');
             elements.infoId.textContent = (container.id || '').substring(0, 12);
+
+            elements.usageEmpty.classList.add('hidden');
+            elements.usage.classList.remove('hidden');
         } else {
             elements.containerInfoEmpty.classList.remove('hidden');
             elements.containerInfo.classList.add('hidden');
+
+            elements.usageEmpty.classList.remove('hidden');
+            elements.usage.classList.add('hidden');
+            elements.usageCpuText.textContent = '-';
+            elements.usageRamText.textContent = '-';
+            elements.usageNetText.textContent = '-';
+            setProgress(elements.usageCpuBar, 0);
+            setProgress(elements.usageRamBar, 0);
         }
     }
 
@@ -944,8 +1147,10 @@ $isDeploying = method_exists($application, 'isDeploying')
         
         if (state.paused) {
             showStatus('disconnected', 'Paused');
+            unsubscribeStats();
         } else if (state.wsConnected) {
             showStatus('live', 'Live (WebSocket)');
+            subscribeStats();
         }
 
         updateExecControls();
@@ -984,6 +1189,7 @@ $isDeploying = method_exists($application, 'isDeploying')
     }
 
     function destroy() {
+        unsubscribeStats();
         if (state.ws) state.ws.close(1000, 'Page unload');
         if (state.wsReconnectTimeout) clearTimeout(state.wsReconnectTimeout);
         stopKeepAlive();

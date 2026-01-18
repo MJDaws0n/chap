@@ -5,6 +5,7 @@ namespace Chap\Controllers;
 use Chap\Models\Deployment;
 use Chap\Models\Application;
 use Chap\Services\DeploymentService;
+use Chap\Services\ChapScript\ChapScriptPreDeploy;
 
 /**
  * Deployment Controller
@@ -80,6 +81,34 @@ class DeploymentController extends BaseController
         $commitSha = $_POST['commit_sha'] ?? null;
 
         $triggeredByName = $this->user?->displayName();
+
+        // Run template pre-deploy script (ChapScribe) if configured.
+        try {
+            $pre = ChapScriptPreDeploy::run($application, [
+                'commit_sha' => $commitSha,
+                'triggered_by' => $this->user ? 'user' : 'manual',
+                'triggered_by_name' => $triggeredByName,
+                'user_id' => (int)($this->user?->id ?? 0),
+            ]);
+
+            if ($pre['status'] === 'waiting') {
+                $run = $pre['run'] ?? null;
+                $this->json([
+                    'error' => 'action_required',
+                    'script_run' => $run ? ['uuid' => $run->uuid, 'status' => $run->status] : null,
+                    'prompt' => $pre['prompt'] ?? null,
+                ], 409);
+                return;
+            }
+
+            if ($pre['status'] === 'stopped') {
+                $this->json(['error' => $pre['message'] ?? 'Deployment blocked by template script'], 422);
+                return;
+            }
+        } catch (\Throwable $e) {
+            $this->json(['error' => $e->getMessage()], 422);
+            return;
+        }
 
         // Create deployment
         try {

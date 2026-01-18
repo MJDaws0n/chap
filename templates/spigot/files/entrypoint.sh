@@ -19,56 +19,21 @@ SERVER_JAR_URL="${SERVER_JAR_URL:-}"
 
 if [[ -n "${SERVER_JAR_URL}" ]]; then
   echo "Downloading server jar from SERVER_JAR_URL"
-  curl -fsSL "${SERVER_JAR_URL}" -o /data/server.jar
+  # replace {version} placeholder with MC_VERSION if present
+  SERVER_URL_EXPANDED="${SERVER_JAR_URL//\{version\}/${MC_VERSION}}"
+  curl -fsSL "${SERVER_URL_EXPANDED}" -o /data/server.jar || true
 fi
 
 if [[ ! -f /data/server.jar ]]; then
-  echo "Downloading vanilla Minecraft server jar (version=${MC_VERSION})..."
-  python3 - <<'PY'
-import json, os, sys, urllib.request
-
-mc_version = os.environ.get('MINECRAFT_VERSION','latest').strip() or 'latest'
-manifest_url = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json'
-
-with urllib.request.urlopen(manifest_url, timeout=30) as r:
-		manifest = json.load(r)
-
-if mc_version == 'latest':
-		mc_version = manifest['latest']['release']
-
-version_url = None
-for v in manifest.get('versions', []):
-		if v.get('id') == mc_version:
-				version_url = v.get('url')
-				break
-
-if not version_url:
-		raise SystemExit(f'Unknown Minecraft version: {mc_version}')
-
-with urllib.request.urlopen(version_url, timeout=30) as r:
-		ver = json.load(r)
-
-server = (ver.get('downloads') or {}).get('server') or {}
-jar_url = server.get('url')
-if not jar_url:
-		raise SystemExit('Could not determine server jar URL')
-
-with urllib.request.urlopen(jar_url, timeout=30) as r:
-		with open('/data/server.jar','wb') as f:
-			f.write(r.read())
-print('Saved: /data/server.jar')
-PY
-fi
-
-if [[ ! -f /data/server.jar ]]; then
-	echo "vanilla server jar not obtained — attempting Spigot CDN fallback..."
-	SPIGOT_URL="https://cdn.getbukkit.org/spigot/spigot-${MC_VERSION}.jar"
-	if curl -fsSL "$SPIGOT_URL" -o /data/server.jar; then
-		echo "Downloaded Spigot jar from: $SPIGOT_URL"
-	else
-		echo "Failed to obtain /data/server.jar" >&2
-		exit 1
-	fi
+  echo "Attempting to download Spigot jar from CDN for version ${MC_VERSION}..."
+  SPIGOT_URL="https://cdn.getbukkit.org/spigot/spigot-${MC_VERSION}.jar"
+  if curl -fsSL "$SPIGOT_URL" -o /data/server.jar; then
+    echo "Downloaded Spigot jar from: $SPIGOT_URL"
+  else
+    echo "Failed to automatically obtain a Spigot jar for version ${MC_VERSION}." >&2
+    echo "Options: 1) provide SERVER_JAR_URL pointing at a prepared spigot.jar, 2) run BuildTools to build spigot.jar and place it in /data, or 3) use the Paper template which can be auto-downloaded." >&2
+    exit 1
+  fi
 fi
 
 JAVA_MEM_ARGS=("-Xms${MEMORY}" "-Xmx${MEMORY}")

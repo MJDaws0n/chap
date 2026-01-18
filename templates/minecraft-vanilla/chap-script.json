@@ -1,0 +1,31 @@
+{
+  "chap_script_version": 1,
+  "name": "Minecraft EULA Gate",
+  "steps": [
+    {
+      "type": "if",
+      "condition": { "op": "not_truthy", "value": { "env": "EULA" } },
+      "then": [
+        {
+          "type": "prompt_confirm",
+          "var": "accept_eula",
+          "title": "Accept Minecraft EULA",
+          "description": "To run a Minecraft server you must accept Mojang/Microsoft's EULA. Do you accept it?",
+          "confirm": { "text": "Accept", "variant": "danger" },
+          "cancel": { "text": "Cancel" }
+        },
+        {
+          "type": "if",
+          "condition": { "op": "eq", "left": { "var": "accept_eula" }, "right": true },
+          "then": [
+            { "type": "set_env", "key": "EULA", "value": "TRUE" }
+          ],
+          "else": [
+            { "type": "stop", "message": "Deployment cancelled: Minecraft EULA not accepted." }
+          ]
+        }
+      ],
+      "else": []
+    }
+  ]
+}
