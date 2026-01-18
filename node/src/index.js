@@ -1134,6 +1134,9 @@ async function handleApplicationDelete(message) {
     const payload = message.payload || {};
     const applicationUuid = payload.application_uuid || payload.applicationId;
     const taskId = payload.task_id || payload.taskId;
+    const deploymentIds = Array.isArray(payload.deployment_ids)
+        ? payload.deployment_ids.map(d => String(d).trim()).filter(Boolean)
+        : [];
     
     console.log(`[Agent] 🗑️  Deleting application: ${applicationUuid}`);
 
@@ -1149,42 +1152,106 @@ async function handleApplicationDelete(message) {
     }
     
     try {
-        // Stop and remove docker compose services
-        const composeDir = storage.getComposeDir(applicationUuid);
-        if (fs.existsSync(composeDir)) {
+        const safeAppId = String(applicationUuid || '').trim();
+        const composeProject = safeAppId ? `chap-${safeAppId}` : '';
+
+        const safeRmTree = (targetPath, label) => {
             try {
-                const safeAppId = String(applicationUuid).trim();
-                await execCommand(`docker compose -p chap-${safeAppId} down -v`, { cwd: composeDir });
-                console.log(`[Agent] ✓ Removed compose services for: ${safeAppId}`);
+                if (!targetPath) return;
+                const resolved = path.resolve(targetPath);
+                const allowedBases = [
+                    path.resolve(storage.baseDir),
+                    path.resolve(storage.dirs.apps),
+                    path.resolve(storage.dirs.builds),
+                    path.resolve(storage.dirs.volumes),
+                    path.resolve(storage.dirs.compose),
+                    path.resolve(storage.dirs.logs),
+                ];
+
+                const isInside = allowedBases.some(base => resolved === base || resolved.startsWith(base + path.sep));
+                if (!isInside) {
+                    console.warn(`[Agent] ⚠️  Refusing to delete outside storage: ${resolved} (${label})`);
+                    return;
+                }
+                // Never delete the base directories themselves.
+                if (allowedBases.includes(resolved)) {
+                    console.warn(`[Agent] ⚠️  Refusing to delete storage root: ${resolved} (${label})`);
+                    return;
+                }
+
+                if (fs.existsSync(resolved)) {
+                    fs.rmSync(resolved, { recursive: true, force: true });
+                    console.log(`[Agent] ✓ Removed ${label}: ${resolved}`);
+                }
             } catch (err) {
-                // Compose project might not exist
+                console.warn(`[Agent] ⚠️  Failed removing ${label}: ${err.message}`);
+            }
+        };
+
+        // 1) Stop and remove Docker resources (best-effort).
+        // Prefer compose down when compose file exists; otherwise fall back to label-based cleanup.
+        const composeDirPath = storage.pathComposeDir(applicationUuid);
+        const composeFilePath = path.join(composeDirPath, 'docker-compose.yml');
+        if (composeProject) {
+            if (fs.existsSync(composeFilePath)) {
+                try {
+                    await execCommand(`docker compose -p ${dockerSafeName(composeProject)} down -v`, { cwd: composeDirPath, timeout: 60000 });
+                    console.log(`[Agent] ✓ docker compose down -v (${composeProject})`);
+                } catch (err) {
+                    console.warn(`[Agent] ⚠️  docker compose down failed (${composeProject}): ${err.message}`);
+                }
+            }
+
+            // Fallback cleanup by compose project label (works even if compose files are gone).
+            // Remove containers
+            try {
+                const ids = (await execCommand(`docker ps -aq --filter "label=com.docker.compose.project=${dockerSafeName(composeProject)}"`, { timeout: 15000 }))
+                    .split('\n').map(s => s.trim()).filter(Boolean);
+                for (const cid of ids) {
+                    try { await execCommand(`docker rm -f ${dockerSafeName(cid)}`, { timeout: 15000 }); } catch {}
+                }
+                if (ids.length) console.log(`[Agent] ✓ Removed ${ids.length} container(s) for ${composeProject}`);
+            } catch (err) {
+                // ignore
+            }
+
+            // Remove volumes
+            try {
+                const vols = (await execCommand(`docker volume ls -q --filter "label=com.docker.compose.project=${dockerSafeName(composeProject)}"`, { timeout: 15000 }))
+                    .split('\n').map(s => s.trim()).filter(Boolean);
+                for (const v of vols) {
+                    try { await execCommand(`docker volume rm -f ${dockerSafeName(v)}`, { timeout: 15000 }); } catch {}
+                }
+                if (vols.length) console.log(`[Agent] ✓ Removed ${vols.length} volume(s) for ${composeProject}`);
+            } catch (err) {
+                // ignore
+            }
+
+            // Remove networks
+            try {
+                const nets = (await execCommand(`docker network ls -q --filter "label=com.docker.compose.project=${dockerSafeName(composeProject)}"`, { timeout: 15000 }))
+                    .split('\n').map(s => s.trim()).filter(Boolean);
+                for (const n of nets) {
+                    try { await execCommand(`docker network rm ${dockerSafeName(n)}`, { timeout: 15000 }); } catch {}
+                }
+                if (nets.length) console.log(`[Agent] ✓ Removed ${nets.length} network(s) for ${composeProject}`);
+            } catch (err) {
+                // ignore
             }
         }
-        
-        // Remove all data directories
-        const repoDir = storage.getRepoDir(applicationUuid);
-        const buildDir = storage.getBuildDir(applicationUuid);
-        const volumeDir = storage.getVolumeDir(applicationUuid);
-        
-        try {
-            if (fs.existsSync(repoDir)) {
-                await execCommand(`rm -rf ${repoDir}`);
-                console.log(`[Agent] ✓ Removed repo directory`);
-            }
-            if (fs.existsSync(buildDir)) {
-                await execCommand(`rm -rf ${buildDir}`);
-                console.log(`[Agent] ✓ Removed build directory`);
-            }
-            if (fs.existsSync(composeDir)) {
-                await execCommand(`rm -rf ${composeDir}`);
-                console.log(`[Agent] ✓ Removed compose directory`);
-            }
-            if (fs.existsSync(volumeDir)) {
-                await execCommand(`rm -rf ${volumeDir}`);
-                console.log(`[Agent] ✓ Removed volume directory`);
-            }
-        } catch (err) {
-            console.warn(`[Agent] ⚠️  Failed to clean some directories:`, err.message);
+
+        // 2) Remove on-disk artifacts.
+        // Remove the whole app directory (includes repo/source and any other files).
+        safeRmTree(storage.pathAppDir(applicationUuid), 'app directory');
+        // Remove compose dir (even though it is keyed as service-<id>, we use app UUID as key).
+        safeRmTree(composeDirPath, 'compose directory');
+        // Remove entire volume root for this app (not just /data).
+        safeRmTree(storage.pathVolumeRoot(applicationUuid), 'volume directory');
+
+        // Remove deployment artifacts if provided.
+        for (const depId of deploymentIds) {
+            safeRmTree(storage.pathBuildDir(depId), `build directory (deployment ${depId})`);
+            safeRmTree(storage.getLogFile(depId), `log file (deployment ${depId})`);
         }
         
         console.log(`[Agent] ✅ Application deleted: ${applicationUuid}`);

@@ -1,15 +1,15 @@
 {
-  "name": "Forge",
+  "name": "Minecraft (Paper)",
   "version": "1.0.0",
-  "slug": "forge",
-  "description": "Minecraft Forge (modded server runtime).",
+  "slug": "minecraft-paper",
+  "description": "A Paper Minecraft server using Docker Compose.",
   "category": "Minecraft",
-  "doc_url": "https://files.minecraftforge.net/",
+  "doc_url": "https://papermc.io/downloads",
   "chap_script": "accept-eula.json",
   "env_variables": {
     "EULA": "FALSE",
-    "SERVER_JAR_URL": "",
-    "FORGE_VERSION": "latest",
+    "MINECRAFT_VERSION": "latest",
+    "PAPER_VERSION": "latest",
     "MEMORY": "{ram}M",
     "MINECRAFT_PORT": "{port[0]}",
     "JAVA_EXTRA_ARGS": ""

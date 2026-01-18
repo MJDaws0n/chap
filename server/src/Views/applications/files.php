@@ -154,15 +154,6 @@ $applicationUuid = (isset($application) && is_object($application) && isset($app
                 </div>
 
                 <div class="mt-4 fm-dropzone" id="fm-dropzone">
-                    <div class="fm-drop-hint" aria-hidden="true">
-                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4"/>
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M7 9l5-5 5 5"/>
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M20 20H4"/>
-                        </svg>
-                        <span>Drag &amp; drop files anywhere in this area to upload</span>
-                    </div>
-
                     <div class="fm-drop-overlay" aria-hidden="true">
                         <div class="fm-drop-overlay-inner">
                             <div class="fm-drop-title">Drop files to upload</div>

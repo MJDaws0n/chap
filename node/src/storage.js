@@ -14,6 +14,35 @@ const path = require('path');
 
 class Storage {
 
+    /**
+     * Return a path inside storage without creating it.
+     * These helpers are used for cleanup code to avoid creating directories
+     * that we then try to delete.
+     */
+    pathAppDir(applicationId) {
+        return path.join(this.dirs.apps, `app-${applicationId}`);
+    }
+
+    pathRepoDir(applicationId) {
+        return path.join(this.pathAppDir(applicationId), 'repo');
+    }
+
+    pathSourceDir(applicationId) {
+        return path.join(this.pathAppDir(applicationId), 'source');
+    }
+
+    pathBuildDir(deploymentId) {
+        return path.join(this.dirs.builds, `build-${deploymentId}`);
+    }
+
+    pathVolumeRoot(applicationId) {
+        return path.join(this.dirs.volumes, `app-${applicationId}`);
+    }
+
+    pathComposeDir(serviceId) {
+        return path.join(this.dirs.compose, `service-${serviceId}`);
+    }
+
         /**
          * Get path for an application's git repository
          */

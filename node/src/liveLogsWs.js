@@ -679,6 +679,7 @@ function createLiveLogsWs(deps) {
     let browserWss = null;
     let heartbeatInterval = null;
     let pendingCleanupInterval = null;
+    let volumeFsOrphanSweepInterval = null;
 
     // Map of requestId -> { browserWs, applicationUuid, sessionId, timestamp }
     const pendingValidations = new Map();
@@ -701,10 +702,180 @@ function createLiveLogsWs(deps) {
     // Active volume file downloads: transferId -> { volumeName, proc, cancelled }
     const volumeFileDownloads = new Map();
 
+    function cleanupVolumeFileTransfersForWs(browserWs) {
+        if (!browserWs) return;
+
+        try {
+            for (const [transferId, t] of volumeFileUploads) {
+                if (!t || t.browserWs !== browserWs) continue;
+                try { t.cancelled = true; } catch {}
+                try { if (t.proc) t.proc.kill('SIGKILL'); } catch {}
+                try { if (t.poolKey) unpinVolumeFsHelperKey(browserWs, t.poolKey); } catch {}
+                volumeFileUploads.delete(transferId);
+            }
+        } catch {}
+
+        try {
+            for (const [transferId, t] of volumeFileDownloads) {
+                if (!t || t.browserWs !== browserWs) continue;
+                try { t.cancelled = true; } catch {}
+                try { if (t.proc) t.proc.kill('SIGKILL'); } catch {}
+                try { if (t.poolKey) unpinVolumeFsHelperKey(browserWs, t.poolKey); } catch {}
+                volumeFileDownloads.delete(transferId);
+            }
+        } catch {}
+    }
+
     // Pool helper containers per (app, volume) to avoid paying docker run startup on every page load.
     // key -> { id, name, inUse, lastUsed, removeTimer }
     const volumeFsHelperPool = new Map();
     const VOLUME_FS_HELPER_IDLE_MS = 90 * 1000;
+    // If a user visits the volume-files UI once, their WebSocket may remain connected for logs/etc.
+    // Release the pool reference after some inactivity so helpers don't hang around for hours.
+    const VOLUME_FS_HELPER_CLIENT_HOLD_MS = 2 * 60 * 1000;
+    const VOLUME_FS_HELPER_CLIENT_SWEEP_MS = 30 * 1000;
+    // Safety: sweep orphan helpers that survive Node restarts (they run `tail -f /dev/null`).
+    const VOLUME_FS_HELPER_ORPHAN_SWEEP_MS = 5 * 60 * 1000;
+    const VOLUME_FS_HELPER_ORPHAN_GRACE_MS = 2 * 60 * 1000;
+
+    function ensureVolFsTracking(browserWs) {
+        if (!browserWs) return;
+        if (!browserWs._volFsHelperKeys) browserWs._volFsHelperKeys = new Set();
+        if (!browserWs._volFsHelperLastUsed) browserWs._volFsHelperLastUsed = new Map();
+        if (!browserWs._volFsHelperPinnedKeys) browserWs._volFsHelperPinnedKeys = new Set();
+        if (!browserWs._volFsHelperIdleTimer) {
+            browserWs._volFsHelperIdleTimer = setInterval(() => {
+                try {
+                    if (!browserWs || browserWs.readyState !== WebSocket.OPEN) {
+                        try { clearInterval(browserWs._volFsHelperIdleTimer); } catch {}
+                        browserWs._volFsHelperIdleTimer = null;
+                        return;
+                    }
+                    const now = Date.now();
+                    const keys = browserWs._volFsHelperKeys;
+                    if (!keys || !keys.size) return;
+                    const pinned = browserWs._volFsHelperPinnedKeys;
+                    const lastUsed = browserWs._volFsHelperLastUsed;
+
+                    const toRelease = [];
+                    for (const poolKey of keys) {
+                        if (pinned && pinned.has(poolKey)) continue;
+                        const t = lastUsed && lastUsed.has(poolKey) ? lastUsed.get(poolKey) : 0;
+                        if (!t) continue;
+                        if (now - t > VOLUME_FS_HELPER_CLIENT_HOLD_MS) toRelease.push(poolKey);
+                    }
+
+                    for (const poolKey of toRelease) {
+                        releaseVolumeFsHelperKey(browserWs, poolKey, 'idle').catch(() => {});
+                    }
+                } catch {
+                    // swallow
+                }
+            }, VOLUME_FS_HELPER_CLIENT_SWEEP_MS);
+        }
+    }
+
+    function markVolumeFsHelperUsed(browserWs, poolKey) {
+        if (!browserWs || !poolKey) return;
+        ensureVolFsTracking(browserWs);
+        try { browserWs._volFsHelperLastUsed.set(poolKey, Date.now()); } catch {}
+    }
+
+    async function releaseVolumeFsHelperKey(browserWs, poolKey, _reason) {
+        if (!browserWs) return;
+        ensureVolFsTracking(browserWs);
+        const keys = browserWs._volFsHelperKeys;
+        if (!keys || !keys.has(poolKey)) return;
+
+        keys.delete(poolKey);
+        try { browserWs._volFsHelperLastUsed.delete(poolKey); } catch {}
+
+        const entry = volumeFsHelperPool.get(poolKey);
+        if (!entry) return;
+        entry.inUse = Math.max(0, (entry.inUse || 0) - 1);
+        entry.lastUsed = Date.now();
+        if (entry.inUse === 0 && !entry.removeTimer) {
+            entry.removeTimer = setTimeout(async () => {
+                const cur = volumeFsHelperPool.get(poolKey);
+                if (!cur || cur.inUse !== 0) return;
+                try { await execCommand(`docker rm -f ${cur.id}`); } catch {}
+                volumeFsHelperPool.delete(poolKey);
+            }, VOLUME_FS_HELPER_IDLE_MS);
+        }
+    }
+
+    function pinVolumeFsHelperKey(browserWs, poolKey) {
+        if (!browserWs || !poolKey) return;
+        ensureVolFsTracking(browserWs);
+        try { browserWs._volFsHelperPinnedKeys.add(poolKey); } catch {}
+    }
+
+    function unpinVolumeFsHelperKey(browserWs, poolKey) {
+        if (!browserWs || !poolKey) return;
+        ensureVolFsTracking(browserWs);
+        try { browserWs._volFsHelperPinnedKeys.delete(poolKey); } catch {}
+    }
+
+    function scheduleVolumeFsOrphanSweep() {
+        if (volumeFsOrphanSweepInterval) return;
+
+        const sweep = async () => {
+            // Build a set of helper IDs we still track.
+            const trackedIds = new Set();
+            try {
+                for (const v of volumeFsHelperPool.values()) {
+                    if (v && v.id) trackedIds.add(String(v.id).trim());
+                }
+            } catch {}
+
+            // Include both new labeled helpers and older helpers (name prefix).
+            let ids = [];
+            try {
+                const out1 = await execCommand('docker ps -aq --filter "label=chap.role=volfs-helper"');
+                const out2 = await execCommand('docker ps -aq --filter "name=chap-volfs-"');
+                ids = String(out1 || '').trim().split(/\s+/).filter(Boolean)
+                    .concat(String(out2 || '').trim().split(/\s+/).filter(Boolean));
+            } catch {
+                return;
+            }
+            const uniq = Array.from(new Set(ids));
+            if (!uniq.length) return;
+
+            const now = Date.now();
+            for (const id of uniq) {
+                const cid = String(id || '').trim();
+                if (!cid) continue;
+                if (trackedIds.has(cid)) continue;
+
+                let info;
+                try {
+                    info = await dockerApiJson('GET', `/containers/${cid}/json`);
+                } catch {
+                    continue;
+                }
+                const name = info && typeof info.Name === 'string' ? info.Name : '';
+                const labels = info && info.Config && info.Config.Labels && typeof info.Config.Labels === 'object' ? info.Config.Labels : null;
+                const role = labels && typeof labels['chap.role'] === 'string' ? labels['chap.role'] : null;
+                const createdRaw = info && typeof info.Created === 'string' ? info.Created : null;
+                const createdMs = createdRaw ? Date.parse(createdRaw) : NaN;
+
+                // Only consider our helpers.
+                const isOurs = role === 'volfs-helper' || String(name || '').startsWith('/chap-volfs-');
+                if (!isOurs) continue;
+                if (!Number.isFinite(createdMs)) continue;
+
+                if (now - createdMs < VOLUME_FS_HELPER_ORPHAN_GRACE_MS) continue;
+
+                try { await execCommand(`docker rm -f ${cid}`); } catch {}
+            }
+        };
+
+        // Run once soon after startup.
+        setTimeout(() => { sweep().catch(() => {}); }, 5000);
+        volumeFsOrphanSweepInterval = setInterval(() => {
+            sweep().catch(() => {});
+        }, VOLUME_FS_HELPER_ORPHAN_SWEEP_MS);
+    }
 
     async function ensureVolumeFsHelper(browserWs, volumeName) {
         if (!browserWs) throw new Error('Invalid connection');
@@ -713,7 +884,7 @@ function createLiveLogsWs(deps) {
         const appUuid = String(browserWs.applicationUuid || '').trim();
         if (!appUuid) throw new Error('Invalid application');
 
-        if (!browserWs._volFsHelperKeys) browserWs._volFsHelperKeys = new Set();
+        ensureVolFsTracking(browserWs);
         const poolKey = `${appUuid}:${vol}`;
 
         const existing = volumeFsHelperPool.get(poolKey);
@@ -732,6 +903,7 @@ function createLiveLogsWs(deps) {
                         browserWs._volFsHelperKeys.add(poolKey);
                         existing.inUse = (existing.inUse || 0) + 1;
                     }
+                    markVolumeFsHelperUsed(browserWs, poolKey);
                     return existing.id;
                 }
             } catch {
@@ -750,6 +922,9 @@ function createLiveLogsWs(deps) {
         const res = await runDockerRun([
             'run', '-d', '--rm',
             '--name', cname,
+            '--label', 'chap.role=volfs-helper',
+            '--label', `chap.app_uuid=${appPart}`,
+            '--label', `chap.volume=${volPart}`,
             '-v', `${vol}:/volume`,
             VOLUME_HELPER_IMAGE,
             'sh', '-c', 'tail -f /dev/null',
@@ -767,27 +942,19 @@ function createLiveLogsWs(deps) {
             browserWs._volFsHelperKeys.add(poolKey);
             entry.inUse += 1;
         }
+        markVolumeFsHelperUsed(browserWs, poolKey);
         return id;
     }
 
     async function cleanupVolumeFsHelpers(browserWs) {
+        ensureVolFsTracking(browserWs);
         const keys = browserWs && browserWs._volFsHelperKeys;
         if (!keys || !keys.size) return;
-        for (const poolKey of keys) {
-            const entry = volumeFsHelperPool.get(poolKey);
-            if (!entry) continue;
-            entry.inUse = Math.max(0, (entry.inUse || 0) - 1);
-            entry.lastUsed = Date.now();
-            if (entry.inUse === 0 && !entry.removeTimer) {
-                entry.removeTimer = setTimeout(async () => {
-                    const cur = volumeFsHelperPool.get(poolKey);
-                    if (!cur || cur.inUse !== 0) return;
-                    try { await execCommand(`docker rm -f ${cur.id}`); } catch {}
-                    volumeFsHelperPool.delete(poolKey);
-                }, VOLUME_FS_HELPER_IDLE_MS);
-            }
+
+        const all = Array.from(keys);
+        for (const poolKey of all) {
+            await releaseVolumeFsHelperKey(browserWs, poolKey, 'close');
         }
-        try { keys.clear(); } catch {}
     }
 
     function volumesReply(browserWs, requestId, ok, resultOrError) {
@@ -1639,6 +1806,8 @@ function createLiveLogsWs(deps) {
 
                     const transferId = `vfu_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
                     const helperId = await ensureVolumeFsHelper(browserWs, name);
+                    const poolKey = `${String(browserWs.applicationUuid || '').trim()}:${String(name || '').trim()}`;
+                    pinVolumeFsHelperKey(browserWs, poolKey);
 
                     const dirFull = toVolumeFullPath(dirUser);
                     const chosenName = await pickUniqueNameInHelperContainer(helperId, dirFull, entry);
@@ -1657,6 +1826,7 @@ function createLiveLogsWs(deps) {
                     proc.on('close', (code) => {
                         const t = volumeFileUploads.get(transferId);
                         if (t) t.exitCode = code ?? 0;
+                        if (t && t.poolKey) unpinVolumeFsHelperKey(browserWs, t.poolKey);
                         if (t && t.cancelled) {
                             volumeFileUploads.delete(transferId);
                             return;
@@ -1669,10 +1839,12 @@ function createLiveLogsWs(deps) {
                         volumeFileUploads.delete(transferId);
                     });
                     proc.on('error', () => {
+                        const t = volumeFileUploads.get(transferId);
+                        if (t && t.poolKey) unpinVolumeFsHelperKey(browserWs, t.poolKey);
                         volumeFileUploads.delete(transferId);
                     });
 
-                    volumeFileUploads.set(transferId, { volumeName: name, size, received: 0, proc, startedAt: Date.now(), helperId, dest, destUser, name: chosenName, cancelled: false });
+                    volumeFileUploads.set(transferId, { browserWs, volumeName: name, size, received: 0, proc, startedAt: Date.now(), helperId, poolKey, dest, destUser, name: chosenName, cancelled: false });
                     return volumesReply(browserWs, requestId, true, { transfer_id: transferId, chunk_size: VOLUMES_LIMIT.uploadChunkBytes, name: chosenName, path: destUser });
                 }
 
@@ -1689,6 +1861,7 @@ function createLiveLogsWs(deps) {
                             await runDockerExec(t.helperId, ['sh', '-c', 'rm -f -- "$1"', 'sh', t.dest], { maxBytes: 64, maxErrBytes: 1024 });
                         }
                     } catch {}
+                    if (t.poolKey) unpinVolumeFsHelperKey(browserWs, t.poolKey);
                     volumeFileUploads.delete(transferId);
                     return volumesReply(browserWs, requestId, true, {});
                 }
@@ -1711,6 +1884,7 @@ function createLiveLogsWs(deps) {
                     t.received += buf.length;
                     if (t.received > t.size || t.received > VOLUMES_LIMIT.maxUploadBytes) {
                         try { t.proc.kill('SIGKILL'); } catch {}
+                        if (t.poolKey) unpinVolumeFsHelperKey(browserWs, t.poolKey);
                         volumeFileUploads.delete(transferId);
                         return volumesReply(browserWs, requestId, false, 'Upload too large');
                     }
@@ -1722,6 +1896,7 @@ function createLiveLogsWs(deps) {
                         }
                     } catch {
                         try { t.proc.kill('SIGKILL'); } catch {}
+                        if (t.poolKey) unpinVolumeFsHelperKey(browserWs, t.poolKey);
                         volumeFileUploads.delete(transferId);
                         return volumesReply(browserWs, requestId, false, 'Failed to stream upload');
                     }
@@ -1760,6 +1935,8 @@ function createLiveLogsWs(deps) {
                     const p = toVolumeFullPath(pUser);
 
                     const helperId = await ensureVolumeFsHelper(browserWs, name);
+                    const poolKey = `${String(browserWs.applicationUuid || '').trim()}:${String(name || '').trim()}`;
+                    pinVolumeFsHelperKey(browserWs, poolKey);
 
                     const sizeRes = await runDockerExec(helperId, ['sh', '-c', 'stat -c %s "$1" 2>/dev/null || echo -1', 'sh', p], { maxBytes: 1024, maxErrBytes: 1024 });
                     const size = parseInt((sizeRes.stdout || '').trim(), 10);
@@ -1773,7 +1950,7 @@ function createLiveLogsWs(deps) {
 
                     const proc = spawn('docker', ['exec', helperId, 'cat', '--', p], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-                    volumeFileDownloads.set(transferId, { volumeName: name, proc, cancelled: false });
+                    volumeFileDownloads.set(transferId, { browserWs, volumeName: name, proc, cancelled: false, poolKey });
 
                     let sent = 0;
                     proc.stdout.on('data', (chunk) => {
@@ -1792,6 +1969,7 @@ function createLiveLogsWs(deps) {
                     proc.on('close', (code) => {
                         const entry = volumeFileDownloads.get(transferId);
                         volumeFileDownloads.delete(transferId);
+                        if (entry && entry.poolKey) unpinVolumeFsHelperKey(browserWs, entry.poolKey);
                         if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
                         if (entry && entry.cancelled) {
                             safeJsonSend(browserWs, { type: 'volume_files:download:cancelled', transfer_id: transferId });
@@ -1805,7 +1983,9 @@ function createLiveLogsWs(deps) {
                     });
 
                     proc.on('error', () => {
+                        const entry = volumeFileDownloads.get(transferId);
                         volumeFileDownloads.delete(transferId);
+                        if (entry && entry.poolKey) unpinVolumeFsHelperKey(browserWs, entry.poolKey);
                         if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
                         safeJsonSend(browserWs, { type: 'error', error: 'Download failed to start' });
                     });
@@ -3102,6 +3282,9 @@ function createLiveLogsWs(deps) {
             }
         }, 30000);
 
+        // Cleanup leaked volume-fs helpers from previous runs.
+        scheduleVolumeFsOrphanSweep();
+
         browserWss.on('connection', (browserWs, req) => {
             const clientIp = req.socket.remoteAddress;
             browserWs.isAlive = true;
@@ -3159,6 +3342,9 @@ function createLiveLogsWs(deps) {
                     try { browserWs._consoleSessions.clear(); } catch {}
                 }
 
+                // Stop any in-flight volume file transfers that might keep helper containers alive.
+                cleanupVolumeFileTransfersForWs(browserWs);
+
                 // Stop per-connection helper containers (volume filesystem).
                 cleanupVolumeFsHelpers(browserWs).catch(() => {});
 
@@ -3192,6 +3378,10 @@ function createLiveLogsWs(deps) {
             clearInterval(heartbeatInterval);
             heartbeatInterval = null;
         }
+        if (volumeFsOrphanSweepInterval) {
+            clearInterval(volumeFsOrphanSweepInterval);
+            volumeFsOrphanSweepInterval = null;
+        }
         if (browserWss) {
             try {
                 for (const client of browserWss.clients) {
@@ -3201,6 +3391,15 @@ function createLiveLogsWs(deps) {
             try { browserWss.close(); } catch {}
             browserWss = null;
         }
+
+        // Best-effort cleanup of any remaining tracked helpers.
+        try {
+            for (const entry of volumeFsHelperPool.values()) {
+                if (!entry || !entry.id) continue;
+                execCommand(`docker rm -f ${entry.id}`).catch(() => {});
+            }
+        } catch {}
+        try { volumeFsHelperPool.clear(); } catch {}
     }
 
     function handleServerMessage(message) {

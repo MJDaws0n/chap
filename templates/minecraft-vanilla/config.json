@@ -4,7 +4,7 @@
   "slug": "minecraft-vanilla",
   "description": "A vanilla Minecraft server using Docker Compose.",
   "category": "Minecraft",
-  "doc_url": "https://minecraft.wiki/Java_Edition_server",
+  "doc_url": "https://www.minecraft.net/en-us/download/server",
   "chap_script": "accept-eula.json",
   "env_variables": {
     "EULA": "FALSE",
