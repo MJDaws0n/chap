@@ -37,6 +37,13 @@ $old = $_SESSION['_old_input'] ?? [];
 unset($_SESSION['_errors'], $_SESSION['_old_input']);
 
 $canEditResourceLimits = $canEditResourceLimits ?? false;
+$appNotificationSettings = $appNotificationSettings ?? [];
+$appNotifyEnabled = array_key_exists('notify_app_deployments_enabled', $old)
+    ? ((string)$old['notify_app_deployments_enabled'] === '1')
+    : (bool)($appNotificationSettings['deployments']['enabled'] ?? true);
+$appNotifyMode = array_key_exists('notify_app_deployments_mode', $old)
+    ? (string)$old['notify_app_deployments_mode']
+    : (string)($appNotificationSettings['deployments']['mode'] ?? 'all');
 ?>
 
 <div class="flex flex-col gap-6">
@@ -138,6 +145,47 @@ $canEditResourceLimits = $canEditResourceLimits ?? false;
 
                         <div class="flex justify-end gap-3 pt-4 mt-4 border-t">
                             <button type="submit" class="btn btn-primary">Save Deploy Settings</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Deployment Notifications -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Notifications</h2>
+                </div>
+                <div class="card-body">
+                    <p class="text-sm text-secondary mb-4">Control deployment notifications for this application. Users must enable notifications in their settings too.</p>
+
+                    <form method="POST" action="/applications/<?= $application->uuid ?>">
+                        <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                        <input type="hidden" name="_method" value="PUT">
+                        <input type="hidden" name="_redirect_tab" value="deploy">
+                        <input type="hidden" name="app_notify_settings_form" value="1">
+
+                        <div class="flex items-start justify-between gap-4">
+                            <div class="min-w-0">
+                                <p class="font-medium">Deployment Notifications</p>
+                                <p class="text-secondary text-sm">Send notifications when deployments finish.</p>
+                            </div>
+                            <label class="toggle" aria-label="Application Deployment Notifications">
+                                <input type="hidden" name="notify_app_deployments_enabled" value="0">
+                                <input type="checkbox" name="notify_app_deployments_enabled" value="1" <?= $appNotifyEnabled ? 'checked' : '' ?>>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="form-group mt-4">
+                            <label class="form-label" for="notify_app_deployments_mode">Notify on</label>
+                            <select class="select" id="notify_app_deployments_mode" name="notify_app_deployments_mode">
+                                <option value="all" <?= $appNotifyMode === 'all' ? 'selected' : '' ?>>All deployments</option>
+                                <option value="failed" <?= $appNotifyMode === 'failed' ? 'selected' : '' ?>>Failed deployments only</option>
+                            </select>
+                        </div>
+
+                        <div class="flex justify-end gap-3 pt-4 mt-4 border-t">
+                            <button type="submit" class="btn btn-primary">Save Notification Settings</button>
                         </div>
                     </form>
                 </div>

@@ -3,6 +3,7 @@
 namespace Chap\Models;
 
 use Chap\App;
+use Chap\Services\NotificationService;
 
 /**
  * Deployment Model
@@ -77,6 +78,8 @@ class Deployment extends BaseModel
     public function updateStatus(string $status, ?string $errorMessage = null): void
     {
         $db = App::db();
+
+        $previousStatus = $this->status;
         
         $data = ['status' => $status];
         
@@ -108,6 +111,10 @@ class Deployment extends BaseModel
         if (isset($data['started_at'])) $this->started_at = $data['started_at'];
         if (isset($data['finished_at'])) $this->finished_at = $data['finished_at'];
         if ($errorMessage) $this->error_message = $errorMessage;
+
+        if ($previousStatus !== $status && in_array($status, ['running', 'failed'], true)) {
+            NotificationService::notifyDeploymentStatus($this, $status);
+        }
 
         // Update application status
         if ($status === 'running') {

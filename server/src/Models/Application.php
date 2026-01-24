@@ -28,6 +28,7 @@ class Application extends BaseModel
         'port_limit', 'bandwidth_mbps_limit', 'pids_limit',
         'allowed_node_ids',
         'health_check_enabled', 'health_check_path', 'health_check_interval',
+        'notification_settings',
         'status'
     ];
 
@@ -76,6 +77,9 @@ class Application extends BaseModel
     public bool $health_check_enabled = true;
     public string $health_check_path = '/';
     public int $health_check_interval = 30;
+
+    // Notification settings
+    public ?string $notification_settings = null;
 
     // State
     public string $status = 'stopped';

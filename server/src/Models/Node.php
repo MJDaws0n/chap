@@ -4,6 +4,7 @@ namespace Chap\Models;
 
 use Chap\App;
 use Chap\Models\NodePortRange;
+use Chap\Services\NotificationService;
 
 /**
  * Node Model (Server/Node that runs deployments)
@@ -99,6 +100,8 @@ class Node extends BaseModel
         
         $this->status = 'online';
         $this->last_seen_at = date('Y-m-d H:i:s');
+
+        NotificationService::clearNodeDownAlert($this);
     }
 
     /**
@@ -150,6 +153,8 @@ class Node extends BaseModel
         $db->update('nodes', $data, 'id = ?', [$this->id]);
         $this->status = 'online';
         $this->last_seen_at = $data['last_seen_at'];
+
+        NotificationService::clearNodeDownAlert($this);
     }
 
     /**

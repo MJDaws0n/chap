@@ -17,6 +17,7 @@ use Chap\Services\NodeAccess;
 use Chap\Services\DynamicEnv;
 use Chap\Services\ResourceAllocator;
 use Chap\Services\ResourceHierarchy;
+use Chap\Services\NotificationService;
 use Chap\Services\PortAllocator;
 use Chap\Services\TemplateRegistry;
 
@@ -670,6 +671,7 @@ class ApplicationController extends BaseController
         unset($_SESSION['incoming_webhook_reveals']);
 
         $allocatedPorts = $application ? $application->allocatedPorts() : [];
+        $appNotificationSettings = $application ? NotificationService::getApplicationNotifications($application) : null;
 
         if ($this->isApiRequest()) {
             $this->json([
@@ -688,6 +690,7 @@ class ApplicationController extends BaseController
                 'incomingWebhookReveals' => $incomingWebhookReveals,
                 'allocatedPorts' => $allocatedPorts,
                 'canEditResourceLimits' => $canEditResourceLimits,
+                'appNotificationSettings' => $appNotificationSettings,
                 'activeTab' => $tab,
             ]);
         }
@@ -905,7 +908,18 @@ class ApplicationController extends BaseController
             }
         }
 
-        $application->update([
+        $appNotify = NotificationService::getApplicationNotifications($application);
+        $shouldUpdateAppNotify = array_key_exists('app_notify_settings_form', $data)
+            || array_key_exists('notify_app_deployments_enabled', $data)
+            || array_key_exists('notify_app_deployments_mode', $data);
+
+        if ($shouldUpdateAppNotify) {
+            $appNotify['deployments']['enabled'] = (($data['notify_app_deployments_enabled'] ?? '0') === '1');
+            $mode = (string)($data['notify_app_deployments_mode'] ?? 'all');
+            $appNotify['deployments']['mode'] = in_array($mode, ['all', 'failed'], true) ? $mode : 'all';
+        }
+
+        $update = [
             'node_id' => $nodeId,
             'name' => $data['name'] ?? $application->name,
             'description' => $data['description'] ?? $application->description,
@@ -928,7 +942,13 @@ class ApplicationController extends BaseController
                 ? (!empty($data['health_check_enabled']) ? 1 : 0)
                 : ($application->health_check_enabled ? 1 : 0),
             'health_check_path' => $data['health_check_path'] ?? $application->health_check_path,
-        ]);
+        ];
+
+        if ($shouldUpdateAppNotify) {
+            $update['notification_settings'] = json_encode(NotificationService::normalizeApplicationNotifications($appNotify));
+        }
+
+        $application->update($update);
 
         if ((string)$oldNodeId !== (string)$nodeId) {
             PortAllocator::releaseForApplication((int)$application->id);

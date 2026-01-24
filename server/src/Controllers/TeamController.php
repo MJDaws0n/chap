@@ -8,6 +8,7 @@ use Chap\Auth\TeamRoleSeeder;
 use Chap\Models\Team;
 use Chap\Models\User;
 use Chap\Services\ApplicationCleanupService;
+use Chap\Services\NotificationService;
 use Chap\Services\ResourceHierarchy;
 use Chap\Services\NodeAccess;
 use Chap\Services\ResourceAllocator;
@@ -505,6 +506,12 @@ class TeamController extends BaseController
             return;
         }
 
+        try {
+            NotificationService::notifyTeamMemberAdded($team, $newUser, $user);
+        } catch (\Throwable $e) {
+            // best-effort
+        }
+
         flash('success', 'Member added successfully');
         redirect('/teams/' . $id);
     }
@@ -548,7 +555,21 @@ class TeamController extends BaseController
             return;
         }
 
+        $targetUser = User::find((int)$userId);
+        $targetSettings = null;
+        if ($targetUser) {
+            $targetSettings = NotificationService::getUserNotifications((int)$team->id, (int)$targetUser->id);
+        }
+
         $team->removeMember($userId);
+
+        if ($targetUser) {
+            try {
+                NotificationService::notifyTeamMemberRemoved($team, $targetUser, $currentUser, $targetSettings);
+            } catch (\Throwable $e) {
+                // best-effort
+            }
+        }
 
         flash('success', 'Member removed successfully');
         redirect('/teams/' . $id);

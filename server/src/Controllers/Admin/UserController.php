@@ -9,6 +9,7 @@ use Chap\Models\ActivityLog;
 use Chap\Models\Node;
 use Chap\App;
 use Chap\Services\LimitCascadeService;
+use Chap\Services\NotificationService;
 use Chap\Services\ResourceHierarchy;
 
 class UserController extends BaseController
@@ -277,6 +278,13 @@ class UserController extends BaseController
 
         $user->update($update);
 
+        $limitsChanged = $oldTotals['cpu_millicores'] !== $newTotals['cpu_millicores']
+            || $oldTotals['ram_mb'] !== $newTotals['ram_mb']
+            || $oldTotals['storage_mb'] !== $newTotals['storage_mb']
+            || $oldTotals['ports'] !== $newTotals['ports']
+            || $oldTotals['bandwidth_mbps'] !== $newTotals['bandwidth_mbps']
+            || $oldTotals['pids'] !== $newTotals['pids'];
+
         // If max limits were reduced, enforce owned-team hierarchy + redeploy descendant applications.
         if (LimitCascadeService::anyReduction($oldTotals, $newTotals)) {
             $enforced = LimitCascadeService::enforceUnderUser($user);
@@ -289,6 +297,14 @@ class UserController extends BaseController
             }
             $details[] = 'redeploy started: ' . ($redeploy['started'] ?? 0);
             flash('info', 'User max limits reduced: ' . implode(', ', $details));
+        }
+
+        if ($limitsChanged) {
+            try {
+                NotificationService::notifyUserLimitsChanged($user, $oldTotals, $newTotals, $this->user);
+            } catch (\Throwable $e) {
+                // best-effort
+            }
         }
 
         // Node access assignments

@@ -6,6 +6,7 @@ use Chap\Auth\TeamPermissionService;
 use Chap\App;
 use Chap\Models\ApiToken;
 use Chap\Services\ApiV2\ApiTokenService;
+use Chap\Services\NotificationService;
 
 /**
  * Settings Controller
@@ -52,6 +53,7 @@ class SettingsController extends BaseController
             'canWriteSettings' => $canWriteSettings,
             'apiTokens' => $tokens,
             'newApiToken' => $justCreatedToken,
+            'notificationSettings' => ($userId > 0) ? NotificationService::getUserNotifications((int)$team->id, $userId) : NotificationService::defaultUserNotifications(),
         ]);
     }
 
@@ -69,12 +71,63 @@ class SettingsController extends BaseController
             return;
         }
 
-        // TODO: Implement settings update logic
-        // Settings could include:
-        // - Default node for deployments
-        // - Notification preferences
-        // - API token generation
-        // - Two-factor authentication
+        $data = $this->all();
+        $errors = [];
+
+        if (!empty($data['notify_settings_form'])) {
+            $deployEnabled = ((string)($data['notify_deployments_enabled'] ?? '0') === '1');
+            $deployMode = (string)($data['notify_deployments_mode'] ?? 'all');
+            if (!in_array($deployMode, ['all', 'failed'], true)) {
+                $deployMode = 'all';
+            }
+
+            $generalEnabled = ((string)($data['notify_general_enabled'] ?? '0') === '1');
+            $emailEnabled = ((string)($data['notify_channel_email'] ?? '0') === '1');
+            $webhookEnabled = ((string)($data['notify_channel_webhook'] ?? '0') === '1');
+            $webhookUrl = trim((string)($data['notify_webhook_url'] ?? ''));
+
+            if ($webhookEnabled) {
+                if ($webhookUrl === '') {
+                    $errors['notify_webhook_url'] = 'Webhook URL is required when webhook delivery is enabled';
+                } elseif (!filter_var($webhookUrl, FILTER_VALIDATE_URL)) {
+                    $errors['notify_webhook_url'] = 'Webhook URL must be a valid URL';
+                } else {
+                    $scheme = parse_url($webhookUrl, PHP_URL_SCHEME);
+                    if (!in_array($scheme, ['http', 'https'], true)) {
+                        $errors['notify_webhook_url'] = 'Webhook URL must start with http:// or https://';
+                    }
+                }
+            }
+
+            if (!empty($errors)) {
+                $_SESSION['_errors'] = $errors;
+                $_SESSION['_old_input'] = $data;
+                $this->redirect('/settings');
+                return;
+            }
+
+            $notifications = [
+                'deployments' => [
+                    'enabled' => $deployEnabled,
+                    'mode' => $deployMode,
+                ],
+                'general' => [
+                    'enabled' => $generalEnabled,
+                ],
+                'channels' => [
+                    'email' => $emailEnabled,
+                    'webhook' => [
+                        'enabled' => $webhookEnabled,
+                        'url' => $webhookUrl,
+                    ],
+                ],
+            ];
+
+            $userId = (int)($this->user?->id ?? 0);
+            if ($userId > 0) {
+                NotificationService::saveUserNotifications((int)$team->id, $userId, $notifications);
+            }
+        }
 
         flash('success', 'Settings updated');
         $this->redirect('/settings');

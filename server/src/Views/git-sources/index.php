@@ -29,12 +29,6 @@
 
     <?php if (($tab ?? 'github-apps') === 'github-apps'): ?>
         <div class="card">
-            <div class="card-header">
-                <div>
-                    <h2 class="card-title">GitHub Apps</h2>
-                    <p class="text-secondary text-sm">Used automatically for private repos during deploys.</p>
-                </div>
-            </div>
 
             <?php if (empty($githubApps)): ?>
                 <div class="card-body">
@@ -104,12 +98,6 @@
 
     <?php elseif (($tab ?? '') === 'oauth'): ?>
         <div class="card">
-            <div class="card-header">
-                <div>
-                    <h2 class="card-title">OAuth</h2>
-                    <p class="text-secondary text-sm">Not implemented yet.</p>
-                </div>
-            </div>
             <div class="card-body">
                 <p class="text-secondary">OAuth connections are not available yet.</p>
             </div>
@@ -117,12 +105,6 @@
 
     <?php else: ?>
         <div class="card">
-            <div class="card-header">
-                <div>
-                    <h2 class="card-title">Deploy Keys</h2>
-                    <p class="text-secondary text-sm">Not implemented yet.</p>
-                </div>
-            </div>
             <div class="card-body">
                 <p class="text-secondary">Deploy keys are not available yet.</p>
             </div>

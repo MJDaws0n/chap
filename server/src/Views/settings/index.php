@@ -3,6 +3,30 @@
  * Settings Index View
  * Updated to use new design system
  */
+$errors = $_SESSION['_errors'] ?? [];
+$old = $_SESSION['_old_input'] ?? [];
+unset($_SESSION['_errors'], $_SESSION['_old_input']);
+
+$notificationSettings = $notificationSettings ?? [];
+
+$notifyDeployEnabled = array_key_exists('notify_deployments_enabled', $old)
+    ? ((string)$old['notify_deployments_enabled'] === '1')
+    : (bool)($notificationSettings['deployments']['enabled'] ?? false);
+$notifyDeployMode = array_key_exists('notify_deployments_mode', $old)
+    ? (string)$old['notify_deployments_mode']
+    : (string)($notificationSettings['deployments']['mode'] ?? 'all');
+$notifyGeneralEnabled = array_key_exists('notify_general_enabled', $old)
+    ? ((string)$old['notify_general_enabled'] === '1')
+    : (bool)($notificationSettings['general']['enabled'] ?? false);
+$notifyEmailEnabled = array_key_exists('notify_channel_email', $old)
+    ? ((string)$old['notify_channel_email'] === '1')
+    : (bool)($notificationSettings['channels']['email'] ?? true);
+$notifyWebhookEnabled = array_key_exists('notify_channel_webhook', $old)
+    ? ((string)$old['notify_channel_webhook'] === '1')
+    : (bool)($notificationSettings['channels']['webhook']['enabled'] ?? false);
+$notifyWebhookUrl = array_key_exists('notify_webhook_url', $old)
+    ? (string)$old['notify_webhook_url']
+    : (string)($notificationSettings['channels']['webhook']['url'] ?? '');
 ?>
 
 <div class="page-header">
@@ -226,29 +250,71 @@
                 </div>
             </div>
             <div class="card-body">
-                <div class="flex flex-col gap-4">
-                    <div class="flex items-center justify-between gap-4">
+                <form method="POST" action="/settings" class="flex flex-col gap-6">
+                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                    <input type="hidden" name="notify_settings_form" value="1">
+
+                    <div class="flex items-start justify-between gap-4">
                         <div class="min-w-0">
                             <p class="font-medium">Deployment Notifications</p>
-                            <p class="text-secondary text-sm">Get notified when deployments complete or fail</p>
+                            <p class="text-secondary text-sm">Get notified when deployments finish (success or failed).</p>
                         </div>
                         <label class="toggle" aria-label="Deployment Notifications">
-                            <input type="checkbox" checked>
+                            <input type="hidden" name="notify_deployments_enabled" value="0">
+                            <input type="checkbox" name="notify_deployments_enabled" value="1" <?= $notifyDeployEnabled ? 'checked' : '' ?>>
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
 
-                    <div class="flex items-center justify-between gap-4">
+                    <div class="form-group">
+                        <label class="form-label" for="notify_deployments_mode">Notify on</label>
+                        <select class="select" id="notify_deployments_mode" name="notify_deployments_mode">
+                            <option value="all" <?= $notifyDeployMode === 'all' ? 'selected' : '' ?>>All deployments</option>
+                            <option value="failed" <?= $notifyDeployMode === 'failed' ? 'selected' : '' ?>>Failed deployments only</option>
+                        </select>
+                    </div>
+
+                    <div class="flex items-start justify-between gap-4">
                         <div class="min-w-0">
-                            <p class="font-medium">Node Status Alerts</p>
-                            <p class="text-secondary text-sm">Get notified when nodes go offline</p>
+                            <p class="font-medium">General Notifications</p>
+                            <p class="text-secondary text-sm">Team membership changes, resource limit updates, and node down alerts.</p>
                         </div>
-                        <label class="toggle" aria-label="Node Status Alerts">
-                            <input type="checkbox" checked>
+                        <label class="toggle" aria-label="General Notifications">
+                            <input type="hidden" name="notify_general_enabled" value="0">
+                            <input type="checkbox" name="notify_general_enabled" value="1" <?= $notifyGeneralEnabled ? 'checked' : '' ?>>
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
-                </div>
+
+                    <div class="border-t border-primary pt-4">
+                        <p class="font-medium mb-2">Delivery</p>
+                        <div class="flex flex-col gap-3">
+                            <label class="flex items-center gap-2">
+                                <input type="hidden" name="notify_channel_email" value="0">
+                                <input type="checkbox" name="notify_channel_email" value="1" class="checkbox" <?= $notifyEmailEnabled ? 'checked' : '' ?>>
+                                <span>Email</span>
+                            </label>
+                            <label class="flex items-center gap-2">
+                                <input type="hidden" name="notify_channel_webhook" value="0">
+                                <input type="checkbox" name="notify_channel_webhook" value="1" class="checkbox" <?= $notifyWebhookEnabled ? 'checked' : '' ?>>
+                                <span>Webhook</span>
+                            </label>
+                            <div class="form-group">
+                                <label class="form-label" for="notify_webhook_url">Webhook URL</label>
+                                <input type="url" id="notify_webhook_url" name="notify_webhook_url" class="input <?= !empty($errors['notify_webhook_url']) ? 'input-error' : '' ?>" placeholder="https://example.com/chap-webhook" value="<?= e($notifyWebhookUrl) ?>">
+                                <?php if (!empty($errors['notify_webhook_url'])): ?>
+                                    <p class="form-error"><?= e($errors['notify_webhook_url']) ?></p>
+                                <?php else: ?>
+                                    <p class="form-hint">We will POST JSON with event payloads.</p>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end">
+                        <button type="submit" class="btn btn-primary">Save Notification Settings</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
