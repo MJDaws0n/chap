@@ -119,6 +119,13 @@
                     </svg>
                     <span>Templates</span>
                 </a>
+
+                <a href="/admin/api" class="sidebar-link <?= str_starts_with(($currentPage ?? ''), 'admin-api') ? 'active' : '' ?>">
+                    <svg class="sidebar-link-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                    <span>API</span>
+                </a>
             </div>
         <?php endif; ?>
     </nav>

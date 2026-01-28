@@ -10,7 +10,7 @@ Prereqs:
   - Chap server running on localhost:8080
   - A user account exists
   - Provide either a PAT or email+password (optional TOTP) in the CONFIG block.
-  - For Node tests, you MUST provide applicationId (because node sessions are app-scoped).
+  - For Node tests, you can provide applicationId, but the script can also auto-discover one via GET /api/v2/applications.
 
 Configure:
   - Edit the CONFIG block near the top of this file.
@@ -25,7 +25,7 @@ Run:
  * Notes:
  * - Prefer using a PAT (Settings → API keys) for repeatable runs.
  * - If you fill in email/password, the script will mint a session token first.
- * - Node tests require an existing application id.
+ * - Node tests require an application id; leave blank to attempt auto-discovery.
  */
 const CONFIG = {
   baseUrl: 'http://localhost:8080',
@@ -484,10 +484,39 @@ async function main() {
   results.push(await runStep({ name: 'activity', method: 'GET', url: `${API}/activity`, token }));
 
   // --- Node API sweep (from API.md) ---
-  const appId = (CONFIG.applicationId || '').trim();
+  let appId = (CONFIG.applicationId || '').trim();
   const preferredNodeId = (CONFIG.nodeId || '').trim();
   const nodeUrl = String(nodeUrlFromList || '').replace(/\/$/, '');
-  const nodeId = preferredNodeId || nodeFromList;
+  let nodeId = preferredNodeId || nodeFromList;
+
+  // If caller didn't provide an application id, try to discover one via Server API.
+  // This is required to mint a node session token (node tokens are application-scoped).
+  if (!appId) {
+    const teams = await runStep(
+      { name: 'teams list (discover)', method: 'GET', url: `${API}/teams`, token },
+      { allowAuthSkip: true }
+    );
+    results.push(teams);
+
+    const teamUuid = pick(teams.json, 'data.0.uuid', '') || pick(teams.json, 'data.0.id', '');
+    if (teamUuid) {
+      const apps = await runStep(
+        {
+          name: 'applications list (discover)',
+          method: 'GET',
+          url: `${API}/applications?filter[team_id]=${encodeURIComponent(teamUuid)}&page[limit]=1`,
+          token,
+        },
+        { allowAuthSkip: true }
+      );
+      results.push(apps);
+
+      appId = pick(apps.json, 'data.0.uuid', '') || pick(apps.json, 'data.0.id', '');
+      if (!preferredNodeId && !nodeId) {
+        nodeId = pick(apps.json, 'data.0.node_id', '') || nodeId;
+      }
+    }
+  }
 
   if (!nodeUrl) {
     console.log('[SKIP] Node API: missing node_url from /api/v2/nodes');

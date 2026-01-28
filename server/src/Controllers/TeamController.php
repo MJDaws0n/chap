@@ -6,6 +6,7 @@ use Chap\Auth\TeamPermissionService;
 use Chap\Auth\TeamPermissions;
 use Chap\Auth\TeamRoleSeeder;
 use Chap\Models\Team;
+use Chap\Models\TeamInvitation;
 use Chap\Models\User;
 use Chap\Services\ApplicationCleanupService;
 use Chap\Services\NotificationService;
@@ -111,6 +112,7 @@ class TeamController extends BaseController
         $canManageRoles = admin_view_all() || TeamPermissionService::can((int)$team->id, $userId, 'team.roles', 'write');
 
         $members = $canViewMembers ? $team->members() : [];
+        $pendingInvites = ($canManageMembers && !empty($canViewMembers)) ? TeamInvitation::pendingForTeam((int)$team->id) : [];
 
         $roles = $team->roles();
         $builtinBase = array_values(array_filter($roles, function($r) {
@@ -125,6 +127,7 @@ class TeamController extends BaseController
             'title' => $team->name,
             'team' => $team,
             'members' => $members,
+            'pendingInvites' => $pendingInvites,
             'isOwner' => $team->isOwner($user->id),
             'isAdmin' => $team->isAdmin($user->id),
             'canViewMembers' => $canViewMembers,
@@ -455,36 +458,35 @@ class TeamController extends BaseController
             return;
         }
 
-        // Find by email or username ("account")
-        $newUser = null;
+        $inviteeUser = null;
+        $inviteeEmail = '';
+
         if (str_contains($account, '@')) {
-            $newUser = User::findByEmail($account);
-        }
-        if (!$newUser) {
-            $newUser = User::findByUsername($account);
-        }
-        if (!$newUser && !str_contains($account, '@')) {
-            // last try: maybe user typed email without @ check? (unlikely, but harmless)
-            $newUser = User::findByEmail($account);
-        }
-        
-        if (!$newUser) {
-            flash('error', 'User not found');
-            redirect('/teams/' . $id);
-            return;
+            $email = strtolower($account);
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                flash('error', 'Invalid email address');
+                $this->redirect('/teams/' . $id);
+                return;
+            }
+            $inviteeEmail = $email;
+            $inviteeUser = User::findByEmail($email);
+        } else {
+            $inviteeUser = User::findByUsername($account);
+            if (!$inviteeUser) {
+                flash('error', 'User not found. Use an email address to invite a new user.');
+                $this->redirect('/teams/' . $id);
+                return;
+            }
+            $inviteeEmail = (string)$inviteeUser->email;
         }
 
-        if ($team->hasMember($newUser->id)) {
+        if ($inviteeUser && $team->hasMember((int)$inviteeUser->id)) {
             flash('error', 'User is already a member');
-            redirect('/teams/' . $id);
+            $this->redirect('/teams/' . $id);
             return;
         }
 
-        // Persist membership (legacy role remains owner/admin/member).
-        $legacyRole = ($baseRoleSlug === 'admin') ? 'admin' : 'member';
-        $team->addMember($newUser->id, $legacyRole);
-
-        // Resolve role IDs and assign (multi-role).
+        // Validate roles now (ensure base role exists; custom roles belong to this team).
         $db = \Chap\App::db();
         $baseRole = $db->fetch(
             "SELECT id FROM team_roles WHERE team_id = ? AND slug = ? LIMIT 1",
@@ -496,23 +498,65 @@ class TeamController extends BaseController
             return;
         }
 
-        $roleIds = array_merge([(int)$baseRole['id']], $customRoleIds);
-        try {
-            TeamPermissionService::setUserRoles((int)$team->id, $userId, (int)$newUser->id, $roleIds);
-        } catch (\Throwable $e) {
-            $team->removeMember((int)$newUser->id);
-            flash('error', $e->getMessage());
-            $this->redirect('/teams/' . $id);
-            return;
+        $customRoleIds = array_values(array_unique(array_map('intval', $customRoleIds)));
+        $customRoleIds = array_values(array_filter($customRoleIds, static fn($v) => $v > 0));
+        if (!empty($customRoleIds)) {
+            $placeholders = implode(',', array_fill(0, count($customRoleIds), '?'));
+            $rows = $db->fetchAll(
+                "SELECT id FROM team_roles WHERE team_id = ? AND id IN ({$placeholders})",
+                array_merge([(int)$team->id], $customRoleIds)
+            );
+            $customRoleIds = array_values(array_map(static fn($r) => (int)$r['id'], $rows));
         }
 
-        try {
-            NotificationService::notifyTeamMemberAdded($team, $newUser, $user);
-        } catch (\Throwable $e) {
-            // best-effort
+        // Create (or refresh) a pending invitation.
+        $token = generate_token(32);
+        $tokenHash = TeamInvitation::hashToken($token);
+        $expiresAt = date('Y-m-d H:i:s', time() + (60 * 60 * 24 * 7));
+
+        $existing = TeamInvitation::pendingForTeamAndEmail((int)$team->id, $inviteeEmail);
+        if ($existing) {
+            $existing->update([
+                'inviter_user_id' => (int)$userId,
+                'invitee_user_id' => $inviteeUser ? (int)$inviteeUser->id : null,
+                'token_hash' => $tokenHash,
+                'status' => 'pending',
+                'base_role_slug' => $baseRoleSlug,
+                'custom_role_ids' => json_encode($customRoleIds),
+                'expires_at' => $expiresAt,
+            ]);
+        } else {
+            TeamInvitation::create([
+                'team_id' => (int)$team->id,
+                'inviter_user_id' => (int)$userId,
+                'invitee_user_id' => $inviteeUser ? (int)$inviteeUser->id : null,
+                'email' => $inviteeEmail,
+                'token_hash' => $tokenHash,
+                'status' => 'pending',
+                'base_role_slug' => $baseRoleSlug,
+                'custom_role_ids' => json_encode($customRoleIds),
+                'expires_at' => $expiresAt,
+            ]);
         }
 
-        flash('success', 'Member added successfully');
+        $inviteUrl = request_base_url() . '/team-invites/' . urlencode($token);
+        $baseLabels = [
+            'admin' => 'Admin',
+            'manager' => 'Manager',
+            'member' => 'Member',
+            'read_only_member' => 'Read-only Member',
+        ];
+        $baseRoleLabel = $baseLabels[$baseRoleSlug] ?? $baseRoleSlug;
+
+        try {
+            NotificationService::sendTeamInvitationEmail($team, $inviteeEmail, $user, $inviteUrl, $baseRoleLabel);
+            flash('success', 'Invitation sent to ' . $inviteeEmail);
+        } catch (\Throwable $e) {
+            // Still created; provide the URL so it can be shared manually.
+            flash('success', 'Invitation created for ' . $inviteeEmail);
+            flash('error', 'Email could not be sent. Invite link: ' . $inviteUrl);
+        }
+
         redirect('/teams/' . $id);
     }
 

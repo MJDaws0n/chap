@@ -7,6 +7,8 @@ use Chap\Router\Route;
 
 // Public routes
 Route::get('/', 'HomeController@index');
+Route::get('/docs', 'DocsController@index');
+Route::get('/docs/{file}', 'DocsController@file');
 Route::get('/login', 'AuthController@showLogin');
 Route::post('/login', 'AuthController@login');
 Route::get('/mfa', 'TwoFactorController@showChallenge');
@@ -24,6 +26,10 @@ Route::get('/forgot-password', 'AuthController@showForgotPassword');
 Route::post('/forgot-password', 'AuthController@forgotPassword');
 Route::get('/reset-password/{token}', 'AuthController@showResetPassword');
 Route::post('/reset-password', 'AuthController@resetPassword');
+
+// Team invitations (public landing)
+Route::get('/team-invites/{token}', 'TeamInviteController@show');
+Route::post('/team-invites/{token}/decline', 'TeamInviteController@decline');
 
 // Protected routes (require authentication)
 Route::middleware(['auth'], function() {
@@ -52,6 +58,10 @@ Route::middleware(['auth'], function() {
     Route::post('/teams/{id}/members', 'TeamController@addMember');
     Route::put('/teams/{id}/members/{userId}', 'TeamController@updateMember');
     Route::delete('/teams/{id}/members/{userId}', 'TeamController@removeMember');
+
+    // Team invitations
+    Route::post('/team-invites/{token}/accept', 'TeamInviteController@accept');
+    Route::post('/teams/{id}/invites/{inviteId}/revoke', 'TeamInviteController@revoke');
 
     // Team roles
     Route::get('/teams/{id}/roles', 'TeamRoleController@index');
@@ -187,6 +197,11 @@ Route::middleware(['auth', 'admin'], function() {
     // Admin templates
     Route::get('/admin/templates', 'Admin\\TemplateController@index');
     Route::post('/admin/templates/upload', 'Admin\\TemplateController@upload');
+
+    // Admin API (docs + token management)
+    Route::get('/admin/api', 'Admin\\ApiController@index');
+    Route::post('/admin/api-tokens', 'Admin\\ApiController@createToken');
+    Route::post('/admin/api-tokens/{tokenId}/revoke', 'Admin\\ApiController@revokeToken');
 });
 
 // API routes
@@ -267,9 +282,85 @@ Route::prefix('/api/v2', function() {
 
         Route::get('/projects', 'ApiV2\\ProjectsController@index');
 
+        Route::get('/environments', 'ApiV2\\EnvironmentsController@index');
+        Route::get('/environments/{environment_id}', 'ApiV2\\EnvironmentsController@show');
+
+        Route::get('/applications', 'ApiV2\\ApplicationsController@index');
+        Route::get('/applications/{application_id}', 'ApiV2\\ApplicationsController@show');
+        Route::post('/environments/{environment_id}/applications', 'ApiV2\\ApplicationsController@store');
+        Route::patch('/applications/{application_id}', 'ApiV2\\ApplicationsController@update');
+        Route::get('/applications/{application_id}/deployments', 'ApiV2\\DeploymentsController@indexForApplication');
+        Route::post('/applications/{application_id}/deployments', 'ApiV2\\DeploymentsController@createForApplication');
+
+        Route::get('/deployments/{deployment_id}', 'ApiV2\\DeploymentsController@show');
+        Route::get('/deployments/{deployment_id}/logs', 'ApiV2\\DeploymentsController@logs');
+        Route::post('/deployments/{deployment_id}/cancel', 'ApiV2\\DeploymentsController@cancel');
+        Route::post('/deployments/{deployment_id}/rollback', 'ApiV2\\DeploymentsController@rollback');
+
+        Route::get('/templates', 'ApiV2\\TemplatesController@index');
+        Route::get('/templates/{slug}', 'ApiV2\\TemplatesController@show');
+        Route::post('/templates/{slug}/deploy', 'ApiV2\\TemplatesController@deploy');
+
         Route::get('/nodes', 'ApiV2\\NodesController@index');
         Route::get('/nodes/{node_id}', 'ApiV2\\NodesController@show');
         Route::post('/nodes/{node_id}/sessions', 'ApiV2\\NodesController@mintSession');
+    });
+});
+
+// Platform API v2 (platform-wide keys; created by admin; not attached to a user)
+Route::prefix('/api/v2/platform', function() {
+    Route::middleware(['api.v2.platform'], function() {
+        // Users
+        Route::get('/users', 'ApiV2\\Platform\\UsersController@index');
+        Route::post('/users', 'ApiV2\\Platform\\UsersController@store');
+        Route::get('/users/{user_id}', 'ApiV2\\Platform\\UsersController@show');
+        Route::patch('/users/{user_id}', 'ApiV2\\Platform\\UsersController@update');
+        Route::delete('/users/{user_id}', 'ApiV2\\Platform\\UsersController@destroy');
+
+        // Teams
+        Route::get('/teams', 'ApiV2\\Platform\\TeamsController@index');
+        Route::post('/teams', 'ApiV2\\Platform\\TeamsController@store');
+        Route::get('/teams/{team_id}', 'ApiV2\\Platform\\TeamsController@show');
+        Route::patch('/teams/{team_id}', 'ApiV2\\Platform\\TeamsController@update');
+        Route::delete('/teams/{team_id}', 'ApiV2\\Platform\\TeamsController@destroy');
+
+        // Projects
+        Route::get('/projects', 'ApiV2\\Platform\\ProjectsController@index');
+        Route::post('/projects', 'ApiV2\\Platform\\ProjectsController@store');
+        Route::get('/projects/{project_id}', 'ApiV2\\Platform\\ProjectsController@show');
+        Route::patch('/projects/{project_id}', 'ApiV2\\Platform\\ProjectsController@update');
+        Route::delete('/projects/{project_id}', 'ApiV2\\Platform\\ProjectsController@destroy');
+
+        // Environments
+        Route::get('/environments', 'ApiV2\\Platform\\EnvironmentsController@index');
+        Route::post('/environments', 'ApiV2\\Platform\\EnvironmentsController@store');
+        Route::get('/environments/{environment_id}', 'ApiV2\\Platform\\EnvironmentsController@show');
+        Route::patch('/environments/{environment_id}', 'ApiV2\\Platform\\EnvironmentsController@update');
+        Route::delete('/environments/{environment_id}', 'ApiV2\\Platform\\EnvironmentsController@destroy');
+
+        // Applications
+        Route::get('/applications', 'ApiV2\\Platform\\ApplicationsController@index');
+        Route::post('/applications', 'ApiV2\\Platform\\ApplicationsController@store');
+        Route::get('/applications/{application_id}', 'ApiV2\\Platform\\ApplicationsController@show');
+        Route::patch('/applications/{application_id}', 'ApiV2\\Platform\\ApplicationsController@update');
+
+        // Deployments
+        Route::get('/deployments', 'ApiV2\\Platform\\DeploymentsController@index');
+        Route::post('/applications/{application_id}/deployments', 'ApiV2\\Platform\\DeploymentsController@createForApplication');
+        Route::get('/deployments/{deployment_id}', 'ApiV2\\Platform\\DeploymentsController@show');
+        Route::get('/deployments/{deployment_id}/logs', 'ApiV2\\Platform\\DeploymentsController@logs');
+        Route::post('/deployments/{deployment_id}/cancel', 'ApiV2\\Platform\\DeploymentsController@cancel');
+        Route::post('/deployments/{deployment_id}/rollback', 'ApiV2\\Platform\\DeploymentsController@rollback');
+
+        // Templates
+        Route::get('/templates', 'ApiV2\\Platform\\TemplatesController@index');
+        Route::post('/templates/sync', 'ApiV2\\Platform\\TemplatesController@sync');
+        Route::get('/templates/{slug}', 'ApiV2\\Platform\\TemplatesController@show');
+        Route::post('/templates/{slug}/deploy', 'ApiV2\\Platform\\TemplatesController@deploy');
+
+        // Nodes
+        Route::get('/nodes', 'ApiV2\\Platform\\NodesController@index');
+        Route::get('/nodes/{node_id}', 'ApiV2\\Platform\\NodesController@show');
     });
 });
 

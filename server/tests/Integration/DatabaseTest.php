@@ -253,6 +253,36 @@ class DatabaseTest extends TestCase
         $this->assertContains('user_id', $columnNames);
         $this->assertContains('role', $columnNames);
     }
+
+    /**
+     * Test team_invitations table exists
+     */
+    public function testTeamInvitationsTableExists(): void
+    {
+        $db = $this->getDb();
+
+        $columns = $db->query("DESCRIBE team_invitations");
+        $columnNames = array_column($columns, 'Field');
+
+        $expectedColumns = [
+            'id',
+            'uuid',
+            'team_id',
+            'inviter_user_id',
+            'invitee_user_id',
+            'email',
+            'token_hash',
+            'status',
+            'base_role_slug',
+            'custom_role_ids',
+            'expires_at',
+            'created_at',
+        ];
+
+        foreach ($expectedColumns as $col) {
+            $this->assertContains($col, $columnNames, "team_invitations table should have '$col' column");
+        }
+    }
     
     /**
      * Test foreign key constraints work

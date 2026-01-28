@@ -25,6 +25,10 @@
           <a href="#server-tokens">Authentication & Tokens</a>
           <a href="#server-teams">Teams</a>
           <a href="#server-projects">Projects</a>
+          <a href="#server-environments">Environments</a>
+          <a href="#server-applications">Applications</a>
+          <a href="#server-deployments">Deployments</a>
+          <a href="#server-templates">Templates</a>
           <a href="#server-nodes">Nodes</a>
         </div>
         <a href="#node-api">Node API v2</a>
@@ -60,7 +64,7 @@
 
       <section id="server-api" class="section">
         <h3>Server API v2 (Client Plane)</h3>
-        <p>Authentication uses session tokens and personal access tokens (PATs).</p>
+        <p>Authentication uses session tokens and personal access tokens (PATs). Create/update applications separately from deploying them.</p>
 
         <div id="server-core" class="group">
           <h4>Core</h4>
@@ -173,6 +177,7 @@
     "teams:read",
     "teams:write",
     "projects:read",
+    "applications:read",
     "nodes:read",
     "nodes:session:mint"
   ],
@@ -295,6 +300,344 @@
           </div>
         </div>
 
+        <div id="server-environments" class="group">
+          <h4>Environments</h4>
+          <div class="grid">
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>List environments</strong>
+            </div>
+            <span class="method get">GET</span>
+          </div>
+          <div class="meta">Filter by team and optionally by project.</div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-200" data-url="/api/v2/environments?filter[team_id]=TEAM_ID&amp;filter[project_id]=PROJECT_ID&amp;page[limit]=50" data-base="server">http://localhost:8080/api/v2/environments?filter[team_id]=TEAM_ID&amp;filter[project_id]=PROJECT_ID&amp;page[limit]=50</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-200">{}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN (or X-Team-Id header). Scope required: <code>environments:read</code>.</div>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>Get environment</strong>
+            </div>
+            <span class="method get">GET</span>
+          </div>
+          <div class="meta">Fetch details for an environment UUID.</div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-201" data-url="/api/v2/environments/ENVIRONMENT_ID" data-base="server">http://localhost:8080/api/v2/environments/ENVIRONMENT_ID</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-201">{}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>environments:read</code>.</div>
+        </div>
+
+          </div>
+        </div>
+
+        <div id="server-applications" class="group">
+          <h4>Applications</h4>
+          <div class="grid">
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>List applications</strong>
+            </div>
+            <span class="method get">GET</span>
+          </div>
+          <div class="meta">Lists applications for the selected team. Returns full application UUIDs (required for minting node tokens).</div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-101" data-url="/api/v2/applications?filter[team_id]=TEAM_ID&amp;page[limit]=50" data-base="server">http://localhost:8080/api/v2/applications?filter[team_id]=TEAM_ID&amp;page[limit]=50</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-101">{}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN (or X-Team-Id header). Scope required: <code>applications:read</code>.</div>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>Get application</strong>
+            </div>
+            <span class="method get">GET</span>
+          </div>
+          <div class="meta">Fetch the full stored app config metadata (deploy uses stored config).</div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-202" data-url="/api/v2/applications/APP_ID" data-base="server">http://localhost:8080/api/v2/applications/APP_ID</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-202">{}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>applications:read</code>.</div>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>Create application (stores deploy config)</strong>
+            </div>
+            <span class="method post">POST</span>
+          </div>
+          <div class="meta">Create an app once; future deploys don’t need the settings re-sent.</div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-203" data-url="/api/v2/environments/ENVIRONMENT_ID/applications" data-base="server">http://localhost:8080/api/v2/environments/ENVIRONMENT_ID/applications</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-203">{
+  "name": "Example App",
+  "node_id": "NODE_ID",
+  "build_pack": "docker-compose",
+  "git_repository": "https://github.com/example/repo.git",
+  "git_branch": "main",
+  "docker_compose_path": "docker-compose.yml",
+  "build_context": ".",
+  "environment_variables": {
+    "HELLO": "world"
+  }
+}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>applications:write</code>.</div>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>Update application (changes stored deploy config)</strong>
+            </div>
+            <span class="method patch">PATCH</span>
+          </div>
+          <div class="meta">Update app settings without deploying; deploy separately.</div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-204" data-url="/api/v2/applications/APP_ID" data-base="server">http://localhost:8080/api/v2/applications/APP_ID</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-204">{
+  "git_branch": "main",
+  "environment_variables": {
+    "HELLO": "chap"
+  }
+}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>applications:write</code>.</div>
+        </div>
+
+          </div>
+        </div>
+
+        <div id="server-deployments" class="group">
+          <h4>Deployments</h4>
+          <div class="grid">
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>Deploy application (uses stored config)</strong>
+            </div>
+            <span class="method post">POST</span>
+          </div>
+          <div class="meta">Queues a new deployment without re-sending app settings.</div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-205" data-url="/api/v2/applications/APP_ID/deployments" data-base="server">http://localhost:8080/api/v2/applications/APP_ID/deployments</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-205">{
+  "commit_sha": null
+}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>applications:deploy</code>.</div>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>List deployments for application</strong>
+            </div>
+            <span class="method get">GET</span>
+          </div>
+          <div class="meta">Cursor pagination supported.</div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-206" data-url="/api/v2/applications/APP_ID/deployments?page[limit]=50" data-base="server">http://localhost:8080/api/v2/applications/APP_ID/deployments?page[limit]=50</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-206">{}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>deployments:read</code>.</div>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>Get deployment</strong>
+            </div>
+            <span class="method get">GET</span>
+          </div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-207" data-url="/api/v2/deployments/DEPLOYMENT_ID" data-base="server">http://localhost:8080/api/v2/deployments/DEPLOYMENT_ID</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-207">{}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>deployments:read</code>.</div>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>Get deployment logs</strong>
+            </div>
+            <span class="method get">GET</span>
+          </div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-208" data-url="/api/v2/deployments/DEPLOYMENT_ID/logs" data-base="server">http://localhost:8080/api/v2/deployments/DEPLOYMENT_ID/logs</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-208">{}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>deployments:read</code>.</div>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>Cancel deployment</strong>
+            </div>
+            <span class="method post">POST</span>
+          </div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-209" data-url="/api/v2/deployments/DEPLOYMENT_ID/cancel" data-base="server">http://localhost:8080/api/v2/deployments/DEPLOYMENT_ID/cancel</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-209">{}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>deployments:write</code> or <code>deployments:cancel</code>.</div>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>Rollback to deployment</strong>
+            </div>
+            <span class="method post">POST</span>
+          </div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-210" data-url="/api/v2/deployments/DEPLOYMENT_ID/rollback" data-base="server">http://localhost:8080/api/v2/deployments/DEPLOYMENT_ID/rollback</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-210">{}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>deployments:write</code> or <code>deployments:rollback</code>.</div>
+        </div>
+
+          </div>
+        </div>
+
+        <div id="server-templates" class="group">
+          <h4>Templates</h4>
+          <div class="grid">
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>List templates</strong>
+            </div>
+            <span class="method get">GET</span>
+          </div>
+          <div class="meta">Templates are global but require a team context for permission checks.</div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-211" data-url="/api/v2/templates?filter[team_id]=TEAM_ID" data-base="server">http://localhost:8080/api/v2/templates?filter[team_id]=TEAM_ID</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-211">{}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>templates:read</code>.</div>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>Get template</strong>
+            </div>
+            <span class="method get">GET</span>
+          </div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-212" data-url="/api/v2/templates/TEMPLATE_SLUG" data-base="server">http://localhost:8080/api/v2/templates/TEMPLATE_SLUG</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-212">{}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>templates:read</code>.</div>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-header">
+            <div>
+              <strong>Deploy from template (create app + optional initial deploy)</strong>
+            </div>
+            <span class="method post">POST</span>
+          </div>
+          <div class="meta">Creates an application from the template. By default, queues an initial deployment; set <code>deploy</code> to <code>false</code> to create without deploying.</div>
+          <div class="row">
+            <div class="row-label">URL</div>
+            <div class="code" id="url-213" data-url="/api/v2/templates/TEMPLATE_SLUG/deploy" data-base="server">http://localhost:8080/api/v2/templates/TEMPLATE_SLUG/deploy</div>
+          </div>
+          <div class="row">
+            <div class="row-label">Payload JSON</div>
+            <pre class="code" id="payload-213">{
+  "name": "My Template App",
+  "environment_id": "ENVIRONMENT_ID",
+  "node_id": "NODE_ID",
+  "deploy": true,
+  "cpu_limit": "1",
+  "memory_limit": "512m",
+  "environment_variables": {
+    "REQUIRED_VAR": "value"
+  }
+}</pre>
+          </div>
+          <div class="meta">Headers: Authorization: Bearer PAT_TOKEN. Scope required: <code>templates:deploy</code>. Notes: templates may include dynamic placeholders like <code>{ram}</code> and <code>{port[0]}</code>; this endpoint derives RAM/CPU from effective limits (defaults shown above) and auto-reserves any required ports for the template. If <code>deploy</code> is <code>false</code>, response includes <code>deployment: null</code>.</div>
+        </div>
+
+          </div>
+        </div>
+
+          </div>
+
         <div id="server-nodes" class="group">
           <h4>Nodes</h4>
           <div class="grid">
@@ -383,7 +726,7 @@
       <h3>Node API v2 (Node Plane)</h3>
       <p>Use the Node URL input above. The endpoints below require a minted node access token.</p>
       <div class="callout" style="margin-bottom: 12px;">
-        Disclaimer: the API does not currently provide a way to list or fetch the application ID before minting a node token. You must grab the full application UUID from the web UI (short IDs will not work). This will be resolved in a future update.
+        Tip: use <code>GET /api/v2/applications</code> (Server API v2) to fetch the full application UUID required for <code>constraints.application_id</code>. Short IDs will not work.
       </div>
 
       <div id="node-core" class="group">
@@ -1060,7 +1403,9 @@
     </div>
     </section>
   </main>
-  </div>
+ 
+        </div>
+</div>
 
   <div class="toast" id="toast">Copied</div>
 

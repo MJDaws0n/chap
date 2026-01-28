@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+
+	<!doctype html>
+	<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Chap Platform API Reference</title>
+		<link rel="stylesheet" href="styles.css" />
+	</head>
+	<body>
+		<header class="topbar">
+			<div class="wrap">
+				<div class="brand">Chap Platform API Reference</div>
+				<p class="subtitle">Unified test console for Server Platform API v2 (platform keys)</p>
+			</div>
+		</header>
+
+		<div class="layout">
+			<aside class="sidebar">
+				<h3>Contents</h3>
+				<nav class="nav">
+					<a href="#overview">Overview</a>
+					<a href="#platform-api">Platform API v2</a>
+					<div class="toc-sub">
+						<a href="#platform-core">Core</a>
+						<a href="#platform-auth">Authentication</a>
+						<a href="#platform-users">Users</a>
+						<a href="#platform-teams">Teams</a>
+						<a href="#platform-projects">Projects</a>
+						<a href="#platform-environments">Environments</a>
+						<a href="#platform-applications">Applications</a>
+						<a href="#platform-deployments">Deployments</a>
+						<a href="#platform-templates">Templates</a>
+						<a href="#platform-nodes">Nodes</a>
+					</div>
+				</nav>
+			</aside>
+
+			<main>
+				<section id="overview" class="panel intro">
+					<div>
+						<h2>Quick Setup</h2>
+						<p>These endpoints are authenticated using <strong>platform API keys</strong> (Bearer tokens) and are <strong>not attached to a user</strong>. Update the base URL here and every URL block will update automatically.</p>
+					</div>
+					<div class="inputs">
+						<label class="field">
+							Server URL
+							<input id="server-url" type="text" value="http://localhost:8080" />
+						</label>
+					</div>
+					<div class="callout">Values are saved locally and restored on refresh.</div>
+				</section>
+
+				<section id="platform-api" class="section">
+					<h3>Server API v2 (Platform Plane)</h3>
+					<p>All endpoints are under <code>/api/v2/platform</code>. Auth header: <code>Authorization: Bearer PLATFORM_KEY</code>. Scope/constraint enforcement applies per endpoint.</p>
+
+					<div id="platform-core" class="group">
+						<h4>Core</h4>
+						<div class="grid">
+
+					<div class="endpoint">
+						<div class="endpoint-header">
+							<div>
+								<strong>Health check (public)</strong>
+							</div>
+							<span class="method get">GET</span>
+						</div>
+						<div class="meta">Basic connectivity check.</div>
+						<div class="row">
+							<div class="row-label">URL</div>
+							<div class="code" id="url-1" data-url="/api/v2/health" data-base="server">http://localhost:8080/api/v2/health</div>
+						</div>
+						<div class="row">
+							<div class="row-label">Payload JSON</div>
+							<pre class="code" id="payload-1">{}</pre>
+						</div>
+					</div>
+
+						</div>
+					</div>
+
+					<div id="platform-auth" class="group">
+						<h4>Authentication</h4>
+						<div class="grid">
+
+					<div class="endpoint">
+						<div class="endpoint-header">
+							<div>
+								<strong>Use a platform API key</strong>
+							</div>
+							<span class="method get">INFO</span>
+						</div>
+						<div class="meta">Send a bearer token. Platform keys are created/revoked by an admin (and can have scopes + constraints).</div>
+						<div class="row">
+							<div class="row-label">Header</div>
+							<pre class="code" id="payload-2">Authorization: Bearer PLATFORM_KEY</pre>
+						</div>
+					</div>
+
+						</div>
+					</div>
+
+					<div id="platform-users" class="group">
+						<h4>Users</h4>
+						<div class="grid">
+
+					<div class="endpoint">
+						<div class="endpoint-header">
+							<div><strong>List users</strong></div>
+							<span class="method get">GET</span>
+						</div>
+						<div class="row"><div class="row-label">URL</div><div class="code" id="url-10" data-url="/api/v2/platform/users" data-base="server">http://localhost:8080/api/v2/platform/users</div></div>
+						<div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-10">{}</pre></div>
+					</div>
+
+					<div class="endpoint">
+						<div class="endpoint-header">
+							<div><strong>Create user</strong></div>
+							<span class="method post">POST</span>
+						</div>
+						<div class="row"><div class="row-label">URL</div><div class="code" id="url-11" data-url="/api/v2/platform/users" data-base="server">http://localhost:8080/api/v2/platform/users</div></div>
+						<div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-11">{
+		"email": "user@example.com",
+		"password": "password",
+		"name": "New User",
+		"is_admin": false
+	}</pre></div>
+					</div>
+
+					<div class="endpoint">
+						<div class="endpoint-header">
+							<div><strong>Get user</strong></div>
+							<span class="method get">GET</span>
+						</div>
+						<div class="row"><div class="row-label">URL</div><div class="code" id="url-12" data-url="/api/v2/platform/users/USER_ID" data-base="server">http://localhost:8080/api/v2/platform/users/USER_ID</div></div>
+						<div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-12">{}</pre></div>
+					</div>
+
+					<div class="endpoint">
+						<div class="endpoint-header">
+							<div><strong>Update user</strong></div>
+							<span class="method patch">PATCH</span>
+						</div>
+						<div class="row"><div class="row-label">URL</div><div class="code" id="url-13" data-url="/api/v2/platform/users/USER_ID" data-base="server">http://localhost:8080/api/v2/platform/users/USER_ID</div></div>
+						<div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-13">{
+		"name": "Updated Name",
+		"is_admin": true
+	}</pre></div>
+					</div>
+
+					<div class="endpoint">
+						<div class="endpoint-header">
+							<div><strong>Delete user</strong></div>
+							<span class="method delete">DELETE</span>
+						</div>
+						<div class="row"><div class="row-label">URL</div><div class="code" id="url-14" data-url="/api/v2/platform/users/USER_ID" data-base="server">http://localhost:8080/api/v2/platform/users/USER_ID</div></div>
+						<div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-14">{}</pre></div>
+					</div>
+
+						</div>
+					</div>
+
+					<div id="platform-teams" class="group">
+						<h4>Teams</h4>
+						<div class="grid">
+
+					<div class="endpoint">
+						<div class="endpoint-header"><div><strong>List teams</strong></div><span class="method get">GET</span></div>
+						<div class="row"><div class="row-label">URL</div><div class="code" id="url-20" data-url="/api/v2/platform/teams" data-base="server">http://localhost:8080/api/v2/platform/teams</div></div>
+						<div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-20">{}</pre></div>
+					</div>
+					<div class="endpoint">
+						<div class="endpoint-header"><div><strong>Create team</strong></div><span class="method post">POST</span></div>
+						<div class="row"><div class="row-label">URL</div><div class="code" id="url-21" data-url="/api/v2/platform/teams" data-base="server">http://localhost:8080/api/v2/platform/teams</div></div>
+						<div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-21">{ "name": "My Team" }</pre></div>
+					</div>
+					<div class="endpoint">
+						<div class="endpoint-header"><div><strong>Get team</strong></div><span class="method get">GET</span></div>
+						<div class="row"><div class="row-label">URL</div><div class="code" id="url-22" data-url="/api/v2/platform/teams/TEAM_ID" data-base="server">http://localhost:8080/api/v2/platform/teams/TEAM_ID</div></div>
+						<div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-22">{}</pre></div>
+					</div>
+					<div class="endpoint">
+						<div class="endpoint-header"><div><strong>Update team</strong></div><span class="method patch">PATCH</span></div>
+						<div class="row"><div class="row-label">URL</div><div class="code" id="url-23" data-url="/api/v2/platform/teams/TEAM_ID" data-base="server">http://localhost:8080/api/v2/platform/teams/TEAM_ID</div></div>
+						<div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-23">{ "name": "Renamed Team" }</pre></div>
+					</div>
+					<div class="endpoint">
+						<div class="endpoint-header"><div><strong>Delete team</strong></div><span class="method delete">DELETE</span></div>
+						<div class="row"><div class="row-label">URL</div><div class="code" id="url-24" data-url="/api/v2/platform/teams/TEAM_ID" data-base="server">http://localhost:8080/api/v2/platform/teams/TEAM_ID</div></div>
+						<div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-24">{}</pre></div>
+					</div>
+
+						</div>
+					</div>
+
+					<div id="platform-projects" class="group">
+						<h4>Projects</h4>
+						<div class="grid">
+							<div class="endpoint"><div class="endpoint-header"><div><strong>List projects</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-30" data-url="/api/v2/platform/projects" data-base="server">http://localhost:8080/api/v2/platform/projects</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-30">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Create project</strong></div><span class="method post">POST</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-31" data-url="/api/v2/platform/projects" data-base="server">http://localhost:8080/api/v2/platform/projects</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-31">{ "team_id": "TEAM_ID", "name": "My Project" }</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Get project</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-32" data-url="/api/v2/platform/projects/PROJECT_ID" data-base="server">http://localhost:8080/api/v2/platform/projects/PROJECT_ID</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-32">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Update project</strong></div><span class="method patch">PATCH</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-33" data-url="/api/v2/platform/projects/PROJECT_ID" data-base="server">http://localhost:8080/api/v2/platform/projects/PROJECT_ID</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-33">{ "name": "Renamed Project" }</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Delete project</strong></div><span class="method delete">DELETE</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-34" data-url="/api/v2/platform/projects/PROJECT_ID" data-base="server">http://localhost:8080/api/v2/platform/projects/PROJECT_ID</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-34">{}</pre></div></div>
+						</div>
+					</div>
+
+					<div id="platform-environments" class="group">
+						<h4>Environments</h4>
+						<div class="grid">
+							<div class="endpoint"><div class="endpoint-header"><div><strong>List environments</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-40" data-url="/api/v2/platform/environments" data-base="server">http://localhost:8080/api/v2/platform/environments</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-40">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Create environment</strong></div><span class="method post">POST</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-41" data-url="/api/v2/platform/environments" data-base="server">http://localhost:8080/api/v2/platform/environments</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-41">{ "project_id": "PROJECT_ID", "name": "prod" }</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Get environment</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-42" data-url="/api/v2/platform/environments/ENVIRONMENT_ID" data-base="server">http://localhost:8080/api/v2/platform/environments/ENVIRONMENT_ID</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-42">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Update environment</strong></div><span class="method patch">PATCH</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-43" data-url="/api/v2/platform/environments/ENVIRONMENT_ID" data-base="server">http://localhost:8080/api/v2/platform/environments/ENVIRONMENT_ID</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-43">{ "name": "staging" }</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Delete environment</strong></div><span class="method delete">DELETE</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-44" data-url="/api/v2/platform/environments/ENVIRONMENT_ID" data-base="server">http://localhost:8080/api/v2/platform/environments/ENVIRONMENT_ID</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-44">{}</pre></div></div>
+						</div>
+					</div>
+
+					<div id="platform-applications" class="group">
+						<h4>Applications</h4>
+						<div class="grid">
+							<div class="endpoint"><div class="endpoint-header"><div><strong>List applications</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-50" data-url="/api/v2/platform/applications" data-base="server">http://localhost:8080/api/v2/platform/applications</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-50">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Create application (no deploy)</strong></div><span class="method post">POST</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-51" data-url="/api/v2/platform/applications" data-base="server">http://localhost:8080/api/v2/platform/applications</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-51">{
+		"environment_id": "ENVIRONMENT_ID",
+		"node_id": "NODE_ID",
+		"name": "my-app",
+		"owner_user_id": "USER_ID",
+		"build_pack": "docker-compose",
+		"git_repository": "https://github.com/org/repo.git",
+		"git_branch": "main"
+	}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Get application</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-52" data-url="/api/v2/platform/applications/APP_ID" data-base="server">http://localhost:8080/api/v2/platform/applications/APP_ID</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-52">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Update application</strong></div><span class="method patch">PATCH</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-53" data-url="/api/v2/platform/applications/APP_ID" data-base="server">http://localhost:8080/api/v2/platform/applications/APP_ID</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-53">{ "name": "renamed-app" }</pre></div></div>
+						</div>
+					</div>
+
+					<div id="platform-deployments" class="group">
+						<h4>Deployments</h4>
+						<div class="grid">
+							<div class="endpoint"><div class="endpoint-header"><div><strong>List deployments</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-60" data-url="/api/v2/platform/deployments" data-base="server">http://localhost:8080/api/v2/platform/deployments</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-60">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Deploy application (uses stored config)</strong></div><span class="method post">POST</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-61" data-url="/api/v2/platform/applications/APP_ID/deployments" data-base="server">http://localhost:8080/api/v2/platform/applications/APP_ID/deployments</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-61">{ "commit_sha": "OPTIONAL_COMMIT_SHA" }</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Get deployment</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-62" data-url="/api/v2/platform/deployments/DEPLOYMENT_ID" data-base="server">http://localhost:8080/api/v2/platform/deployments/DEPLOYMENT_ID</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-62">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Get deployment logs</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-63" data-url="/api/v2/platform/deployments/DEPLOYMENT_ID/logs" data-base="server">http://localhost:8080/api/v2/platform/deployments/DEPLOYMENT_ID/logs</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-63">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Cancel deployment</strong></div><span class="method post">POST</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-64" data-url="/api/v2/platform/deployments/DEPLOYMENT_ID/cancel" data-base="server">http://localhost:8080/api/v2/platform/deployments/DEPLOYMENT_ID/cancel</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-64">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Rollback to deployment</strong></div><span class="method post">POST</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-65" data-url="/api/v2/platform/deployments/DEPLOYMENT_ID/rollback" data-base="server">http://localhost:8080/api/v2/platform/deployments/DEPLOYMENT_ID/rollback</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-65">{}</pre></div></div>
+						</div>
+					</div>
+
+					<div id="platform-templates" class="group">
+						<h4>Templates</h4>
+						<div class="grid">
+							<div class="endpoint"><div class="endpoint-header"><div><strong>List templates</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-70" data-url="/api/v2/platform/templates" data-base="server">http://localhost:8080/api/v2/platform/templates</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-70">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Get template</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-71" data-url="/api/v2/platform/templates/TEMPLATE_SLUG" data-base="server">http://localhost:8080/api/v2/platform/templates/TEMPLATE_SLUG</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-71">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Deploy from template (create app + optional initial deploy)</strong></div><span class="method post">POST</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-72" data-url="/api/v2/platform/templates/TEMPLATE_SLUG/deploy" data-base="server">http://localhost:8080/api/v2/platform/templates/TEMPLATE_SLUG/deploy</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-72">{\n  \"name\": \"Minecraft Test\",\n  \"environment_id\": \"ENVIRONMENT_ID\",\n  \"node_id\": \"NODE_ID\",\n  \"deploy\": false,\n  \"environment_variables\": {\n    \"EULA\": \"FALSE\",\n    \"MEMORY\": \"{ram}M\",\n    \"PAPER_VERSION\": \"latest\",\n    \"MINECRAFT_PORT\": \"{port[0]}\",\n    \"JAVA_EXTRA_ARGS\": \"\",\n    \"MINECRAFT_VERSION\": \"latest\"\n  }\n}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Sync templates from disk</strong></div><span class="method post">POST</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-73" data-url="/api/v2/platform/templates/sync" data-base="server">http://localhost:8080/api/v2/platform/templates/sync</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-73">{}</pre></div></div>
+						</div>
+					</div>
+
+					<div id="platform-nodes" class="group">
+						<h4>Nodes</h4>
+						<div class="grid">
+							<div class="endpoint"><div class="endpoint-header"><div><strong>List nodes</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-80" data-url="/api/v2/platform/nodes" data-base="server">http://localhost:8080/api/v2/platform/nodes</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-80">{}</pre></div></div>
+							<div class="endpoint"><div class="endpoint-header"><div><strong>Get node</strong></div><span class="method get">GET</span></div><div class="row"><div class="row-label">URL</div><div class="code" id="url-81" data-url="/api/v2/platform/nodes/NODE_ID" data-base="server">http://localhost:8080/api/v2/platform/nodes/NODE_ID</div></div><div class="row"><div class="row-label">Payload JSON</div><pre class="code" id="payload-81">{}</pre></div></div>
+						</div>
+					</div>
+
+				</section>
+			</main>
+		</div>
+
+		<div class="toast" id="toast">Copied</div>
+
+		<script>
+	<div class="toast" id="toast">Copied</div>
+
+	<script>
+		const toast = document.getElementById('toast');
+		const serverInput = document.getElementById('server-url');
+		const storageKey = 'chap.serverUrl';
+
+		let toastTimer;
+
+		function normalizeBase(value) {
+			return String(value || '').trim().replace(/\/$/, '');
+		}
+
+		function updateUrls() {
+			const serverBase = normalizeBase(serverInput.value || '');
+			document.querySelectorAll('[data-url]').forEach((el) => {
+				const path = el.getAttribute('data-url') || '';
+				el.textContent = serverBase + path;
+			});
+		}
+
+		function loadStoredInputs() {
+			const storedServer = localStorage.getItem(storageKey);
+			if (storedServer) serverInput.value = storedServer;
+		}
+
+		function persistInputs() {
+			localStorage.setItem(storageKey, serverInput.value.trim());
+		}
+
+		function showToast(message) {
+			toast.textContent = message;
+			toast.classList.add('show');
+			clearTimeout(toastTimer);
+			toastTimer = setTimeout(() => toast.classList.remove('show'), 1200);
+		}
+
+		async function copyText(text) {
+			try {
+				await navigator.clipboard.writeText(text);
+				showToast('Copied to clipboard');
+			} catch (err) {
+				const textarea = document.createElement('textarea');
+				textarea.value = text;
+				document.body.appendChild(textarea);
+				textarea.select();
+				document.execCommand('copy');
+				document.body.removeChild(textarea);
+				showToast('Copied to clipboard');
+			}
+		}
+
+		document.querySelectorAll('.code').forEach((el) => {
+			el.classList.add('copyable');
+			el.setAttribute('title', 'Click to copy');
+			el.addEventListener('click', () => {
+				copyText(el.textContent.trim());
+			});
+		});
+
+		loadStoredInputs();
+		updateUrls();
+		persistInputs();
+
+		serverInput.addEventListener('input', () => {
+			persistInputs();
+			updateUrls();
+		});
+	</script>
+</body>
+</html>

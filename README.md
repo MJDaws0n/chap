@@ -1,44 +1,45 @@
 # Chap
 
-**Chap** is a self-hosted deployment platform inspired by Coolify, designed to give you full control over your applications, databases, and services on your own infrastructure.
+**Chap** is a self-hosted deployment platform inspired by [Coolify](https://coolify.io/) and [Pterodactyl / Pelican](https://pterodactyl.io/), designed to give you full control over your applications, databases, and services on your own infrastructure. Althought not designed with the intention to be, it could be used as a service to sell hosting services such as what [Pterodactyl / Pelican](https://pterodactyl.io/) does.
 
 <p align="center">
   <img src=".github/images/console.png" alt="Chap dashboard" width="900" />
+  <img src=".github/images/code.png" alt="Code" width="900" />
+  <img src=".github/images/files.png" alt="Files" width="900" />
 </p>
 
 <p align="center">
   <img src=".github/images/dashboard-light.png" alt="Dashboard" width="240" style="margin:6px" />
   <img src=".github/images/dashboard.png" alt="Roles" width="240" style="margin:6px" />
   <img src=".github/images/deploy.png" alt="Deploy" width="240" style="margin:6px" />
-  <img src=".github/images/code.png" alt="Code" width="240" style="margin:6px" />
-  <img src=".github/images/files.png" alt="Files" width="240" style="margin:6px" />
   <img src=".github/images/templates.png" alt="Templates" width="240" style="margin:6px" />
   <img src=".github/images/logs.png" alt="Logs" width="240" style="margin:6px" />
   <img src=".github/images/node.png" alt="Nodes" width="240" style="margin:6px" />
   <img src=".github/images/teams.png" alt="Teams" width="240" style="margin:6px" />
   <img src=".github/images/roles.png" alt="Roles" width="240" style="margin:6px" />
-    <img src=".github/images/scripts.png" alt="Roles" width="240" style="margin:6px" />
+  <img src=".github/images/scripts.png" alt="Roles" width="240" style="margin:6px" />
 </p>
 
 ## Features
 
-- 🚀 **Git-based Deployments** - Connect GitHub, GitLab, or Bitbucket repositories and deploy on every push
-- 🔄 **Auto Deployments** - Webhook-triggered deployments with rollback support
-- 📦 **Docker Native** - All applications run in containers for consistency and isolation
-- 🖥️ **Multi-Server Support** - Connect and manage multiple servers from a single dashboard
+- 🚀 **Git-based Deployments** - Connect GitHub repositories and deploy on every push
+- 📦 **Docker Native** - All applications run in secure\* containers for consistency and isolation
+- 🖥️ **Multi-Server Support** - Connect and manage multiple servers (nodes) from a single dashboard
 - 👥 **Team Collaboration** - Role-based access control with team workspaces
 - 📊 **Real-time Monitoring** - Live logs and container metrics
 - 🎯 **One-Click Services** - Deploy databases and popular services instantly
-- 🔒 **Secure by Design** - Environment variables, secrets management, and encrypted SSH keys
+- 🔒 **Secure by Design** - Environment variables, secrets management, MFA, human verifcation all built into the software.
+
+\* Software has been tested, however no warranty is included when running software and I am not responsible for any related incidents to this software..
 
 ## Architecture
 
-Chap consists of two components that run on **separate servers**:
+Chap consists of two components that run on **separate (or same) servers**:
 
 | Component | Where it runs | What it does |
 |-----------|--------------|--------------|
 | **chap-server** | One central server | Web UI, API, database, WebSocket hub |
-| **chap-node** | Each deployment server | Docker management, builds, deployments |
+| **chap-node** | Each deployment server | Docker management, builds, deployments, live logging WebSocket |
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -68,7 +69,7 @@ Chap consists of two components that run on **separate servers**:
 │  Your apps here  │ │  Your apps here  │ │  Your apps here  │         │
 └──────────────────┘ └──────────────────┘ └──────────────────┘         │
          ▲                    ▲                     ▲                  │
-         └──── Optional Direct WebSocket (logs) ────┴──────────────────┘
+         └────────────  Direct WebSocket (logs) ────┴──────────────────┘
 ```
 ---
 
@@ -76,8 +77,8 @@ Chap consists of two components that run on **separate servers**:
 
 ### Prerequisites
 
-- Docker and Docker Compose installed on all servers
-- Network connectivity between server and nodes (port 8081 on central server)
+- Docker and Docker Compose installed on all nodes and the central server.
+- Network connectivity between server and nodes.
 
 ---
 
@@ -119,7 +120,7 @@ Default login:
 
 Run this on **each server** where you want to deploy applications.
 
-> **Note:** You only run ONE node per host. Each node connects back to your central Chap server.
+> **Note:** You only run ONE node per host. Each node connects back to your central Chap server, and the browsers client directly to the node.
 
 ### Quick Install
 
@@ -200,18 +201,8 @@ This starts everything locally at `http://localhost:8080`
 
 ---
 
-## API (not implemented yet)
-
-```bash
-# Login and get token
-curl -X POST https://your-chap-server/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email": "your@email.com", "password": "your-password"}'
-
-# Trigger deployment
-curl -X POST https://your-chap-server/api/v1/applications/{id}/deploy \
-  -H "Authorization: Bearer YOUR_TOKEN"
-```
+## API
+API docs are avaible [here](https://mjdaws0n.github.io/chap/client-api.html)
 
 ---
 
@@ -230,8 +221,10 @@ curl -X POST https://your-chap-server/api/v1/applications/{id}/deploy \
 | `CAPTCHA_THEME` | Widget theme hint (e.g. `dark`) | `dark` |
 | `RECAPTCHA_SITE_KEY` | Google reCAPTCHA site key (required if using `recaptcha`) | (optional) |
 | `RECAPTCHA_SECRET_KEY` | Google reCAPTCHA secret key (required if using `recaptcha`) | (optional) |
-| `AUTOGATE_PUBLIC_KEY` | AutoGate public key (required if using `autogate`) | (optional) |
-| `AUTOGATE_PRIVATE_KEY` | AutoGate private key (required if using `autogate`) | (optional) |
+| `AUTOGATE_PUBLIC_KEY` | AutoGate\* public key (required if using `autogate`) | (optional) |
+| `AUTOGATE_PRIVATE_KEY` | AutoGate\* private key (required if using `autogate`) | (optional) |
+
+\*Autogate is a SAAS softare developed by me and as of 28-01-2026 is not avaiable to the public. If you are interested in using/testing it in your application for free contact me via [my website](https://mjdawson.net/#contact).
 
 ### MFA (TOTP)
 
@@ -246,12 +239,21 @@ Chap supports TOTP-based MFA (Authenticator apps) for the dashboard.
 |----------|-------------|---------|
 | `NODE_ID` | Unique name for this node | (required) |
 | `NODE_TOKEN` | Auth token from dashboard | (required) |
+| `CHAP_NODE_ACCESS_TOKEN_SECRET` | Auth token for the node and server. Server's **MUST** match node's. | (required) |
 | `CHAP_SERVER_URL` | WebSocket URL to server | (required) |
-| `CHAP_DATA_DIR` | Storage path | `/data` |
+| `BROWSER_WS_HOST` | Bind address for the browser → node logs WebSocket | `0.0.0.0` |
+| `BROWSER_WS_PORT` | Port for the browser → node logs WebSocket | `6002` |
+| `CHAP_MAX_CPUS` | Max CPU limit per application | `20` |
+| `CHAP_MAX_MEMORY` | Max memory limit per application | `20g` |
+| `CHAP_MAX_PIDS` | Max PIDs limit per application | `10000` |
+| `CHAP_DATA_DIR` | Data directory for Chap to store application data | `/data` |
+
 
 ### Live Logging (WebSocket)
 
-Chap supports optional live logging using a direct WebSocket connection from the browser to the node agent (WS/WSS). If you want the **Live Logs** page to work, this WebSocket must be configured.
+Chap supports live logging using a direct WebSocket connection from the browser to the node agent (WS/WSS). If you want the **Live Logs** page to work, this WebSocket must be configured.
+
+> **NOTICE** The application was originally written with the intention of this being optional, however since that, I gave up writting the code twice, so most things (such as API, files, even deployments) may not work unless you setup this Live Logging WebSocket. Feel free to try without though.
 
 - **Node URL scheme:** When creating a node, set `CHAP_SERVER_URL` to include the scheme: use `wss://your-chap-server:8081` for HTTPS servers, or `ws://your-chap-server:8081` for non-HTTPS servers.
 - **Browser → node logs socket:** Configure the node agent's browser WebSocket (WS/WSS) and set each node's `logs_websocket_url` to point at it (e.g. `wss://your-node-host:6002`).
@@ -263,6 +265,6 @@ Chap supports optional live logging using a direct WebSocket connection from the
 MIT License - see [LICENSE](LICENSE)
 
 ## Credits
-Created by Max
+Created by Max and Copilot.
 
-Inspired by [Coolify](https://coolify.io/)
+Inspired by [Coolify](https://coolify.io/) and [Pterodactyl / Pelican](https://pterodactyl.io)

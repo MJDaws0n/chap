@@ -196,6 +196,14 @@ class Connection
     }
 
     /**
+     * Check if a transaction is currently active
+     */
+    public function inTransaction(): bool
+    {
+        return $this->pdo->inTransaction();
+    }
+
+    /**
      * Check if table exists
      */
     public function tableExists(string $table): bool

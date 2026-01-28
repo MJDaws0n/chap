@@ -12,14 +12,29 @@ class Deployment extends BaseModel
 {
     protected static string $table = 'deployments';
     protected static array $fillable = [
-        'application_id', 'node_id', 'commit_sha', 'commit_message',
-        'status', 'started_at', 'finished_at', 'logs', 'error_message',
-        'rollback_of_id',
-        'triggered_by', 'triggered_by_name'
+        'application_id', 'node_id', 'user_id',
+        'type', 'status',
+        // DB column names (preferred)
+        'git_commit_sha', 'git_commit_message', 'git_branch',
+        'container_id', 'image_tag',
+        'logs', 'started_at', 'finished_at', 'error_message',
+        'rollback_to_deployment_id',
+        'triggered_by', 'triggered_by_name',
+        // Back-compat aliases (normalized in create/update)
+        'commit_sha', 'commit_message', 'rollback_of_id',
     ];
 
     public int $application_id;
     public ?int $node_id = null;
+    public ?int $user_id = null;
+    public ?string $type = null;
+
+    // DB-backed git snapshot fields
+    public ?string $git_commit_sha = null;
+    public ?string $git_commit_message = null;
+    public ?string $git_branch = null;
+
+    // Back-compat aliases used by older code paths
     public ?string $commit_sha = null;
     public ?string $commit_message = null;
     public string $status = 'queued';
@@ -27,9 +42,72 @@ class Deployment extends BaseModel
     public ?string $finished_at = null;
     public ?string $logs = null;
     public ?string $error_message = null;
+    public ?int $rollback_to_deployment_id = null;
+
+    // Back-compat alias
     public ?int $rollback_of_id = null;
     public ?string $triggered_by = null;
     public ?string $triggered_by_name = null;
+
+    /**
+     * Normalize legacy field names to the current DB schema.
+     *
+     * @param array<string,mixed> $data
+     * @return array<string,mixed>
+     */
+    private static function normalizeFields(array $data): array
+    {
+        if (array_key_exists('commit_sha', $data) && !array_key_exists('git_commit_sha', $data)) {
+            $data['git_commit_sha'] = $data['commit_sha'];
+            unset($data['commit_sha']);
+        }
+        if (array_key_exists('commit_message', $data) && !array_key_exists('git_commit_message', $data)) {
+            $data['git_commit_message'] = $data['commit_message'];
+            unset($data['commit_message']);
+        }
+        if (array_key_exists('rollback_of_id', $data) && !array_key_exists('rollback_to_deployment_id', $data)) {
+            $data['rollback_to_deployment_id'] = $data['rollback_of_id'];
+            unset($data['rollback_of_id']);
+        }
+        return $data;
+    }
+
+    /**
+     * @param array<string,mixed> $data
+     */
+    public static function create(array $data): static
+    {
+        return parent::create(self::normalizeFields($data));
+    }
+
+    /**
+     * @param array<string,mixed> $data
+     */
+    public function update(array $data): bool
+    {
+        return parent::update(self::normalizeFields($data));
+    }
+
+    /**
+     * Ensure older properties remain populated when hydrating from DB.
+     */
+    public static function fromArray(array $data): static
+    {
+        /** @var static $model */
+        $model = parent::fromArray($data);
+
+        if ($model->commit_sha === null && $model->git_commit_sha !== null) {
+            $model->commit_sha = $model->git_commit_sha;
+        }
+        if ($model->commit_message === null && $model->git_commit_message !== null) {
+            $model->commit_message = $model->git_commit_message;
+        }
+        if ($model->rollback_of_id === null && $model->rollback_to_deployment_id !== null) {
+            $model->rollback_of_id = $model->rollback_to_deployment_id;
+        }
+
+        return $model;
+    }
 
     /**
      * Get application

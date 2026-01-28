@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document defines the comprehensive UI design system for Chap - a self-hosted deployment platform. The design philosophy centers around a modern, clean aesthetic with a frosted glass effect (glassmorphism), smooth transitions, and excellent readability in both light and dark modes.
+This document defines the UI design system for Chap. The design centers around a modern, clean aesthetic with a frosted glass effect (glassmorphism), smooth transitions, and readability in both light and dark modes.
 
 ---
 
@@ -296,13 +296,3 @@ server/src/Views/
     ├── sidebar.php       /* Sidebar navigation */
     └── scripts.php       /* Bottom scripts */
 ```
-
----
-
-## Key Design Principles
-
-1. **Consistency**: Same components look the same everywhere
-2. **Clarity**: Clear visual hierarchy and readable text
-3. **Responsiveness**: Works on all screen sizes
-4. **Performance**: No heavy frameworks, vanilla CSS/JS
-5. **Accessibility**: Proper contrast, focus states, ARIA labels

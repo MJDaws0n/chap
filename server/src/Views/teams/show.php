@@ -11,6 +11,7 @@ $canManageRoles = $canManageRoles ?? false;
 
 $builtinBaseRoles = $builtinBaseRoles ?? [];
 $customRoles = $customRoles ?? [];
+$pendingInvites = $pendingInvites ?? [];
 
 $baseRoleOrder = ['admin' => 80, 'manager' => 60, 'member' => 40, 'read_only_member' => 20];
 
@@ -119,8 +120,8 @@ function team_member_custom_role_ids($member, array $customRoles): array {
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div class="form-group">
                                 <label class="form-label" for="account">Account</label>
-                                <input class="input" type="text" id="account" name="account" placeholder="email or username" required>
-                                <p class="form-hint">User must already exist.</p>
+                                <input class="input" type="text" id="account" name="account" placeholder="Email address" required>
+                                <p class="form-hint">Enter an email address to invite someone to join. If they already have an account, they can accept using that email.</p>
                             </div>
 
                             <div class="form-group">
@@ -164,10 +165,54 @@ function team_member_custom_role_ids($member, array $customRoles): array {
                         </div>
 
                         <div class="flex items-center justify-end">
-                            <button type="submit" class="btn btn-primary">Add Member</button>
+                            <button type="submit" class="btn btn-primary">Send Invite</button>
                         </div>
                     </div>
                 </form>
+
+                <?php if (!empty($pendingInvites)): ?>
+                    <div class="mt-4"></div>
+                    <div class="card" style="background: transparent; border: 1px solid var(--border-default);">
+                        <div class="card-header">
+                            <h3 class="card-title">Pending invitations</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="flex flex-col gap-2">
+                                <?php
+                                $baseLabels = [
+                                    'admin' => 'Admin',
+                                    'manager' => 'Manager',
+                                    'member' => 'Member',
+                                    'read_only_member' => 'Read-only',
+                                ];
+                                ?>
+                                <?php foreach ($pendingInvites as $inv): ?>
+                                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2 p-3" style="border: 1px solid var(--border-muted); border-radius: var(--radius-md);">
+                                        <div class="min-w-0">
+                                            <p class="text-sm font-semibold text-primary truncate"><?= e((string)$inv->email) ?></p>
+                                            <p class="text-xs text-tertiary">
+                                                Role:
+                                                <span class="badge badge-neutral"><?= e($baseLabels[(string)$inv->base_role_slug] ?? (string)$inv->base_role_slug) ?></span>
+                                                · sent <?= !empty($inv->created_at) ? e(time_ago((string)$inv->created_at)) : 'recently' ?>
+                                                <?php if (!empty($inv->expires_at)): ?>
+                                                    · expires <?= e(date('M j, Y', strtotime((string)$inv->expires_at) ?: time())) ?>
+                                                <?php endif; ?>
+                                            </p>
+                                        </div>
+
+                                        <div class="flex items-center justify-end">
+                                            <form action="/teams/<?= (int)$team->id ?>/invites/<?= (int)$inv->id ?>/revoke" method="POST">
+                                                <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                                                <button type="submit" class="btn btn-danger-ghost">Revoke</button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <p class="text-xs text-tertiary mt-3">If someone doesn’t want to join, they can ignore the email.</p>
+                        </div>
+                    </div>
+                <?php endif; ?>
 
                 <div class="mt-4"></div>
             <?php endif; ?>

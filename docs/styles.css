@@ -56,21 +56,31 @@ body {
 }
 
 .layout {
-  display: grid;
-  grid-template-columns: 280px 1fr;
+  display: flex;
+  align-items: flex-start;
   gap: 24px;
   padding: 24px;
 }
 
+.layout > main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .sidebar {
+  position: -webkit-sticky;
   position: sticky;
   top: 84px;
   align-self: start;
+  flex: 0 0 280px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   padding: 16px;
+  max-height: calc(100vh - 108px);
+  display: flex;
+  flex-direction: column;
 }
 
 .sidebar h3 {
@@ -85,6 +95,8 @@ body {
   display: grid;
   gap: 8px;
   font-size: 14px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .nav a {
@@ -352,6 +364,8 @@ body {
 }
 
 @media (max-width: 980px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout {
+    flex-direction: column;
+  }
   .sidebar { position: static; }
 }

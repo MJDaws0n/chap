@@ -295,6 +295,30 @@ class NotificationService
     /**
      * Notify a user when added to a team.
      */
+    public static function sendTeamInvitationEmail(Team $team, string $inviteeEmail, ?User $actor, string $inviteUrl, string $baseRoleLabel = 'Member'): void
+    {
+        if (!Mailer::isConfigured()) {
+            throw new \RuntimeException('Email is not configured');
+        }
+
+        $title = 'Team invitation';
+        $intro = 'You have been invited to join a team on Chap.';
+        $details = [
+            'Team' => $team->name,
+            'Role' => $baseRoleLabel,
+        ];
+        if ($actor) {
+            $details['Invited by'] = $actor->displayName();
+        }
+
+        $email = self::buildEmail($title, $intro, $details, 'View invitation', $inviteUrl);
+
+        $text = $email['text'] . "\n\nIf you don't want to join, you can ignore this email.";
+        $html = $email['html'] . '<p style="margin-top:16px; color:#6b7280; font-size:12px;">If you don\'t want to join, you can ignore this email.</p>';
+
+        Mailer::send($inviteeEmail, $title, $html, $text);
+    }
+
     public static function notifyTeamMemberAdded(Team $team, User $member, ?User $actor = null): void
     {
         $settings = self::getUserNotifications((int)$team->id, (int)$member->id);

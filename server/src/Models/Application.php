@@ -18,6 +18,7 @@ class Application extends BaseModel
 {
     protected static string $table = 'applications';
     protected static array $fillable = [
+        'user_id',
         'environment_id', 'node_id', 'name', 'description',
         'git_repository', 'git_branch', 'git_commit_sha',
         'build_pack', 'dockerfile_path', 'docker_compose_path', 'build_context',
@@ -32,6 +33,7 @@ class Application extends BaseModel
         'status'
     ];
 
+    public ?int $user_id = null;
     public int $environment_id;
     public ?int $node_id = null;
     public string $name = '';

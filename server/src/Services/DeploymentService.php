@@ -177,7 +177,7 @@ class DeploymentService
                         'deployment' => [
                             'uuid' => $deployment->uuid,
                             'status' => $deployment->status,
-                            'commit_sha' => $deployment->commit_sha,
+                            'commit_sha' => $deployment->git_commit_sha ?? $deployment->commit_sha,
                         ],
                     ],
                 ]);
@@ -237,8 +237,8 @@ class DeploymentService
         $deployment = Deployment::create([
             'application_id' => $application->id,
             'node_id' => $application->node_id,
-            'commit_sha' => $previousDeployment->commit_sha,
-            'rollback_of_id' => $previousDeployment->id,
+            'git_commit_sha' => $previousDeployment->git_commit_sha ?? $previousDeployment->commit_sha,
+            'rollback_to_deployment_id' => $previousDeployment->id,
             'status' => 'queued',
             'triggered_by' => $context['triggered_by'] ?? 'rollback',
             'triggered_by_name' => $context['triggered_by_name'] ?? null,

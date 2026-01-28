@@ -348,11 +348,53 @@ final class TeamPermissionService
         self::clearCache($teamId, $targetUserId);
     }
 
+    /**
+     * Apply a set of roles to a user during invitation acceptance.
+     *
+     * This bypasses actor permission checks (the inviter was authorized when creating the invite),
+     * but still validates that all role IDs belong to the team and that "owner" cannot be assigned.
+     *
+     * @param int[] $roleIds
+     */
+    public static function applyUserRolesFromInvitation(int $teamId, int $userId, array $roleIds): void
+    {
+        $roleIds = array_values(array_unique(array_map('intval', $roleIds)));
+        $roleIds = array_values(array_filter($roleIds, static fn($id) => $id > 0));
+
+        if (empty($roleIds)) {
+            throw new \RuntimeException('No roles specified');
+        }
+
+        $db = App::db();
+        $placeholders = implode(',', array_fill(0, count($roleIds), '?'));
+        $rows = $db->fetchAll(
+            "SELECT id, slug FROM team_roles WHERE team_id = ? AND id IN ({$placeholders})",
+            array_merge([$teamId], $roleIds)
+        );
+
+        if (count($rows) !== count($roleIds)) {
+            throw new \RuntimeException('One or more invitation roles no longer exist');
+        }
+
+        foreach ($rows as $r) {
+            if ((string)($r['slug'] ?? '') === 'owner') {
+                throw new \RuntimeException('Invalid invitation role');
+            }
+        }
+
+        self::setUserRolesUnsafe($teamId, $userId, $roleIds);
+        self::syncLegacyTeamUserRole($teamId, $userId);
+        self::clearCache($teamId, $userId);
+    }
+
     /** @param int[] $roleIds */
     private static function setUserRolesUnsafe(int $teamId, int $userId, array $roleIds): void
     {
         $db = App::db();
-        $db->beginTransaction();
+        $transactionStarted = false;
+        if (!$db->inTransaction()) {
+            $transactionStarted = $db->beginTransaction();
+        }
         try {
             $db->delete('team_user_roles', 'team_id = ? AND user_id = ?', [$teamId, $userId]);
             foreach ($roleIds as $rid) {
@@ -362,9 +404,13 @@ final class TeamPermissionService
                     'role_id' => (int)$rid,
                 ]);
             }
-            $db->commit();
+            if ($transactionStarted) {
+                $db->commit();
+            }
         } catch (\Throwable $e) {
-            $db->rollback();
+            if ($transactionStarted) {
+                $db->rollback();
+            }
             throw $e;
         }
     }
