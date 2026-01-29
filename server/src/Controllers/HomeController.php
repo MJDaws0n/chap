@@ -3,7 +3,6 @@
 namespace Chap\Controllers;
 
 use Chap\Auth\AuthManager;
-use Chap\View\View;
 
 /**
  * Home Controller - Landing page
@@ -21,9 +20,7 @@ class HomeController extends BaseController
             return;
         }
 
-        // Show landing page
-        echo View::render('home/index', [
-            'title' => 'Welcome'
-        ], 'guest');
+        // Guest root should go straight to login.
+        redirect('/login');
     }
 }
