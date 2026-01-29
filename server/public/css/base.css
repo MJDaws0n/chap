@@ -175,6 +175,7 @@ code {
     font-size: 0.875em;
     background-color: var(--bg-tertiary);
     border-radius: var(--radius-sm);
+    padding: 8px;
 }
 
 pre {

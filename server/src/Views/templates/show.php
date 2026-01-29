@@ -48,20 +48,37 @@ if (is_array($portsMeta)) {
     <div class="page-header">
         <div class="page-header-top">
             <div>
-                <div class="flex items-center gap-3">
-                    <h1 class="page-header-title"><?= e($template->name) ?></h1>
-                    <?php if (!empty($template->is_official)): ?>
-                        <span class="badge badge-success">Official</span>
-                    <?php endif; ?>
-                    <?php if (!empty($template->version)): ?>
-                        <span class="badge badge-neutral">v<?= e($template->version) ?></span>
-                    <?php endif; ?>
+                <nav class="breadcrumb">
+                    <span class="breadcrumb-item"><a href="/templates">Templates</a></span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-current"><?= e($template->name) ?></span>
+                </nav>
+
+                <div class="flex items-center gap-4 mt-4">
+                    <div class="icon-box icon-box-purple icon-box-lg">
+                        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 4h8a2 2 0 012 2v14l-6-3-6 3V6a2 2 0 012-2z"></path>
+                        </svg>
+                    </div>
+                    <div class="min-w-0">
+                        <div class="flex items-center gap-3 flex-wrap">
+                            <h1 class="page-header-title truncate">Deploy <?= e($template->name) ?></h1>
+                        </div>
+                        <?php if (!empty($template->description)): ?>
+                            <p class="page-header-description truncate"><?= e($template->description) ?></p>
+                        <?php else: ?>
+                            <p class="page-header-description">Configure and deploy this template</p>
+                        <?php endif; ?>
+                    </div>
                 </div>
-                <?php if (!empty($template->description)): ?>
-                    <p class="page-header-description"><?= e($template->description) ?></p>
-                <?php endif; ?>
             </div>
             <div class="page-header-actions">
+                <?php if (!empty($template->is_official)): ?>
+                    <span class="badge badge-success">Official</span>
+                <?php endif; ?>
+                <?php if (!empty($template->version)): ?>
+                    <span class="badge badge-neutral">v<?= e($template->version) ?></span>
+                <?php endif; ?>
                 <a href="/templates" class="btn btn-ghost">Back</a>
             </div>
         </div>
@@ -73,14 +90,14 @@ if (is_array($portsMeta)) {
                 <?= csrf_field() ?>
                 <input type="hidden" name="port_reservation_uuid" id="port_reservation_uuid" value="<?= e(old('port_reservation_uuid', '')) ?>">
 
-                <div class="card card-glass">
+                <div class="card">
                     <div class="card-header">
                         <h2 class="card-title">Basic Information</h2>
                     </div>
                     <div class="card-body">
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                                <label class="label" for="name">Application Name <span class="text-danger">*</span></label>
+                                <label class="form-label" for="name">Application Name <span class="text-danger">*</span></label>
                                 <input class="input w-full" type="text" id="name" name="name" required value="<?= e(old('name', $template->name)) ?>">
                                 <?php if (!empty($errors['name'])): ?>
                                     <p class="form-error"><?= e($errors['name']) ?></p>
@@ -88,7 +105,7 @@ if (is_array($portsMeta)) {
                             </div>
 
                             <div>
-                                <label class="label" for="node_uuid">Deploy to Node <span class="text-danger">*</span></label>
+                                <label class="form-label" for="node_uuid">Deploy to Node <span class="text-danger">*</span></label>
                                 <select class="select w-full" name="node_uuid" id="node_uuid" required>
                                     <option value="">Select a node…</option>
                                     <?php foreach ($nodes as $n): ?>
@@ -104,7 +121,7 @@ if (is_array($portsMeta)) {
                             </div>
 
                             <div>
-                                <label class="label" for="project_uuid">Project <span class="text-danger">*</span></label>
+                                <label class="form-label" for="project_uuid">Project <span class="text-danger">*</span></label>
                                 <select class="select w-full" name="project_uuid" id="project_uuid" required>
                                     <option value="">Select a project…</option>
                                     <?php foreach ($projects as $p): ?>
@@ -119,7 +136,7 @@ if (is_array($portsMeta)) {
                             </div>
 
                             <div>
-                                <label class="label" for="environment_uuid">Environment <span class="text-danger">*</span></label>
+                                <label class="form-label" for="environment_uuid">Environment <span class="text-danger">*</span></label>
                                 <select class="select w-full" name="environment_uuid" id="environment_uuid" required>
                                     <option value="">Select an environment…</option>
                                 </select>
@@ -129,26 +146,26 @@ if (is_array($portsMeta)) {
                             </div>
 
                             <div class="md:col-span-2">
-                                <label class="label" for="description">Description</label>
+                                <label class="form-label" for="description">Description</label>
                                 <textarea class="textarea w-full" id="description" name="description" rows="2" placeholder="Optional description"><?= e(old('description', $template->description ?? '')) ?></textarea>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="card card-glass">
+                <div class="card">
                     <div class="card-header flex items-center justify-between gap-4 flex-wrap">
                         <h2 class="card-title">Ports</h2>
                         <button type="button" class="btn btn-secondary btn-sm" id="add-port-btn">New Port</button>
                     </div>
                     <div class="card-body">
                         <div id="ports-list" class="flex flex-col gap-2"></div>
-                        <div id="ports-empty" class="text-muted text-sm">No ports allocated.</div>
-                        <p class="form-hint mt-md">Dynamic vars: <code>{port[0]}</code>, <code>{port[1]}</code>, … and <code>{name}</code>, <code>{node}</code>, <code>{repo}</code>, <code>{repo_brach}</code>, <code>{cpu}</code>, <code>{ram}</code>.</p>
+                        <div id="ports-empty" class="text-tertiary text-sm">No ports allocated.</div>
+                        <p class="form-hint mt-2">Dynamic vars: <code>{port[0]}</code>, <code>{port[1]}</code>, … and <code>{name}</code>, <code>{node}</code>, <code>{repo}</code>, <code>{repo_branch}</code>, <code>{cpu}</code>, <code>{ram}</code>.</p>
                     </div>
                 </div>
 
-                <div class="card card-glass">
+                <div class="card">
                     <div class="card-header flex items-center justify-between gap-4 flex-wrap">
                         <h2 class="card-title">Environment Variables</h2>
                         <div class="flex items-center gap-2 flex-wrap">
@@ -162,19 +179,19 @@ if (is_array($portsMeta)) {
                             <p class="form-error mb-3"><?= e($errors['environment_variables']) ?></p>
                         <?php endif; ?>
                         <div id="env-rows" class="flex flex-col gap-3"></div>
-                        <div id="env-empty" class="text-muted text-sm">No environment variables configured.</div>
-                        <p class="form-hint mt-md">Values are hidden by default.</p>
+                        <div id="env-empty" class="text-tertiary text-sm">No environment variables configured.</div>
+                        <p class="form-hint mt-2">Values are hidden by default.</p>
                     </div>
                 </div>
 
-                <div class="card card-glass">
+                <div class="card">
                     <div class="card-header">
                         <h2 class="card-title">Resource Limits</h2>
                     </div>
                     <div class="card-body">
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                                <label class="label" for="memory_limit">Memory Limit</label>
+                                <label class="form-label" for="memory_limit">Memory Limit</label>
                                 <input class="input w-full" type="text" name="memory_limit" id="memory_limit" value="<?= e(old('memory_limit', '512m')) ?>" placeholder="512m">
                                 <?php if (!empty($errors['memory_limit'])): ?>
                                     <p class="form-error"><?= e($errors['memory_limit']) ?></p>
@@ -183,7 +200,7 @@ if (is_array($portsMeta)) {
                             </div>
 
                             <div>
-                                <label class="label" for="cpu_limit">CPU Limit</label>
+                                <label class="form-label" for="cpu_limit">CPU Limit</label>
                                 <input class="input w-full" type="text" name="cpu_limit" id="cpu_limit" value="<?= e(old('cpu_limit', '1')) ?>" placeholder="1">
                                 <?php if (!empty($errors['cpu_limit'])): ?>
                                     <p class="form-error"><?= e($errors['cpu_limit']) ?></p>
@@ -192,7 +209,7 @@ if (is_array($portsMeta)) {
                             </div>
 
                             <div>
-                                <label class="label" for="storage_mb_limit">Storage Limit (MB or -1)</label>
+                                <label class="form-label" for="storage_mb_limit">Storage Limit (MB or -1)</label>
                                 <input class="input w-full" type="number" name="storage_mb_limit" id="storage_mb_limit" value="<?= e(old('storage_mb_limit', '-1')) ?>" placeholder="-1">
                                 <?php if (!empty($errors['storage_mb_limit'])): ?>
                                     <p class="form-error"><?= e($errors['storage_mb_limit']) ?></p>
@@ -201,7 +218,7 @@ if (is_array($portsMeta)) {
                             </div>
 
                             <div>
-                                <label class="label" for="bandwidth_mbps_limit">Bandwidth Limit (Mbps or -1)</label>
+                                <label class="form-label" for="bandwidth_mbps_limit">Bandwidth Limit (Mbps or -1)</label>
                                 <input class="input w-full" type="number" name="bandwidth_mbps_limit" id="bandwidth_mbps_limit" value="<?= e(old('bandwidth_mbps_limit', '-1')) ?>" placeholder="-1">
                                 <?php if (!empty($errors['bandwidth_mbps_limit'])): ?>
                                     <p class="form-error"><?= e($errors['bandwidth_mbps_limit']) ?></p>
@@ -210,7 +227,7 @@ if (is_array($portsMeta)) {
                             </div>
 
                             <div>
-                                <label class="label" for="pids_limit">Process Limit (PIDs or -1)</label>
+                                <label class="form-label" for="pids_limit">Process Limit (PIDs or -1)</label>
                                 <input class="input w-full" type="number" name="pids_limit" id="pids_limit" value="<?= e(old('pids_limit', '-1')) ?>" placeholder="-1">
                                 <?php if (!empty($errors['pids_limit'])): ?>
                                     <p class="form-error"><?= e($errors['pids_limit']) ?></p>
@@ -230,36 +247,43 @@ if (is_array($portsMeta)) {
 
         <div class="flex flex-col gap-6">
             <div class="card">
-                <div class="card-body">
-                    <div class="flex items-center justify-between gap-4">
-                        <div>
-                            <p class="text-sm text-tertiary">Category</p>
-                            <p class="font-medium"><?= e($template->category ?? 'Other') ?></p>
-                        </div>
-                        <?php if (!empty($template->documentation)): ?>
-                            <a class="btn btn-secondary" href="<?= e($template->documentation) ?>" target="_blank" rel="noopener">Documentation</a>
-                        <?php endif; ?>
-                    </div>
+                <div class="card-header">
+                    <h2 class="card-title">Template</h2>
                 </div>
+                <div class="card-body">
+                    <dl class="flex flex-col gap-4">
+                        <div class="flex items-center justify-between gap-4 text-sm">
+                            <dt class="text-tertiary">Category</dt>
+                            <dd class="m-0 font-medium"><?= e($template->category ?? 'Other') ?></dd>
+                        </div>
+                        <div class="flex items-center justify-between gap-4 text-sm">
+                            <dt class="text-tertiary">Extra files</dt>
+                            <dd class="m-0"><?= count($template->getExtraFiles()) ?></dd>
+                        </div>
+                    </dl>
+                </div>
+                <?php if (!empty($template->documentation)): ?>
+                    <div class="card-footer">
+                        <a class="btn btn-secondary w-full" href="<?= e($template->documentation) ?>" target="_blank" rel="noopener">Documentation</a>
+                    </div>
+                <?php endif; ?>
             </div>
 
             <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Details</h2>
+                </div>
                 <div class="card-body">
-                    <h2 class="text-lg font-medium mb-2">Details</h2>
-                    <div class="flex flex-col gap-2 text-sm">
-                        <div class="flex justify-between gap-4">
-                            <span class="text-tertiary">Slug</span>
-                            <span class="text-secondary"><?= e($template->slug) ?></span>
+                    <dl class="flex flex-col gap-4">
+                        <div class="flex items-center justify-between gap-4 text-sm">
+                            <dt class="text-tertiary">Slug</dt>
+                            <dd class="m-0 text-secondary"><?= e($template->slug) ?></dd>
                         </div>
-                        <div class="flex justify-between gap-4">
-                            <span class="text-tertiary">Active</span>
-                            <span class="text-secondary"><?= !empty($template->is_active) ? 'Yes' : 'No' ?></span>
+                        <div class="flex items-center justify-between gap-4 text-sm">
+                            <dt class="text-tertiary">Active</dt>
+                            <dd class="m-0 text-secondary"><?= !empty($template->is_active) ? 'Yes' : 'No' ?></dd>
                         </div>
-                        <div class="flex justify-between gap-4">
-                            <span class="text-tertiary">Extra files</span>
-                            <span class="text-secondary"><?= count($template->getExtraFiles()) ?></span>
-                        </div>
-                    </div>
+                    </dl>
                 </div>
             </div>
         </div>
@@ -269,16 +293,6 @@ if (is_array($portsMeta)) {
 <?php unset($_SESSION['_errors'], $_SESSION['_old_input']); ?>
 
 <style>
-.form-error {
-    font-size: var(--text-sm);
-    color: var(--red-400);
-    margin-top: var(--space-xs);
-}
-.form-hint {
-    font-size: var(--text-xs);
-    color: var(--text-tertiary);
-    margin-top: var(--space-xs);
-}
 .env-key {
     flex: 0 0 180px;
     min-width: 120px;

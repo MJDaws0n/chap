@@ -72,7 +72,7 @@ $configHref = '/applications/' . e($application->uuid) . '?tab=config';
                         <span class="badge <?= e($statusColor) ?>"><?= e(ucfirst((string)$application->status)) ?></span>
                     </div>
                     <?php if (!empty($application->description)): ?>
-                        <p class="page-header-description truncate"><?= e($application->description) ?></p>
+                        <p class="page-header-description line-clamp-2" title="<?= e($application->description) ?>"><?= e($application->description) ?></p>
                     <?php else: ?>
                         <p class="page-header-description">No description</p>
                     <?php endif; ?>

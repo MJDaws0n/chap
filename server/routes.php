@@ -179,6 +179,7 @@ Route::middleware(['auth', 'admin'], function() {
 
     // User management
     Route::get('/admin/users', 'Admin\\UserController@index');
+    Route::post('/admin/users/register-page/toggle', 'Admin\\UserController@toggleRegisterPage');
     Route::get('/admin/users/create', 'Admin\\UserController@create');
     Route::post('/admin/users', 'Admin\\UserController@store');
     Route::get('/admin/users/{id}/edit', 'Admin\\UserController@edit');

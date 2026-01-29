@@ -4,8 +4,11 @@ namespace Chap\Controllers;
 
 use Chap\Models\Deployment;
 use Chap\Models\Application;
+use Chap\Models\Node;
+use Chap\Models\Team;
 use Chap\Services\DeploymentService;
 use Chap\Services\ChapScript\ChapScriptPreDeploy;
+use Chap\Services\NodeAccess;
 
 /**
  * Deployment Controller
@@ -65,6 +68,34 @@ class DeploymentController extends BaseController
         }
 
         $this->requireTeamPermission('deployments', 'execute', (int) $project->team_id);
+
+        // Enforce node access (users may lose node access after app creation).
+        if ($this->user && $application->node_id) {
+            $teamModel = Team::find((int)$project->team_id);
+            if ($teamModel) {
+                $allowedNodeIds = NodeAccess::allowedNodeIds($this->user, $teamModel, $project, $environment, $application);
+                if (!in_array((int)$application->node_id, $allowedNodeIds, true)) {
+                    if ($this->isApiRequest()) {
+                        $this->json(['error' => 'You do not have access to the node assigned to this application'], 403);
+                    } else {
+                        flash('error', 'You do not have access to the node assigned to this application');
+                        $this->redirect('/applications/' . $appId);
+                    }
+                    return;
+                }
+
+                $node = Node::find((int)$application->node_id);
+                if (!$node || !$node->isOnline()) {
+                    if ($this->isApiRequest()) {
+                        $this->json(['error' => 'Node is offline'], 422);
+                    } else {
+                        flash('error', 'Node is offline');
+                        $this->redirect('/applications/' . $appId);
+                    }
+                    return;
+                }
+            }
+        }
 
         // Check if application can be deployed
         if ($application->status === 'deploying') {

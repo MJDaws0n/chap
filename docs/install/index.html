@@ -1,54 +1,74 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#ffffff">
-    <title>Install | Chap</title>
-
-    <link rel="stylesheet" href="../css/variables.css">
-    <link rel="stylesheet" href="../css/base.css">
-    <link rel="stylesheet" href="../css/components.css">
-    <link rel="stylesheet" href="../css/layout.css">
-    <link rel="stylesheet" href="../css/overlays.css">
-    <link rel="stylesheet" href="../css/utilities.css">
-
-    <script src="../js/theme.js"></script>
-
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Chap Docs</title>
+	<link rel="stylesheet" href="../css/api.css" />
 </head>
 <body>
-    <div class="guest-layout">
-        <header class="guest-header">
-            <div class="guest-header-inner">
-                <a href="../" class="sidebar-logo">
-                    <span>Chap</span>
-                </a>
-                <nav class="guest-nav">
-                    <a href="../" class="btn btn-ghost">Home</a>
-                    <a href="../api/" class="btn btn-secondary">API Docs</a>
-                </nav>
-            </div>
-        </header>
+	<header class="topbar">
+		<div class="wrap">
+			<div class="brand">Chap Docs</div>
+			<p class="subtitle">Docs landing page for the platform and API reference</p>
+		</div>
+	</header>
 
-        <main class="guest-main">
-            <section class="hero">
-                <div class="hero-inner">
-                    <h1 class="hero-title">Install</h1>
-                    <p class="hero-description">Coming soon.</p>
-                </div>
-            </section>
-        </main>
+	<div class="layout">
+		<aside class="sidebar">
+			<h3>Contents</h3>
+			<nav class="nav">
+				<a href="#overview">Overview</a>
+				<a href="#api">API Reference</a>
+				<a href="#github">GitHub Docs</a>
+			</nav>
+		</aside>
 
-        <footer class="guest-footer">
-            <p>&copy; <span id="year"></span> Chap.</p>
-        </footer>
-    </div>
+		<main>
+			<section id="overview" class="panel intro">
+				<div>
+					<h2>Documentation is a WIP</h2>
+					<p>The main docs site is in progress. The Client and Platform API reference is available now, and additional notes are kept in GitHub.</p>
+				</div>
+				<div class="cta-row">
+                    <a class="btn" href="install.html">Installation Guide</a>
+					<a class="btn" href="client-api.html">Client API Docs</a>
+					<a class="btn" href="admin-api.html">Platform API Docs</a>
+					<a class="btn" href="https://github.com/mjdaws0n/chap" target="_blank" rel="noreferrer">GitHub</a>
+					<a class="btn" href="https://github.com/sponsors/MJDaws0n" target="_blank" rel="noreferrer">Sponsor</a>
+				</div>
+			</section>
 
-    <script>
-        document.getElementById('year').textContent = String(new Date().getFullYear());
-    </script>
+			<section id="api" class="section">
+				<h3>API Reference</h3>
+				<div class="grid cards">
+					<div class="card">
+						<h3>Server API v2</h3>
+						<p>Client plane: auth, teams/projects, environments, apps, deployments, templates.</p>
+					</div>
+					<div class="card">
+						<h3>Platform API v2</h3>
+						<p>Platform plane: platform keys, user management, and platform-wide inventory.</p>
+					</div>
+					<div class="card">
+						<h3>Node API v2</h3>
+						<p>Applications, containers, logs, metrics, volumes, and filesystem.</p>
+					</div>
+				</div>
+			</section>
+
+			<section id="github" class="section">
+				<h3>GitHub Docs</h3>
+				<div class="grid cards">
+					<div class="card">
+						<h3>Repository Notes</h3>
+						<p>Setup guides, deployment notes, and troubleshooting details live in the repo.</p>
+					</div>
+				</div>
+			</section>
+		</main>
+	</div>
+
+	<div class="footer wrap">© MJDawson - Chap</div>
 </body>
 </html>

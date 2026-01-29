@@ -5,6 +5,7 @@ namespace Chap\Controllers;
 use Chap\Auth\AuthManager;
 use Chap\Models\User;
 use Chap\Models\ActivityLog;
+use Chap\Models\Setting;
 use Chap\Auth\OAuth\GitHubProvider;
 use Chap\Services\Mailer;
 use Chap\Security\Captcha\CaptchaVerifier;
@@ -95,6 +96,12 @@ class AuthController extends BaseController
      */
     public function showRegister(): void
     {
+        $registrationEnabled = (string)Setting::get('auth.registration_enabled', '1') !== '0';
+        if (!$registrationEnabled) {
+            flash('error', 'Registration is currently disabled');
+            $this->redirect('/login');
+        }
+
         $this->view('auth/register', [
             'title' => 'Create Account'
         ], 'auth');
@@ -105,6 +112,12 @@ class AuthController extends BaseController
      */
     public function register(): void
     {
+        $registrationEnabled = (string)Setting::get('auth.registration_enabled', '1') !== '0';
+        if (!$registrationEnabled) {
+            flash('error', 'Registration is currently disabled');
+            $this->redirect('/login');
+        }
+
         // Verify CSRF
         if (!verify_csrf($this->input('_csrf_token', ''))) {
             flash('error', 'Invalid request. Please try again.');
@@ -112,7 +125,6 @@ class AuthController extends BaseController
         }
 
         $name = trim($this->input('name', ''));
-        $username = trim($this->input('username', ''));
         $email = trim($this->input('email', ''));
         $password = $this->input('password', '');
         $passwordConfirmation = $this->input('password_confirmation', '');
@@ -127,14 +139,6 @@ class AuthController extends BaseController
 
         if (empty($name)) {
             $errors['name'] = 'Name is required';
-        }
-
-        if (empty($username)) {
-            $errors['username'] = 'Username is required';
-        } elseif (!preg_match('/^[a-zA-Z0-9_-]{3,30}$/', $username)) {
-            $errors['username'] = 'Username must be 3-30 characters (letters, numbers, - _)';
-        } elseif (User::findByUsername($username)) {
-            $errors['username'] = 'Username already taken';
         }
 
         if (empty($email)) {
@@ -155,9 +159,12 @@ class AuthController extends BaseController
 
         if (!empty($errors)) {
             $_SESSION['_errors'] = $errors;
-            $_SESSION['_old_input'] = ['name' => $name, 'username' => $username, 'email' => $email];
+            $_SESSION['_old_input'] = ['name' => $name, 'email' => $email];
             $this->redirect('/register');
         }
+
+        // Username is generated server-side; only admins can set/change it.
+        $username = User::generateUniqueUsername($name);
 
         // Create user
         $user = User::create([
@@ -166,6 +173,18 @@ class AuthController extends BaseController
             'email' => $email,
             'password_hash' => AuthManager::hashPassword($password),
             'is_admin' => User::count() === 0, // First user is admin
+            // New users default to zero of everything.
+            'max_cpu_millicores' => 0,
+            'max_ram_mb' => 0,
+            'max_storage_mb' => 0,
+            'max_ports' => 0,
+            'max_bandwidth_mbps' => 0,
+            'max_pids' => 0,
+            'max_teams' => 0,
+            'max_projects' => 0,
+            'max_environments' => 0,
+            'max_applications' => 0,
+            'node_access_mode' => 'allow_selected',
         ]);
 
         // Create personal team
@@ -356,6 +375,12 @@ class AuthController extends BaseController
         $user = User::findByGitHubId($githubUser['id']);
 
         if (!$user) {
+            $registrationEnabled = (string)Setting::get('auth.registration_enabled', '1') !== '0';
+            if (!$registrationEnabled) {
+                flash('error', 'Registration is currently disabled');
+                $this->redirect('/login');
+            }
+
             // Check if email exists
             if (!empty($githubUser['email'])) {
                 $user = User::findByEmail($githubUser['email']);
@@ -370,14 +395,8 @@ class AuthController extends BaseController
                 ]);
             } else {
                 // Create new user
-                $username = $githubUser['login'];
-                
-                // Ensure unique username
-                $counter = 1;
-                while (User::findByUsername($username)) {
-                    $username = $githubUser['login'] . $counter;
-                    $counter++;
-                }
+                $name = (string)($githubUser['name'] ?? $githubUser['login'] ?? 'user');
+                $username = User::generateUniqueUsername($name);
 
                 $user = User::create([
                     'username' => $username,
@@ -389,6 +408,18 @@ class AuthController extends BaseController
                     'avatar_url' => $githubUser['avatar_url'] ?? null,
                     'email_verified_at' => !empty($githubUser['email']) ? date('Y-m-d H:i:s') : null,
                     'is_admin' => User::count() === 1, // First user is admin
+                    // New users default to zero of everything.
+                    'max_cpu_millicores' => 0,
+                    'max_ram_mb' => 0,
+                    'max_storage_mb' => 0,
+                    'max_ports' => 0,
+                    'max_bandwidth_mbps' => 0,
+                    'max_pids' => 0,
+                    'max_teams' => 0,
+                    'max_projects' => 0,
+                    'max_environments' => 0,
+                    'max_applications' => 0,
+                    'node_access_mode' => 'allow_selected',
                 ]);
 
                 // Create personal team

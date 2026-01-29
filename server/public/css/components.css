@@ -228,20 +228,65 @@
 }
 
 /* Checkbox & Radio */
-.checkbox,
-.radio {
-    display: flex;
+label.checkbox,
+label.radio {
+    display: inline-flex;
     align-items: center;
     gap: var(--space-2);
     cursor: pointer;
 }
 
-.checkbox input,
-.radio input {
+label.checkbox input,
+label.radio input {
+    cursor: pointer;
+}
+
+/* Professional checkbox styling (supports both <label class="checkbox"><input ...></label>
+   and <input class="checkbox" ...> usage across the app) */
+label.checkbox input[type="checkbox"],
+input[type="checkbox"].checkbox {
     width: 18px;
     height: 18px;
-    accent-color: var(--accent-blue);
-    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    border-radius: 6px;
+    border: 1px solid var(--border-secondary);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.02));
+    background-color: var(--bg-secondary);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    display: inline-block;
+    vertical-align: middle;
+}
+
+label.checkbox input[type="checkbox"]:hover,
+input[type="checkbox"].checkbox:hover {
+    border-color: var(--border-tertiary);
+}
+
+label.checkbox input[type="checkbox"]:focus-visible,
+input[type="checkbox"].checkbox:focus-visible {
+    outline: none;
+    border-color: var(--accent-blue);
+    box-shadow:
+        0 0 0 4px rgba(10, 132, 255, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+label.checkbox input[type="checkbox"]:checked,
+input[type="checkbox"].checkbox:checked {
+    border-color: var(--accent-blue);
+    background-color: var(--accent-blue);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M16.7 5.8 8.3 14.2 3.3 9.2' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 14px 14px;
+}
+
+label.checkbox input[type="checkbox"]:disabled,
+input[type="checkbox"].checkbox:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 /* Toggle Switch */
@@ -467,7 +512,6 @@
 /* ===== Tables ===== */
 .table-container {
     overflow-x: auto;
-    border: 1px solid var(--border-primary);
     border-radius: var(--radius-lg);
 }
 
@@ -486,7 +530,7 @@
     font-size: var(--text-sm);
     font-weight: var(--font-medium);
     color: var(--text-secondary);
-    background-color: var(--bg-tertiary);
+    background-color: var(--bg-secondary);
     border-bottom: 1px solid var(--border-primary);
 }
 

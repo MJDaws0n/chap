@@ -79,11 +79,24 @@ class View
 
         $segments = explode('/', $path);
         $first = $segments[0] ?? '';
+        $second = $segments[1] ?? '';
+
+        // Admin routes are nested and need to map back to their sidebar section.
+        if ($first === 'admin') {
+            return match ($second) {
+                'nodes' => 'admin-nodes',
+                'users' => 'admin-users',
+                'settings' => 'admin-settings',
+                'activity' => 'admin-activity',
+                'templates' => 'admin-templates',
+                'api' => 'admin-api',
+                default => 'admin',
+            };
+        }
 
         // Normalize known nested routes back to their sidebar section
         return match ($first) {
             'projects' => 'projects',
-            'nodes' => 'nodes',
             'templates' => 'templates',
             'teams' => 'teams',
             'git-sources' => 'git-sources',

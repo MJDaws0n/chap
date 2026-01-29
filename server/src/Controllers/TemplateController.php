@@ -93,7 +93,8 @@ class TemplateController extends BaseController
             }
         }
 
-        $nodes = Node::onlineForTeam((int)$team->id);
+        $allowedNodeIds = $this->user ? NodeAccess::allowedNodeIds($this->user, $team) : [];
+        $nodes = Node::onlineForTeamAllowed((int)$team->id, $allowedNodeIds);
 
         // Build initial env text (KEY=VALUE lines) using the same shape as the application create UI.
         $envVars = $template->getDefaultEnvironmentVariables();
@@ -114,7 +115,7 @@ class TemplateController extends BaseController
         $initialEnvB64 = base64_encode(implode("\n", $lines));
 
         $this->view('templates/show', [
-            'title' => $template->name,
+            'title' => 'Deploy ' . $template->name,
             'currentPage' => 'templates',
             'template' => $template,
             'projects' => $projects,

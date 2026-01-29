@@ -7,6 +7,7 @@ use Chap\Auth\AuthManager;
 use Chap\Models\User;
 use Chap\Models\ActivityLog;
 use Chap\Models\Node;
+use Chap\Models\Setting;
 use Chap\App;
 use Chap\Services\LimitCascadeService;
 use Chap\Services\NotificationService;
@@ -21,12 +22,34 @@ class UserController extends BaseController
 
         $pagination = User::paginate($page, $perPage);
 
+        $registrationEnabled = (string)Setting::get('auth.registration_enabled', '1') !== '0';
+
         $this->view('admin/users/index', [
             'title' => 'Users',
             'currentPage' => 'admin-users',
             'users' => $pagination['data'],
             'pagination' => $pagination,
+            'registrationEnabled' => $registrationEnabled,
         ]);
+    }
+
+    public function toggleRegisterPage(): void
+    {
+        if (!verify_csrf($this->input('_csrf_token', ''))) {
+            flash('error', 'Invalid request');
+            $this->redirect('/admin/users');
+        }
+
+        $enabled = (string)Setting::get('auth.registration_enabled', '1') !== '0';
+        $next = !$enabled;
+
+        Setting::set('auth.registration_enabled', $next ? '1' : '0');
+        ActivityLog::log('admin.settings.registration.toggled', null, null, [
+            'enabled' => $next,
+        ]);
+
+        flash('success', $next ? 'Registration page enabled' : 'Registration page disabled');
+        $this->redirect('/admin/users');
     }
 
     public function create(): void
@@ -95,6 +118,18 @@ class UserController extends BaseController
             'email' => $email,
             'password_hash' => AuthManager::hashPassword($password),
             'is_admin' => $isAdmin,
+            // New users default to zero of everything.
+            'max_cpu_millicores' => 0,
+            'max_ram_mb' => 0,
+            'max_storage_mb' => 0,
+            'max_ports' => 0,
+            'max_bandwidth_mbps' => 0,
+            'max_pids' => 0,
+            'max_teams' => 0,
+            'max_projects' => 0,
+            'max_environments' => 0,
+            'max_applications' => 0,
+            'node_access_mode' => 'allow_selected',
         ]);
 
         // Keep data model consistent: every user gets a personal team.
@@ -213,24 +248,24 @@ class UserController extends BaseController
             $errors['password'] = 'Password must be at least 8 characters';
         }
 
-        // Validate max limits (-1 means unlimited)
-        if ($maxCpuMillicores !== -1 && $maxCpuMillicores <= 0) {
-            $errors['max_cpu_millicores'] = 'CPU max must be greater than 0, or -1 for unlimited';
+        // Validate max limits (-1 means unlimited, 0 means none)
+        if ($maxCpuMillicores < -1) {
+            $errors['max_cpu_millicores'] = 'CPU max must be 0 or greater, or -1 for unlimited';
         }
-        if ($maxRamMb !== -1 && $maxRamMb <= 0) {
-            $errors['max_ram_mb'] = 'RAM max must be greater than 0, or -1 for unlimited';
+        if ($maxRamMb < -1) {
+            $errors['max_ram_mb'] = 'RAM max must be 0 or greater, or -1 for unlimited';
         }
-        if ($maxStorageMb !== -1 && $maxStorageMb <= 0) {
-            $errors['max_storage_mb'] = 'Storage max must be greater than 0, or -1 for unlimited';
+        if ($maxStorageMb < -1) {
+            $errors['max_storage_mb'] = 'Storage max must be 0 or greater, or -1 for unlimited';
         }
-        if ($maxPorts !== -1 && $maxPorts <= 0) {
-            $errors['max_ports'] = 'Port max must be greater than 0, or -1 for unlimited';
+        if ($maxPorts < -1) {
+            $errors['max_ports'] = 'Port max must be 0 or greater, or -1 for unlimited';
         }
-        if ($maxBandwidth !== -1 && $maxBandwidth <= 0) {
-            $errors['max_bandwidth_mbps'] = 'Bandwidth max must be greater than 0, or -1 for unlimited';
+        if ($maxBandwidth < -1) {
+            $errors['max_bandwidth_mbps'] = 'Bandwidth max must be 0 or greater, or -1 for unlimited';
         }
-        if ($maxPids !== -1 && $maxPids <= 0) {
-            $errors['max_pids'] = 'PIDs max must be greater than 0, or -1 for unlimited';
+        if ($maxPids < -1) {
+            $errors['max_pids'] = 'PIDs max must be 0 or greater, or -1 for unlimited';
         }
 
         // Prevent removing the last admin.

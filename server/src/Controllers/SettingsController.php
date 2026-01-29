@@ -150,6 +150,7 @@ class SettingsController extends BaseController
         $name = trim((string)$this->input('name', ''));
         $scopesRaw = $this->input('scopes', []);
         $expiresAtRaw = trim((string)$this->input('expires_at', ''));
+        $expiresIn = trim((string)$this->input('expires_in', ''));
 
         $scopes = is_array($scopesRaw) ? array_values(array_filter(array_map('strval', $scopesRaw))) : [];
         if ($name === '' || empty($scopes)) {
@@ -159,7 +160,24 @@ class SettingsController extends BaseController
         }
 
         $expiresDb = null;
-        if ($expiresAtRaw !== '') {
+        if ($expiresIn !== '' && $expiresIn !== 'never') {
+            $map = [
+                '6h' => 6 * 3600,
+                '1d' => 24 * 3600,
+                '7d' => 7 * 24 * 3600,
+                '30d' => 30 * 24 * 3600,
+                '60d' => 60 * 24 * 3600,
+                '90d' => 90 * 24 * 3600,
+                '1y' => 365 * 24 * 3600,
+            ];
+            if (!isset($map[$expiresIn])) {
+                flash('error', 'Invalid expiry selection');
+                $this->redirect('/settings');
+                return;
+            }
+            $expiresDb = date('Y-m-d H:i:s', time() + (int)$map[$expiresIn]);
+        } elseif ($expiresIn === '' && $expiresAtRaw !== '') {
+            // Back-compat: accept explicit RFC3339-ish timestamp.
             $ts = strtotime($expiresAtRaw);
             if ($ts === false) {
                 flash('error', 'Invalid expiry time');

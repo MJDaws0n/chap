@@ -213,7 +213,22 @@
                 
                 if (dropdown) {
                     const placement = trigger.dataset.dropdownPlacement || DEFAULTS.placement;
-                    toggleDropdown(trigger, dropdown, { placement });
+                    const closeOnSelect = (trigger.dataset.dropdownCloseOnSelect != null)
+                        ? (trigger.dataset.dropdownCloseOnSelect !== 'false')
+                        : undefined;
+                    const closeOnClickOutside = (trigger.dataset.dropdownCloseOnClickOutside != null)
+                        ? (trigger.dataset.dropdownCloseOnClickOutside !== 'false')
+                        : undefined;
+                    const offset = (trigger.dataset.dropdownOffset != null && trigger.dataset.dropdownOffset !== '')
+                        ? (parseInt(trigger.dataset.dropdownOffset, 10) || DEFAULTS.offset)
+                        : undefined;
+
+                    const options = { placement };
+                    if (closeOnSelect !== undefined) options.closeOnSelect = closeOnSelect;
+                    if (closeOnClickOutside !== undefined) options.closeOnClickOutside = closeOnClickOutside;
+                    if (offset !== undefined) options.offset = offset;
+
+                    toggleDropdown(trigger, dropdown, options);
                 }
                 return;
             }

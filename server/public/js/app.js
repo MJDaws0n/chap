@@ -268,6 +268,239 @@
         }, true);
     }
 
+    // ===== Multi Select Dropdowns =====
+    // Enhances native <select class="select" multiple> into a dropdown with checkable items.
+    // Keeps the original <select> for form submission, but hides it visually.
+    function initMultiSelectDropdowns() {
+        const SELECTOR = 'select.select[multiple]';
+        const SEARCH_THRESHOLD = 12;
+
+        const makeChevronSvg = () => {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('class', 'icon dropdown-chevron select-chevron');
+            svg.setAttribute('viewBox', '0 0 24 24');
+            svg.setAttribute('fill', 'none');
+            svg.setAttribute('stroke', 'currentColor');
+            svg.setAttribute('stroke-width', '2');
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('stroke-linecap', 'round');
+            path.setAttribute('stroke-linejoin', 'round');
+            path.setAttribute('d', 'M19 9l-7 7-7-7');
+            svg.appendChild(path);
+            return svg;
+        };
+
+        const enhanceMultiSelect = (select) => {
+            if (!(select instanceof HTMLSelectElement)) return;
+            if (!select.multiple) return;
+            if (select.dataset.chapSelectEnhanced === 'true') return;
+            if (select.closest('[data-native-select]')) return;
+
+            const options = Array.from(select.options);
+            const enabledOptions = options.filter(o => !o.disabled);
+            const enableSearch = (select.dataset.search === 'true') || (enabledOptions.length >= SEARCH_THRESHOLD);
+
+            const menuId = (window.Chap && window.Chap.utils && window.Chap.utils.generateId)
+                ? window.Chap.utils.generateId('multiselect-menu')
+                : `multiselect-menu-${Math.random().toString(36).slice(2)}`;
+
+            const dropdown = document.createElement('div');
+            dropdown.className = 'dropdown select-dropdown select-dropdown-multi';
+
+            const trigger = document.createElement('button');
+            trigger.type = 'button';
+            trigger.className = 'btn btn-secondary w-full dropdown-trigger select-trigger';
+            trigger.dataset.dropdownTrigger = menuId;
+            trigger.dataset.dropdownPlacement = select.dataset.dropdownPlacement || 'bottom-start';
+            trigger.dataset.dropdownCloseOnSelect = 'false';
+            trigger.setAttribute('aria-expanded', 'false');
+            trigger.setAttribute('aria-haspopup', 'listbox');
+
+            const triggerLabel = document.createElement('span');
+            triggerLabel.className = 'select-trigger-label';
+            trigger.appendChild(triggerLabel);
+            trigger.appendChild(makeChevronSvg());
+
+            const menu = document.createElement('div');
+            menu.className = 'dropdown-menu w-full select-dropdown-menu';
+            menu.id = menuId;
+            menu.setAttribute('role', 'listbox');
+            menu.setAttribute('aria-multiselectable', 'true');
+
+            let searchInput = null;
+            if (enableSearch) {
+                const searchWrap = document.createElement('div');
+                searchWrap.className = 'dropdown-search';
+
+                searchInput = document.createElement('input');
+                searchInput.type = 'text';
+                searchInput.className = 'input input-sm';
+                searchInput.placeholder = select.dataset.searchPlaceholder || 'Search...';
+                searchInput.autocomplete = 'off';
+
+                searchWrap.appendChild(searchInput);
+                menu.appendChild(searchWrap);
+            }
+
+            const itemsWrap = document.createElement('div');
+            itemsWrap.className = 'dropdown-items';
+            menu.appendChild(itemsWrap);
+
+            const empty = document.createElement('div');
+            empty.className = 'dropdown-empty hidden';
+            empty.textContent = 'No results';
+            itemsWrap.appendChild(empty);
+
+            const optionButtons = [];
+
+            const placeholder = (select.dataset.placeholder || '').trim() || 'Select...';
+
+            const updateTriggerFromSelect = () => {
+                const selected = Array.from(select.selectedOptions || []);
+                const labels = selected.map(o => (o.textContent || '').trim()).filter(Boolean);
+
+                if (labels.length === 0) {
+                    triggerLabel.textContent = placeholder;
+                } else if (labels.length <= 2) {
+                    triggerLabel.textContent = labels.join(', ');
+                } else {
+                    triggerLabel.textContent = `${labels.slice(0, 2).join(', ')} +${labels.length - 2}`;
+                }
+
+                optionButtons.forEach(({ btn, option }) => {
+                    const isSelected = !!option.selected;
+                    btn.classList.toggle('active', isSelected);
+                    btn.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+                    const check = btn.querySelector('.select-multi-check');
+                    if (check) check.classList.toggle('checked', isSelected);
+                });
+
+                const disabled = select.disabled;
+                trigger.disabled = disabled;
+                trigger.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+            };
+
+            const renderOptions = (query = '') => {
+                const q = query.trim().toLowerCase();
+                let visibleCount = 0;
+
+                optionButtons.forEach(({ btn }) => {
+                    const text = (btn.dataset.label || '').toLowerCase();
+                    const match = !q || text.includes(q);
+                    btn.classList.toggle('hidden', !match);
+                    if (match) visibleCount++;
+                });
+
+                empty.classList.toggle('hidden', visibleCount !== 0);
+            };
+
+            options.forEach((option, index) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'dropdown-item select-multi-item';
+                btn.dataset.value = option.value;
+                btn.dataset.index = String(index);
+                btn.dataset.label = (option.textContent || '').trim();
+                btn.setAttribute('role', 'option');
+                btn.setAttribute('aria-selected', option.selected ? 'true' : 'false');
+
+                const check = document.createElement('span');
+                check.className = 'select-multi-check' + (option.selected ? ' checked' : '');
+                check.setAttribute('aria-hidden', 'true');
+
+                const label = document.createElement('span');
+                label.className = 'select-multi-label';
+                label.textContent = (option.textContent || '').trim() || option.value;
+
+                btn.appendChild(check);
+                btn.appendChild(label);
+
+                if (option.disabled) {
+                    btn.classList.add('disabled');
+                    btn.disabled = true;
+                }
+
+                btn.addEventListener('click', () => {
+                    if (option.disabled) return;
+                    option.selected = !option.selected;
+                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                    updateTriggerFromSelect();
+                });
+
+                optionButtons.push({ btn, option });
+                itemsWrap.appendChild(btn);
+            });
+
+            // Hide and mark the native select
+            select.dataset.chapSelectEnhanced = 'true';
+            select.classList.add('select-native-hidden');
+            select.tabIndex = -1;
+
+            // Insert dropdown UI
+            select.parentNode.insertBefore(dropdown, select);
+            dropdown.appendChild(trigger);
+            dropdown.appendChild(menu);
+            dropdown.appendChild(select);
+
+            // Make clicking the associated <label for="..."> open the custom dropdown
+            if (select.id) {
+                let labelEl = null;
+                try {
+                    labelEl = document.querySelector(`label[for="${CSS.escape(select.id)}"]`);
+                } catch (_) {
+                    labelEl = document.querySelector(`label[for="${select.id}"]`);
+                }
+                if (labelEl) {
+                    labelEl.addEventListener('click', (e) => {
+                        if (trigger.disabled) return;
+                        e.preventDefault();
+                        trigger.click();
+                    });
+                }
+            }
+
+            // Keep UI in sync
+            select.addEventListener('change', updateTriggerFromSelect);
+            updateTriggerFromSelect();
+
+            if (searchInput) {
+                searchInput.addEventListener('input', () => {
+                    renderOptions(searchInput.value);
+                });
+
+                menu.addEventListener('dropdown:open', () => {
+                    searchInput.value = '';
+                    renderOptions('');
+                    setTimeout(() => searchInput && searchInput.focus(), 0);
+                });
+            }
+
+            renderOptions('');
+        };
+
+        Array.from(document.querySelectorAll(SELECTOR)).forEach(enhanceMultiSelect);
+
+        if (document.documentElement.dataset.chapMultiSelectObserver !== 'true') {
+            document.documentElement.dataset.chapMultiSelectObserver = 'true';
+            const observer = new MutationObserver((mutations) => {
+                for (const m of mutations) {
+                    for (const node of m.addedNodes) {
+                        if (!(node instanceof HTMLElement)) continue;
+                        if (node.matches && node.matches(SELECTOR)) {
+                            enhanceMultiSelect(node);
+                        }
+                        if (node.querySelectorAll) {
+                            node.querySelectorAll(SELECTOR).forEach(enhanceMultiSelect);
+                        }
+                    }
+                }
+            });
+            if (document.body) {
+                observer.observe(document.body, { childList: true, subtree: true });
+            }
+        }
+    }
+
     // ===== Sidebar Mobile Toggle =====
     function initSidebar() {
         const menuBtn = document.querySelector('.header-menu-btn');
@@ -820,6 +1053,7 @@
         initCopyButtons();
         initForms();
         initSelectDropdowns();
+        initMultiSelectDropdowns();
         initTabs();
         initCollapsibles();
         initTooltips();

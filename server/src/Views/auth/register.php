@@ -27,23 +27,6 @@ unset($_SESSION['_old_input']);
     </div>
 
     <div class="form-group">
-        <label for="username" class="label">Username</label>
-        <input
-            type="text"
-            id="username"
-            name="username"
-            required
-            class="input <?= !empty($errors['username']) ? 'input-error' : '' ?>"
-            value="<?= htmlspecialchars($old['username'] ?? '') ?>"
-            placeholder="yourname"
-        >
-        <?php if (!empty($errors['username'])): ?>
-            <p class="form-error"><?= htmlspecialchars($errors['username']) ?></p>
-        <?php endif; ?>
-        <p class="form-hint">3-30 characters (letters, numbers, - _)</p>
-    </div>
-
-    <div class="form-group">
         <label for="email" class="label">Email</label>
         <input 
             type="email" 

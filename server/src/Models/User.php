@@ -95,6 +95,65 @@ class User extends BaseModel
     }
 
     /**
+     * Generate a unique username from a human name.
+     *
+     * Format: <sanitized-name>-<random-hex>
+     * Ensures it matches /^[a-zA-Z0-9_-]{3,30}$/ and is not already in use.
+     */
+    public static function generateUniqueUsername(string $name, int $maxAttempts = 100): string
+    {
+        $name = trim($name);
+
+        // Best-effort transliteration to ASCII.
+        $ascii = $name;
+        if (function_exists('iconv')) {
+            $converted = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $name);
+            if (is_string($converted) && $converted !== '') {
+                $ascii = $converted;
+            }
+        }
+
+        $base = strtolower($ascii);
+        $base = preg_replace('/[^a-z0-9]+/i', '-', $base) ?? '';
+        $base = trim($base, "-_ ");
+
+        if ($base === '') {
+            $base = 'user';
+        }
+
+        // Keep room for "-" + 6 chars suffix (7 total) within 30.
+        $base = substr($base, 0, 23);
+        $base = trim($base, "-_");
+        if (strlen($base) < 3) {
+            $base = str_pad($base, 3, 'u');
+        }
+
+        for ($i = 0; $i < $maxAttempts; $i++) {
+            $suffix = substr(strtolower(bin2hex(random_bytes(3))), 0, 6);
+            $candidate = $base . '-' . $suffix;
+            $candidate = substr($candidate, 0, 30);
+
+            if (!preg_match('/^[a-zA-Z0-9_-]{3,30}$/', $candidate)) {
+                continue;
+            }
+            if (!self::findByUsername($candidate)) {
+                return $candidate;
+            }
+        }
+
+        // Last resort: random-only.
+        for ($i = 0; $i < $maxAttempts; $i++) {
+            $candidate = 'user-' . substr(strtolower(bin2hex(random_bytes(6))), 0, 12);
+            $candidate = substr($candidate, 0, 30);
+            if (!self::findByUsername($candidate)) {
+                return $candidate;
+            }
+        }
+
+        throw new \RuntimeException('Unable to generate a unique username');
+    }
+
+    /**
      * Find user by GitHub ID
      */
     public static function findByGitHubId(string $githubId): ?self

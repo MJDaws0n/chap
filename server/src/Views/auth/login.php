@@ -42,8 +42,8 @@ unset($_SESSION['_old_input']);
     </div>
 
     <div class="flex items-center justify-between mb-6">
-        <label class="checkbox-label">
-            <input type="checkbox" name="remember" class="checkbox">
+        <label class="checkbox">
+            <input type="checkbox" name="remember">
             <span>Remember me</span>
         </label>
         <a href="/forgot-password" class="text-sm text-blue">Forgot password?</a>

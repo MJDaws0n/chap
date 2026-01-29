@@ -12,6 +12,13 @@
                 <p class="page-header-description">Create and manage user accounts</p>
             </div>
             <div class="page-header-actions">
+                <form method="POST" action="/admin/users/register-page/toggle" class="inline-block">
+                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                    <?php $enabled = (bool)($registrationEnabled ?? true); ?>
+                    <button type="submit" class="btn btn-secondary">
+                        <?= $enabled ? 'Disable Register Page' : 'Enable Register Page' ?>
+                    </button>
+                </form>
                 <a href="/admin/users/create" class="btn btn-primary">
                     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
