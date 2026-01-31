@@ -9,8 +9,6 @@ services:
       MYSQL_DATABASE: ${DB_DATABASE:-chap}
       MYSQL_USER: ${DB_USERNAME:-chap}
       MYSQL_PASSWORD: ${DB_PASSWORD:-chap_secret}
-    ports:
-      - "127.0.0.1:3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     networks:

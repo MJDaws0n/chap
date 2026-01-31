@@ -20,8 +20,6 @@ services:
       MYSQL_DATABASE: ${DB_DATABASE:-chap}
       MYSQL_USER: ${DB_USERNAME:-chap}
       MYSQL_PASSWORD: ${DB_PASSWORD:-chap_secret}
-    ports:
-      - "${DB_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./server/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
