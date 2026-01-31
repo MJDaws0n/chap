@@ -13,6 +13,9 @@ const os = require('os');
 const { spawn } = require('child_process');
 const Busboy = require('busboy');
 
+const HARD_MAX_FILE_READ_BYTES = 1024 * 1024; // 1MiB per request
+const HARD_MAX_SSE_EVENT_BYTES = 128 * 1024; // 128KiB per event
+
 function b64urlDecode(s) {
     const ss = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
     const pad = ss.length % 4;
@@ -47,12 +50,42 @@ function verifyJwtHs256(jwt, secret) {
     return payload && typeof payload === 'object' ? payload : null;
 }
 
+function sanitizeJsonForResponse(value, depth = 0, seen = new WeakSet()) {
+    if (depth > 6) return null;
+
+    if (value instanceof Error) {
+        return { message: String(value.message || 'Error') };
+    }
+    if (value === null || value === undefined) return value;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+    if (Array.isArray(value)) {
+        return value.slice(0, 200).map((v) => sanitizeJsonForResponse(v, depth + 1, seen));
+    }
+    if (typeof value === 'object') {
+        if (seen.has(value)) return null;
+        seen.add(value);
+
+        const out = {};
+        const entries = Object.entries(value).slice(0, 200);
+        for (const [k, v] of entries) {
+            const key = String(k);
+            if (key === 'stack' || key === 'trace') continue;
+            out[key] = sanitizeJsonForResponse(v, depth + 1, seen);
+        }
+        return out;
+    }
+
+    // functions, symbols, etc.
+    return String(value);
+}
+
 function json(res, status, obj, extraHeaders = {}) {
     res.writeHead(status, {
         'Content-Type': 'application/json; charset=utf-8',
+        'X-Content-Type-Options': 'nosniff',
         ...extraHeaders,
     });
-    res.end(JSON.stringify(obj));
+    res.end(JSON.stringify(sanitizeJsonForResponse(obj)));
 }
 
 function readBody(req) {
@@ -201,14 +234,36 @@ function sseInit(res) {
         'Cache-Control': 'no-cache, no-transform',
         'Connection': 'keep-alive',
         'X-Accel-Buffering': 'no',
+        'X-Content-Type-Options': 'nosniff',
     });
     res.write(':ok\n\n');
 }
 
+function sseSanitizeEventName(event) {
+    const e = String(event || '').trim();
+    if (!e) return '';
+    if (e.length > 64) return '';
+    // SSE event name must be a single line; keep it conservative.
+    if (/[^a-zA-Z0-9_.:-]/.test(e)) return '';
+    return e;
+}
+
+function sseSanitizeData(data) {
+    let payload = typeof data === 'string' ? data : JSON.stringify(data);
+    payload = String(payload);
+    // Prevent SSE splitting / control chars.
+    payload = payload.replace(/\0/g, '').replace(/\r/g, '');
+    if (payload.length > HARD_MAX_SSE_EVENT_BYTES) {
+        payload = payload.slice(0, HARD_MAX_SSE_EVENT_BYTES);
+    }
+    return payload;
+}
+
 function sseSend(res, event, data) {
-    if (event) res.write(`event: ${event}\n`);
-    const payload = typeof data === 'string' ? data : JSON.stringify(data);
-    for (const line of String(payload).split('\n')) {
+    const ev = sseSanitizeEventName(event);
+    if (ev) res.write(`event: ${ev}\n`);
+    const payload = sseSanitizeData(data);
+    for (const line of payload.split('\n')) {
         res.write(`data: ${line}\n`);
     }
     res.write('\n');
@@ -1076,12 +1131,22 @@ function makeNodeV2RequestHandler(deps) {
                     return;
                 }
                 const stat = fs.statSync(abs);
+                if (offset > stat.size) {
+                    json(res, 416, { error: { code: 'invalid_range', message: 'Offset exceeds file size' } });
+                    return;
+                }
                 const maxLen = stat.size - offset;
-                const readLen = length > 0 ? Math.min(length, maxLen) : Math.min(maxLen, maxBytes ?? maxLen);
+                const requestedLen = length > 0 ? Math.min(length, maxLen) : Math.min(maxLen, maxBytes ?? maxLen);
+                const readLen = Math.max(0, requestedLen);
+
+                if (readLen > HARD_MAX_FILE_READ_BYTES) {
+                    json(res, 413, { error: { code: 'too_large', message: `Read exceeds hard limit of ${HARD_MAX_FILE_READ_BYTES} bytes` } });
+                    return;
+                }
 
                 const fd = fs.openSync(abs, 'r');
                 try {
-                    const buf = Buffer.alloc(Math.max(0, readLen));
+                    const buf = Buffer.alloc(readLen);
                     fs.readSync(fd, buf, 0, buf.length, offset);
 
                     const accept = String(req.headers.accept || '');

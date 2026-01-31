@@ -1924,6 +1924,15 @@ function execCommand(argv, options = {}) {
         return Promise.reject(new Error('execCommand expects argv array'));
     }
 
+    // Defense-in-depth: ensure the executable cannot be user-controlled.
+    // This agent only needs a small set of host binaries.
+    const allowedBinaries = new Set(['docker', 'git', 'du']);
+    const cmdRaw = String(argv[0] ?? '').trim();
+    const cmdBase = path.basename(cmdRaw);
+    if (!allowedBinaries.has(cmdBase)) {
+        return Promise.reject(new Error(`Refusing to execute disallowed binary: ${cmdBase || '(empty)'}`));
+    }
+
     const { redact, timeout, cwd, env } = options || {};
     const timeoutMs = Number.isFinite(timeout) ? Number(timeout) : 0;
 
