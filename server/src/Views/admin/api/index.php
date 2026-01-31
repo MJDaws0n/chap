@@ -188,7 +188,7 @@ $defaultScopesB64 = base64_encode(json_encode($defaultScopes));
             </div>
             <div class="card-body text-sm text-secondary">
                 <p class="m-0">
-                    Documentation: <a class="link" href="https://mjdaws0n.github.io/chap/api/admin-api.html" target="_blank" rel="noreferrer">https://mjdaws0n.github.io/chap/api/admin-api.html</a>
+                    Documentation: <a class="link break-all" href="https://mjdaws0n.github.io/chap/api/admin-api.html" target="_blank" rel="noreferrer">https://mjdaws0n.github.io/chap/api/admin-api.html</a>
                 </p>
             </div>
         </div>

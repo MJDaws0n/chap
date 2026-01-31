@@ -152,6 +152,21 @@
     border-top: 1px solid var(--border-subtle);
 }
 
+@media (max-width: 767px) {
+    .form-container {
+        max-width: 100%;
+    }
+
+    .form-actions {
+        flex-wrap: wrap;
+        justify-content: stretch;
+    }
+
+    .form-actions .btn {
+        width: 100%;
+    }
+}
+
 .alert {
     display: flex;
     gap: var(--space-md);

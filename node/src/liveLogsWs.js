@@ -670,7 +670,7 @@ function parseDockerTimestampLine(line) {
  * @param {object} deps.config
  * @param {(type: string, data?: object) => boolean} deps.sendToServer
  * @param {() => boolean} deps.isServerConnected
- * @param {(cmd: string, opts?: object) => Promise<string>} deps.execCommand
+ * @param {(argv: string[], opts?: object) => Promise<string>} deps.execCommand
  * @param {(x: any) => string} deps.safeId
  * @param {(applicationUuid: string) => string | null | undefined} [deps.getComposeDir]
  * @param {any} [deps.storage]
@@ -802,7 +802,7 @@ function createLiveLogsWs(deps) {
             entry.removeTimer = setTimeout(async () => {
                 const cur = volumeFsHelperPool.get(poolKey);
                 if (!cur || cur.inUse !== 0) return;
-                try { await execCommand(`docker rm -f ${cur.id}`); } catch {}
+                try { await execCommand(['docker', 'rm', '-f', dockerSafeIdToken(cur.id)]); } catch {}
                 volumeFsHelperPool.delete(poolKey);
             }, VOLUME_FS_HELPER_IDLE_MS);
         }
@@ -835,8 +835,8 @@ function createLiveLogsWs(deps) {
             // Include both new labeled helpers and older helpers (name prefix).
             let ids = [];
             try {
-                const out1 = await execCommand('docker ps -aq --filter "label=chap.role=volfs-helper"');
-                const out2 = await execCommand('docker ps -aq --filter "name=chap-volfs-"');
+                const out1 = await execCommand(['docker', 'ps', '-aq', '--filter', 'label=chap.role=volfs-helper']);
+                const out2 = await execCommand(['docker', 'ps', '-aq', '--filter', 'name=chap-volfs-']);
                 ids = String(out1 || '').trim().split(/\s+/).filter(Boolean)
                     .concat(String(out2 || '').trim().split(/\s+/).filter(Boolean));
             } catch {
@@ -870,7 +870,7 @@ function createLiveLogsWs(deps) {
 
                 if (now - createdMs < VOLUME_FS_HELPER_ORPHAN_GRACE_MS) continue;
 
-                try { await execCommand(`docker rm -f ${cid}`); } catch {}
+                try { await execCommand(['docker', 'rm', '-f', dockerSafeIdToken(cid)]); } catch {}
             }
         };
 
@@ -914,7 +914,7 @@ function createLiveLogsWs(deps) {
                 // recreate below
             }
 
-            try { await execCommand(`docker rm -f ${existing.id}`); } catch {}
+            try { await execCommand(['docker', 'rm', '-f', dockerSafeIdToken(existing.id)]); } catch {}
             volumeFsHelperPool.delete(poolKey);
         }
 
@@ -1040,7 +1040,7 @@ function createLiveLogsWs(deps) {
         try {
             const id = dockerSafeIdToken(containerId);
             if (!id) return null;
-            const out = await execCommand(`docker inspect --format "{{.Config.OpenStdin}}|{{.Config.Tty}}" ${id}`);
+            const out = await execCommand(['docker', 'inspect', '--format', '{{.Config.OpenStdin}}|{{.Config.Tty}}', id]);
             const [openStdinRaw, ttyRaw] = String(out || '').trim().split('|');
             const openStdin = String(openStdinRaw || '').trim().toLowerCase() === 'true';
             const tty = String(ttyRaw || '').trim().toLowerCase() === 'true';
@@ -1051,11 +1051,15 @@ function createLiveLogsWs(deps) {
     }
 
     async function dockerPsList({ all, filters }) {
-        const base = all ? 'docker ps -a' : 'docker ps';
         const fmt = '{{.ID}}|{{.Names}}|{{.Status}}';
         const flt = (Array.isArray(filters) ? filters : []).filter(Boolean);
-        const cmd = `${base} ${flt.map((f) => `--filter "${f}"`).join(' ')} --format "${fmt}"`;
-        const out = await execCommand(cmd);
+        const argv = ['docker', 'ps'];
+        if (all) argv.push('-a');
+        for (const f of flt) {
+            argv.push('--filter', String(f));
+        }
+        argv.push('--format', fmt);
+        const out = await execCommand(argv);
         const lines = String(out || '').trim().split('\n').filter(Boolean);
         const parsed = lines
             .map((line) => {
@@ -1079,8 +1083,10 @@ function createLiveLogsWs(deps) {
         if (!fs.existsSync(composePath)) return [];
 
         try {
-            const args = all ? 'ps -a -q' : 'ps -q';
-            const idsOut = await execCommand(`docker compose -p chap-${app} ${args}`, { cwd: composeDir });
+            const argv = ['docker', 'compose', '-p', `chap-${app}`, 'ps'];
+            if (all) argv.push('-a');
+            argv.push('-q');
+            const idsOut = await execCommand(argv, { cwd: composeDir });
             const ids = String(idsOut || '')
                 .trim()
                 .split('\n')
@@ -1090,9 +1096,13 @@ function createLiveLogsWs(deps) {
 
             // Use docker inspect to fetch stable name/status for each id.
             // (docker ps filtering by id would also work but is slower per-container)
-            const inspectOut = await execCommand(
-                `docker inspect --format "{{.Id}}|{{.Name}}|{{.State.Status}}|{{.State.Restarting}}" ${ids.join(' ')}`
-            );
+            const inspectOut = await execCommand([
+                'docker',
+                'inspect',
+                '--format',
+                '{{.Id}}|{{.Name}}|{{.State.Status}}|{{.State.Restarting}}',
+                ...ids,
+            ]);
             const lines = String(inspectOut || '').trim().split('\n').filter(Boolean);
             const containers = lines
                 .map((line) => {
@@ -3409,7 +3419,7 @@ function createLiveLogsWs(deps) {
         try {
             for (const entry of volumeFsHelperPool.values()) {
                 if (!entry || !entry.id) continue;
-                execCommand(`docker rm -f ${entry.id}`).catch(() => {});
+                execCommand(['docker', 'rm', '-f', dockerSafeIdToken(entry.id)]).catch(() => {});
             }
         } catch {}
         try { volumeFsHelperPool.clear(); } catch {}

@@ -196,6 +196,19 @@
     overflow-y: auto;
 }
 
+@media (max-width: 767px) {
+    /* Keep dropdown/select menus inside the viewport on mobile.
+       Some views set inline min-width (e.g. 320px) which can force page overflow. */
+    .dropdown-menu,
+    .select-dropdown-menu {
+        min-width: 0 !important;
+        max-width: calc(100vw - (var(--space-4) * 2)) !important;
+        width: calc(100vw - (var(--space-4) * 2)) !important;
+        left: var(--space-4) !important;
+        right: var(--space-4) !important;
+    }
+}
+
 .dropdown-empty {
     padding: var(--space-4);
     text-align: center;

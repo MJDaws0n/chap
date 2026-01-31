@@ -66,7 +66,7 @@
                         <label class="form-label">Container</label>
                         <div class="dropdown" id="container-dropdown">
                             <button type="button" class="btn btn-secondary w-full" id="container-select-btn" data-dropdown-trigger="container-dropdown-menu" data-dropdown-placement="bottom-start">
-                                <span id="selected-container-name">Select container...</span>
+                                <span class="break-all" id="selected-container-name">Select container...</span>
                                 <svg class="icon dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
                                 </svg>
@@ -86,7 +86,7 @@
                         <label class="form-label">Timeframe</label>
                         <div class="dropdown" id="range-dropdown">
                             <button type="button" class="btn btn-secondary w-full" id="range-select-btn" data-dropdown-trigger="range-dropdown-menu" data-dropdown-placement="bottom-start">
-                                <span id="range-value">Last 1 minute</span>
+                                <span class="break-all" id="range-value">Last 1 minute</span>
                                 <svg class="icon dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
                                 </svg>

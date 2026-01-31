@@ -9,7 +9,49 @@
 error_reporting(E_ALL);
 ini_set('display_errors', getenv('APP_DEBUG') === 'true' ? '1' : '0');
 
+// Session hardening (must run before session_start)
+// NOTE: keep this bootstrap lightweight; helpers/autoload are not loaded yet.
+$envBool = function (string $key, bool $default = false): bool {
+    $v = getenv($key);
+    if ($v === false || $v === '') return $default;
+    $s = strtolower(trim((string)$v));
+    if (in_array($s, ['1', 'true', 'yes', 'on'], true)) return true;
+    if (in_array($s, ['0', 'false', 'no', 'off'], true)) return false;
+    return $default;
+};
+
+$trustProxy = $envBool('TRUST_PROXY_HEADERS', false);
+$https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || ((int)($_SERVER['SERVER_PORT'] ?? 0) === 443);
+if (!$https && $trustProxy) {
+    $xfp = strtolower(trim((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')));
+    if ($xfp === 'https') {
+        $https = true;
+    }
+}
+
+$secureCookie = $envBool('SESSION_SECURE', $https);
+$sameSite = getenv('SESSION_SAMESITE');
+$sameSite = is_string($sameSite) && $sameSite !== '' ? $sameSite : 'Lax';
+
+ini_set('session.use_strict_mode', '1');
+ini_set('session.use_only_cookies', '1');
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_secure', $secureCookie ? '1' : '0');
+ini_set('session.cookie_samesite', $sameSite);
+
+$lifetimeMinutes = (int)(getenv('SESSION_LIFETIME') ?: 120);
+$gcLifetime = max(300, $lifetimeMinutes * 60);
+ini_set('session.gc_maxlifetime', (string)$gcLifetime);
+
 // Start session
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path' => '/',
+    'secure' => $secureCookie,
+    'httponly' => true,
+    'samesite' => $sameSite,
+]);
 session_start();
 
 // Autoload

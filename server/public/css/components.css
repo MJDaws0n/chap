@@ -513,6 +513,8 @@ input[type="checkbox"].checkbox:disabled {
 .table-container {
     overflow-x: auto;
     border-radius: var(--radius-lg);
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
 }
 
 .table {
@@ -846,6 +848,67 @@ input[type="checkbox"].checkbox:disabled {
     background-color: var(--bg-secondary);
     color: var(--text-primary);
     box-shadow: var(--shadow-sm);
+}
+
+@media (max-width: 767px) {
+    /* Avoid page-level horizontal overflow on small screens */
+    .btn {
+        white-space: normal;
+        text-align: center;
+    }
+
+    /* Tabs often overflow; make them scrollable by default on mobile */
+    .tabs {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        max-width: 100%;
+    }
+
+    .tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    /* Long URLs / tokens / slugs should wrap instead of forcing overflow */
+    code,
+    a {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+
+    pre {
+        max-width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Slightly tighter table padding to reduce required width */
+    .table th,
+    .table td {
+        padding: var(--space-3) var(--space-4);
+    }
+
+    /* Checkbox labels can contain long role/scope names */
+    label.checkbox,
+    label.radio {
+        align-items: flex-start;
+    }
+
+    label.checkbox span,
+    label.radio span {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        min-width: 0;
+    }
+
+    /* Badges are often used for long-ish slugs/labels; don't force nowrap on mobile */
+    .badge {
+        white-space: normal;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
 }
 
 .app-tabs {

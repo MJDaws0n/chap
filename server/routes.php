@@ -10,11 +10,17 @@ Route::get('/', 'HomeController@index');
 Route::get('/docs', 'DocsController@index');
 Route::get('/docs/{file}', 'DocsController@file');
 Route::get('/login', 'AuthController@showLogin');
-Route::post('/login', 'AuthController@login');
+Route::middleware(['throttle.auth'], function() {
+    Route::post('/login', 'AuthController@login');
+    Route::post('/mfa', 'TwoFactorController@verifyChallenge');
+    Route::post('/register', 'AuthController@register');
+    Route::post('/forgot-password', 'AuthController@forgotPassword');
+    Route::post('/reset-password', 'AuthController@resetPassword');
+    // API login endpoint (public)
+    Route::post('/api/v1/auth/login', 'Api\AuthController@login');
+});
 Route::get('/mfa', 'TwoFactorController@showChallenge');
-Route::post('/mfa', 'TwoFactorController@verifyChallenge');
 Route::get('/register', 'AuthController@showRegister');
-Route::post('/register', 'AuthController@register');
 Route::post('/logout', 'AuthController@logout');
 
 // OAuth routes
@@ -23,9 +29,7 @@ Route::get('/auth/github/callback', 'AuthController@handleGitHubCallback');
 
 // Password reset
 Route::get('/forgot-password', 'AuthController@showForgotPassword');
-Route::post('/forgot-password', 'AuthController@forgotPassword');
 Route::get('/reset-password/{token}', 'AuthController@showResetPassword');
-Route::post('/reset-password', 'AuthController@resetPassword');
 
 // Team invitations (public landing)
 Route::get('/team-invites/{token}', 'TeamInviteController@show');
@@ -208,7 +212,7 @@ Route::middleware(['auth', 'admin'], function() {
 // API routes
 Route::prefix('/api/v1', function() {
     // Public API
-    Route::post('/auth/login', 'Api\AuthController@login');
+    // (moved above into throttle.auth group)
     
     // Protected API
     Route::middleware(['api.auth'], function() {
@@ -365,11 +369,13 @@ Route::prefix('/api/v2/platform', function() {
     });
 });
 
-// Webhook endpoints (public but signed)
-Route::post('/webhooks/github/{webhookUuid}', 'IncomingWebhookController@github');
-Route::post('/webhooks/gitlab/{applicationId}', 'WebhookController@gitlab');
-Route::post('/webhooks/bitbucket/{applicationId}', 'WebhookController@bitbucket');
-Route::post('/webhooks/custom/{applicationId}', 'WebhookController@custom');
+// Webhook endpoints (public but authenticated)
+Route::middleware(['throttle.webhooks'], function() {
+    Route::post('/webhooks/github/{webhookUuid}', 'IncomingWebhookController@github');
+    Route::post('/webhooks/gitlab/{webhookUuid}', 'IncomingWebhookController@gitlab');
+    Route::post('/webhooks/bitbucket/{webhookUuid}', 'IncomingWebhookController@bitbucket');
+    Route::post('/webhooks/custom/{webhookUuid}', 'IncomingWebhookController@custom');
+});
 
 // Incoming Webhook management (authenticated)
 Route::middleware(['auth'], function() {

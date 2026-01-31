@@ -54,7 +54,7 @@ $templates = $templates ?? [];
                     <?php foreach ($templates as $t): ?>
                         <tr>
                             <td class="font-medium text-primary"><?= e($t->name) ?></td>
-                            <td class="text-secondary"><?= e($t->slug) ?></td>
+                            <td class="text-secondary"><code class="break-all"><?= e($t->slug) ?></code></td>
                             <td class="text-secondary"><?= e($t->category ?? 'Other') ?></td>
                             <td class="text-secondary"><?= e($t->version ?? '-') ?></td>
                             <td>

@@ -174,9 +174,9 @@ try {
 echo YELLOW . "\n[Seeded Data Tests]\n" . RESET;
 
 try {
-    $users = $db->query("SELECT * FROM users WHERE email = ?", ['max@chap.dev'])->fetchAll();
+    $users = $db->query("SELECT * FROM users WHERE email = ?", ['admin@chap.dev'])->fetchAll();
     assert_not_empty($users, "Seeded user exists");
-    assert_equals('max@chap.dev', $users[0]['email'], "User email is correct");
+    assert_equals('admin@chap.dev', $users[0]['email'], "User email is correct");
     assert_equals('MJDawson', $users[0]['username'], "Username is correct");
     
     $teams = $db->query("SELECT * FROM teams")->fetchAll();
@@ -207,9 +207,9 @@ use Chap\Models\Template;
 
 try {
     // User model
-    $user = User::findByEmail('max@chap.dev');
+    $user = User::findByEmail('admin@chap.dev');
     assert_not_null($user, "User::findByEmail works");
-    assert_equals('max@chap.dev', $user->email, "User email property works");
+    assert_equals('admin@chap.dev', $user->email, "User email property works");
     
     // Password verification
     assert_true($user->verifyPassword('password'), "Password verification works for correct password");
@@ -318,19 +318,19 @@ $_SESSION = []; // Clear session
 
 try {
     // Failed login
-    $result = AuthManager::attempt('max@chap.dev', 'wrong_password');
+    $result = AuthManager::attempt('admin@chap.dev', 'wrong_password');
     assert_false($result, "Login fails with wrong password");
     assert_false(AuthManager::check(), "Not authenticated after failed login");
     
     // Successful login
-    $result = AuthManager::attempt('max@chap.dev', 'password');
+    $result = AuthManager::attempt('admin@chap.dev', 'password');
     assert_true($result, "Login succeeds with correct password");
     assert_true(AuthManager::check(), "Authenticated after successful login");
     
     // Get user
     $user = AuthManager::user();
     assert_not_null($user, "AuthManager::user returns user after login");
-    assert_equals('max@chap.dev', $user->email, "Logged in user has correct email");
+    assert_equals('admin@chap.dev', $user->email, "Logged in user has correct email");
     
     // Logout
     AuthManager::logout();

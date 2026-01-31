@@ -387,6 +387,20 @@ function validateExecCommand(command) {
         return { valid: false, error: 'Invalid command' };
     }
     
+    // Reject control chars and newlines.
+    for (const ch of command) {
+        const code = ch.charCodeAt(0);
+        if (code < 0x20 || code === 0x7f) {
+            return { valid: false, error: 'Command contains invalid characters' };
+        }
+    }
+
+    // Block shell metacharacters. Even if callers avoid shells, this prevents
+    // accidentally passing untrusted strings into shell execution.
+    if (/[|&;<>`$]/.test(command)) {
+        return { valid: false, error: 'Command contains blocked shell characters' };
+    }
+
     // Check against blocked patterns
     for (const pattern of SECURITY_CONFIG.blockedExecPatterns) {
         if (pattern.test(command)) {
@@ -400,6 +414,105 @@ function validateExecCommand(command) {
     }
     
     return { valid: true };
+}
+
+function tokenizeExecCommand(command) {
+    const s = String(command ?? '').trim();
+    if (!s) throw new Error('Empty command');
+    if (s.length > 1000) throw new Error('Command too long');
+
+    // Validate characters (printable ASCII only; no control chars).
+    for (const ch of s) {
+        const code = ch.charCodeAt(0);
+        if (code < 0x20 || code === 0x7f) {
+            throw new Error('Command contains invalid characters');
+        }
+    }
+
+    // No shell metacharacters.
+    if (/[|&;<>`$]/.test(s)) {
+        throw new Error('Command contains blocked characters');
+    }
+
+    const argv = [];
+    let cur = '';
+    let mode = 'none'; // none | single | double
+    let escaped = false;
+
+    const pushCur = () => {
+        if (cur.length) argv.push(cur);
+        cur = '';
+    };
+
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+
+        if (escaped) {
+            // Only allow escaping quotes, backslash, and space.
+            if (ch === '\\' || ch === '"' || ch === "'" || ch === ' ') {
+                cur += ch;
+                escaped = false;
+                continue;
+            }
+            throw new Error('Invalid escape sequence');
+        }
+
+        if (ch === '\\' && mode !== 'single') {
+            escaped = true;
+            continue;
+        }
+
+        if (mode === 'single') {
+            if (ch === "'") {
+                mode = 'none';
+            } else {
+                cur += ch;
+            }
+            continue;
+        }
+
+        if (mode === 'double') {
+            if (ch === '"') {
+                mode = 'none';
+            } else {
+                cur += ch;
+            }
+            continue;
+        }
+
+        if (ch === "'") {
+            mode = 'single';
+            continue;
+        }
+        if (ch === '"') {
+            mode = 'double';
+            continue;
+        }
+
+        if (/\s/.test(ch)) {
+            pushCur();
+            continue;
+        }
+
+        cur += ch;
+    }
+
+    if (escaped) throw new Error('Invalid escape sequence');
+    if (mode !== 'none') throw new Error('Unterminated quote');
+    pushCur();
+
+    if (argv.length === 0) throw new Error('Empty command');
+    if (argv.length > 32) throw new Error('Too many arguments');
+    for (const a of argv) {
+        if (a.length > 256) throw new Error('Argument too long');
+    }
+
+    const head = (argv[0] || '').toLowerCase();
+    if (['sh', 'bash', 'zsh', 'dash', 'ksh'].includes(head) && argv.includes('-c')) {
+        throw new Error('Shell execution is not allowed');
+    }
+
+    return argv;
 }
 
 /**
@@ -564,11 +677,11 @@ function validateImageName(imageName) {
  */
 async function ensureAppNetwork(execCommand) {
     try {
-        await execCommand(`docker network inspect ${SECURITY_CONFIG.defaultNetwork}`);
+        await execCommand(['docker', 'network', 'inspect', SECURITY_CONFIG.defaultNetwork]);
     } catch (err) {
         // Network doesn't exist, create it
         console.log(`[Security] Creating isolated network: ${SECURITY_CONFIG.defaultNetwork}`);
-        await execCommand(`docker network create --driver bridge --internal=false ${SECURITY_CONFIG.defaultNetwork}`);
+        await execCommand(['docker', 'network', 'create', '--driver', 'bridge', '--internal=false', SECURITY_CONFIG.defaultNetwork]);
     }
 }
 
@@ -587,6 +700,7 @@ module.exports = {
     sanitizeVolumes,
     sanitizePorts,
     validateExecCommand,
+    tokenizeExecCommand,
     sanitizeComposeFile,
     validateDockerfile,
     validateImageName,

@@ -40,36 +40,6 @@ $notifyWebhookUrl = array_key_exists('notify_webhook_url', $old)
 
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
     <div class="lg:col-span-2 flex flex-col gap-6">
-        <!-- General Settings -->
-        <div class="card">
-            <div class="card-header">
-                <div>
-                    <h2 class="card-title">General Settings</h2>
-                    <p class="text-secondary text-sm">Configure general application settings.</p>
-                </div>
-            </div>
-            <div class="card-body">
-                <form action="/settings" method="POST">
-                    <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-
-                    <div class="form-group">
-                        <label for="default_node" class="form-label">Default Node</label>
-                        <select name="default_node" id="default_node" class="select">
-                            <option value="">Select a default node...</option>
-                            <!-- Nodes would be populated here -->
-                        </select>
-                        <p class="form-hint">New applications will be deployed to this node by default.</p>
-                    </div>
-
-                    <?php if (!empty($canWriteSettings)): ?>
-                        <div class="flex items-center justify-end">
-                            <button type="submit" class="btn btn-primary">Save Settings</button>
-                        </div>
-                    <?php endif; ?>
-                </form>
-            </div>
-        </div>
-
         <!-- API Tokens -->
         <div class="card">
             <div class="card-header">

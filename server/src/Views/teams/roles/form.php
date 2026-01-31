@@ -31,14 +31,23 @@ $action = $isEdit ? "/teams/{$teamId}/roles/{$roleId}" : "/teams/{$teamId}/roles
                     <span class="breadcrumb-current"><?= $isEdit ? 'Edit' : 'Create' ?></span>
                 </nav>
 
-                <h1 class="page-header-title"><?= $isEdit ? 'Edit Role' : 'Create Role' ?></h1>
-                <p class="page-header-description">Choose the minimal permissions this role should grant.</p>
+                <div class="flex items-center gap-4 mt-4">
+                    <div class="icon-box icon-box-purple icon-box-lg">
+                        <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622C17.176 19.29 21 14.591 21 9c0-1.042-.133-2.052-.382-3.016z" />
+                        </svg>
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="page-header-title truncate"><?= $isEdit ? 'Edit Role' : 'Create Role' ?></h1>
+                        <p class="page-header-description truncate">Choose the minimal permissions this role should grant.</p>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
     <div class="w-full max-w-3xl">
-        <form action="<?= e($action) ?>" method="POST" class="card card-glass">
+        <form action="<?= e($action) ?>" method="POST" class="card">
             <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
             <?php if ($isEdit): ?>
                 <input type="hidden" name="_method" value="PUT">
@@ -69,7 +78,7 @@ $action = $isEdit ? "/teams/{$teamId}/roles/{$roleId}" : "/teams/{$teamId}/roles
                         <p class="form-hint">Level controls who can assign/manage this role (higher can manage lower).</p>
                     </div>
 
-                    <div class="mt-2" style="border-top: 1px solid var(--border-default); padding-top: var(--space-4);"></div>
+                    <div class="divider"></div>
 
                     <div>
                         <h3 class="text-sm font-semibold text-primary">Permissions</h3>
@@ -86,11 +95,11 @@ $action = $isEdit ? "/teams/{$teamId}/roles/{$roleId}" : "/teams/{$teamId}/roles
                             }
                             $p = $permissions[$key] ?? ['read' => false, 'write' => false, 'execute' => false];
                             ?>
-                            <div class="p-3" style="border: 1px solid var(--border-muted); border-radius: var(--radius-md);">
+                            <div class="border border-primary rounded-lg p-3 bg-tertiary">
                                 <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                                     <div class="min-w-0">
                                         <p class="text-sm font-semibold text-primary"><?= e($label) ?></p>
-                                        <p class="text-xs text-tertiary"><code class="code-inline"><?= e($key) ?></code></p>
+                                        <p class="text-xs text-tertiary"><code class="break-all"><?= e($key) ?></code></p>
                                     </div>
 
                                     <div class="flex flex-wrap items-center gap-3">
@@ -123,7 +132,7 @@ $action = $isEdit ? "/teams/{$teamId}/roles/{$roleId}" : "/teams/{$teamId}/roles
             </div>
 
             <div class="card-footer">
-                <div class="flex items-center justify-end gap-3">
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3">
                     <a href="/teams/<?= $teamId ?>/roles" class="btn btn-ghost">Cancel</a>
                     <button type="submit" class="btn btn-primary"><?= $isEdit ? 'Save Role' : 'Create Role' ?></button>
                 </div>
@@ -131,14 +140,3 @@ $action = $isEdit ? "/teams/{$teamId}/roles/{$roleId}" : "/teams/{$teamId}/roles
         </form>
     </div>
 </div>
-
-<style>
-.code-inline {
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    background-color: var(--bg-tertiary);
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-sm);
-    word-break: break-all;
-}
-</style>

@@ -31,8 +31,8 @@ $isDeploying = method_exists($application, 'isDeploying')
                     <div class="flex items-center gap-3 flex-wrap">
                         <!-- Container Dropdown -->
                         <div class="dropdown" id="container-dropdown">
-                            <button type="button" class="btn btn-secondary" id="container-select-btn" data-dropdown-trigger="container-dropdown-menu" data-dropdown-placement="bottom-start">
-                                <span id="selected-container-name">Select container...</span>
+                            <button type="button" class="btn btn-secondary w-full sm:w-auto min-w-0" id="container-select-btn" data-dropdown-trigger="container-dropdown-menu" data-dropdown-placement="bottom-start">
+                                <span class="break-all" id="selected-container-name">Select container...</span>
                                 <svg class="icon dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
                                 </svg>
@@ -88,7 +88,7 @@ $isDeploying = method_exists($application, 'isDeploying')
                             <div class="flex items-center gap-3">
                                 <input
                                     type="text"
-                                    class="input input-sm flex-1"
+                                    class="input input-sm flex-1 min-w-0"
                                     id="exec-input"
                                     placeholder="Send command to container console…"
                                     autocomplete="off"
@@ -280,6 +280,17 @@ $isDeploying = method_exists($application, 'isDeploying')
     column-gap: var(--space-4);
     padding: var(--space-1) 0;
     min-width: 0;
+}
+
+@media (max-width: 767px) {
+    .log-entry {
+        grid-template-columns: 1fr;
+        row-gap: var(--space-1);
+    }
+
+    .log-timestamp {
+        white-space: normal;
+    }
 }
 
 .log-timestamp {

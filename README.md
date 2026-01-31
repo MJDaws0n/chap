@@ -109,7 +109,7 @@ docker compose -f docker-compose.server.yml up -d
 Access the dashboard at `http://your-server:8080`
 
 Default login:
-- Email: `max@chap.dev`
+- Email: `admin@chap.dev`
 - Password: `password`
 
 **⚠️ Change the default password immediately!**
@@ -239,7 +239,6 @@ Chap supports TOTP-based MFA (Authenticator apps) for the dashboard.
 |----------|-------------|---------|
 | `NODE_ID` | Unique name for this node | (required) |
 | `NODE_TOKEN` | Auth token from dashboard | (required) |
-| `CHAP_NODE_ACCESS_TOKEN_SECRET` | Auth token for the node and server. Server's **MUST** match node's. | (required) |
 | `CHAP_SERVER_URL` | WebSocket URL to server | (required) |
 | `BROWSER_WS_HOST` | Bind address for the browser → node logs WebSocket | `0.0.0.0` |
 | `BROWSER_WS_PORT` | Port for the browser → node logs WebSocket | `6002` |

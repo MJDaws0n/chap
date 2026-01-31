@@ -14,9 +14,9 @@
         </div>
 
         <div class="page-header-actions mt-4" style="display:flex; gap: 12px; flex-wrap: wrap;">
-            <form method="GET" action="/admin/activity" class="flex items-center gap-3">
+            <form method="GET" action="/admin/activity" class="flex flex-col md:flex-row md:items-end gap-3 w-full">
                 <label class="text-sm text-secondary" for="user_id">User</label>
-                <div style="min-width: 260px;">
+                <div class="w-full md:w-auto" style="min-width: 0;">
                     <select class="select" id="user_id" name="user_id" data-search="true" data-search-placeholder="Search users...">
                         <option value="">All users</option>
                         <?php foreach (($users ?? []) as $u): ?>
@@ -26,8 +26,10 @@
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <button type="submit" class="btn btn-secondary">Filter</button>
-                <a href="/admin/activity" class="btn btn-ghost">Reset</a>
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <button type="submit" class="btn btn-secondary">Filter</button>
+                    <a href="/admin/activity" class="btn btn-ghost">Reset</a>
+                </div>
             </form>
         </div>
     </div>

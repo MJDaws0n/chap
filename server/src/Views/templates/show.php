@@ -238,7 +238,7 @@ if (is_array($portsMeta)) {
                     </div>
                 </div>
 
-                <div class="flex items-center justify-end gap-3">
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3">
                     <a href="/templates" class="btn btn-ghost">Cancel</a>
                     <button class="btn btn-primary" type="submit">Create Application</button>
                 </div>
@@ -296,6 +296,14 @@ if (is_array($portsMeta)) {
 .env-key {
     flex: 0 0 180px;
     min-width: 120px;
+}
+
+@media (max-width: 767px) {
+    .env-key {
+        flex: 1 1 auto;
+        min-width: 0;
+        width: 100%;
+    }
 }
 </style>
 

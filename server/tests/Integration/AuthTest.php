@@ -25,7 +25,7 @@ class AuthTest extends TestCase
      */
     public function testSuccessfulLogin(): void
     {
-        $result = AuthManager::attempt('max@chap.dev', 'password');
+        $result = AuthManager::attempt('admin@chap.dev', 'password');
         
         $this->assertTrue($result, 'Should login with correct credentials');
         $this->assertTrue(AuthManager::check(), 'Should be authenticated after login');
@@ -36,7 +36,7 @@ class AuthTest extends TestCase
      */
     public function testFailedLoginWrongPassword(): void
     {
-        $result = AuthManager::attempt('max@chap.dev', 'wrong_password');
+        $result = AuthManager::attempt('admin@chap.dev', 'wrong_password');
         
         $this->assertFalse($result, 'Should not login with wrong password');
         $this->assertFalse(AuthManager::check(), 'Should not be authenticated');
@@ -57,11 +57,11 @@ class AuthTest extends TestCase
      */
     public function testGetCurrentUser(): void
     {
-        AuthManager::attempt('max@chap.dev', 'password');
+        AuthManager::attempt('admin@chap.dev', 'password');
         
         $user = AuthManager::user();
         $this->assertNotNull($user);
-        $this->assertEquals('max@chap.dev', $user->email);
+        $this->assertEquals('admin@chap.dev', $user->email);
     }
     
     /**
@@ -69,7 +69,7 @@ class AuthTest extends TestCase
      */
     public function testLogout(): void
     {
-        AuthManager::attempt('max@chap.dev', 'password');
+        AuthManager::attempt('admin@chap.dev', 'password');
         $this->assertTrue(AuthManager::check());
         
         AuthManager::logout();
@@ -83,7 +83,7 @@ class AuthTest extends TestCase
      */
     public function testUserIdInSession(): void
     {
-        AuthManager::attempt('max@chap.dev', 'password');
+        AuthManager::attempt('admin@chap.dev', 'password');
         
         $this->assertArrayHasKey('user_id', $_SESSION);
         $this->assertIsInt($_SESSION['user_id']);

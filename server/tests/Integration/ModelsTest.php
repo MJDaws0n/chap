@@ -21,10 +21,10 @@ class ModelsTest extends TestCase
      */
     public function testUserFindByEmail(): void
     {
-        $user = User::findByEmail('max@chap.dev');
+        $user = User::findByEmail('admin@chap.dev');
         
         $this->assertNotNull($user, 'Should find seeded user');
-        $this->assertEquals('max@chap.dev', $user->email);
+        $this->assertEquals('admin@chap.dev', $user->email);
         $this->assertEquals('MJDawson', $user->username);
     }
     
@@ -33,7 +33,7 @@ class ModelsTest extends TestCase
      */
     public function testUserFindByUuid(): void
     {
-        $user = User::findByEmail('max@chap.dev');
+        $user = User::findByEmail('admin@chap.dev');
         $this->assertNotNull($user);
         
         $foundByUuid = User::findByUuid($user->uuid);
@@ -46,7 +46,7 @@ class ModelsTest extends TestCase
      */
     public function testUserPasswordVerification(): void
     {
-        $user = User::findByEmail('max@chap.dev');
+        $user = User::findByEmail('admin@chap.dev');
         $this->assertNotNull($user);
         
         // Default password is 'password'
@@ -59,7 +59,7 @@ class ModelsTest extends TestCase
      */
     public function testUserToArrayExcludesSensitive(): void
     {
-        $user = User::findByEmail('max@chap.dev');
+        $user = User::findByEmail('admin@chap.dev');
         $array = $user->toArray();
         
         $this->assertArrayNotHasKey('password_hash', $array, 'Should not expose password hash');

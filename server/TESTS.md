@@ -38,7 +38,7 @@ Validates that all required tables and columns exist:
 
 ### 3. Seeded Data Tests (8 tests)
 Verifies that the seed script creates:
-- Default admin user (`max@chap.dev` / `MJDawson`)
+- Default admin user (`admin@chap.dev` / `MJDawson`)
 - At least one team
 - At least 5 official templates (Nginx, MySQL, PostgreSQL, etc.)
 

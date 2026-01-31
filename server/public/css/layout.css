@@ -201,6 +201,15 @@
     }
 }
 
+/* Mobile overflow hardening: prevent stray elements from widening the page.
+   Tables should still scroll inside .table-container. */
+@media (max-width: 767px) {
+    html,
+    body {
+        overflow-x: hidden;
+    }
+}
+
 /* ===== Header ===== */
 .header {
     position: sticky;
@@ -362,6 +371,14 @@
     align-items: center;
     gap: var(--space-3);
     flex-shrink: 0;
+}
+
+@media (max-width: 767px) {
+    .page-header-actions {
+        width: 100%;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
 }
 
 /* ===== Grid System ===== */

@@ -198,13 +198,22 @@ $appNotifyMode = array_key_exists('notify_app_deployments_mode', $old)
                 </div>
                 <div class="card-body">
                     <p class="text-sm text-secondary">
-                        Create a GitHub webhook that auto-deploys this application on push.
+                        Create an incoming webhook that auto-deploys this application on push.
                         GitHub should be configured to send <code>application/json</code> (recommended), but <code>application/x-www-form-urlencoded</code> is also supported.
                     </p>
 
                     <form method="POST" action="/applications/<?= e($application->uuid) ?>/incoming-webhooks" class="mt-4">
                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                        <div class="grid grid-cols-1 md:grid-cols-3">
+                        <div class="grid grid-cols-1 md:grid-cols-4">
+                            <div class="form-group">
+                                <label class="form-label" for="ih-provider">Provider</label>
+                                <select class="select" name="provider" id="ih-provider">
+                                    <option value="github">GitHub</option>
+                                    <option value="gitlab">GitLab</option>
+                                    <option value="bitbucket">Bitbucket</option>
+                                    <option value="custom">Custom</option>
+                                </select>
+                            </div>
                             <div class="form-group">
                                 <label class="form-label" for="ih-name">Name</label>
                                 <input type="text" name="name" id="ih-name" value="GitHub" class="input">
@@ -240,7 +249,7 @@ $appNotifyMode = array_key_exists('notify_app_deployments_mode', $old)
                                 <tbody>
                                     <?php foreach ($incomingWebhooks as $wh): ?>
                                         <?php
-                                            $endpointUrl = url('/webhooks/github/' . $wh->uuid);
+                                            $endpointUrl = url('/webhooks/' . $wh->provider . '/' . $wh->uuid);
                                             $revealed = ($incomingWebhookReveals[$wh->uuid] ?? null);
                                             $branchLabel = $wh->branch ? $wh->branch : ($application->git_branch ?: '-');
                                             $last = $wh->last_received_at ? time_ago($wh->last_received_at) : 'Never';
@@ -278,7 +287,7 @@ $appNotifyMode = array_key_exists('notify_app_deployments_mode', $old)
                                                 <?php endif; ?>
                                             </td>
                                             <td class="text-right">
-                                                <div class="flex items-center justify-end gap-2 whitespace-nowrap">
+                                                <div class="flex items-center justify-end gap-2 flex-wrap sm:flex-nowrap">
                                                     <form method="POST" action="/incoming-webhooks/<?= e($wh->uuid) ?>/rotate" class="inline-block">
                                                         <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
                                                         <button type="submit" class="btn btn-secondary btn-sm">Rotate Secret</button>
@@ -515,9 +524,11 @@ $appNotifyMode = array_key_exists('notify_app_deployments_mode', $old)
     min-width: 120px;
 }
 
-@media (max-width: 639px) {
+@media (max-width: 767px) {
     .env-key {
-        flex-basis: 45%;
+        flex: 1 1 auto;
+        min-width: 0;
+        width: 100%;
     }
 }
 </style>

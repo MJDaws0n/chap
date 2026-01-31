@@ -61,8 +61,8 @@ if (is_string($volumeLabel) && strlen($volumeLabel) > 5) {
                             <button type="button" class="btn btn-ghost btn-sm hidden" id="fm-transfer-cancel">Cancel</button>
                         </div>
 
-                        <span class="text-sm text-secondary" id="fm-root">Root: /</span>
-                        <span class="text-sm text-secondary" id="fm-volume" title="<?= e($volumeFullName) ?>">Volume: <?= e($volumeLabel) ?></span>
+                        <span class="text-sm text-secondary break-all" id="fm-root">Root: /</span>
+                        <span class="text-sm text-secondary break-all" id="fm-volume" title="<?= e($volumeFullName) ?>">Volume: <?= e($volumeLabel) ?></span>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">
                         <input type="file" id="fm-upload-input" class="hidden" multiple>

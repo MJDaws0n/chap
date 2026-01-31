@@ -5,7 +5,7 @@
  */
 
 const WebSocket = require('ws');
-const { spawn, exec } = require('child_process');
+const { spawn } = require('child_process');
 const http = require('http');
 const os = require('os');
 const fs = require('fs');
@@ -126,14 +126,20 @@ async function gitClone({ repoUrl, branch, destDir, authToken }) {
 
     if (authToken) {
         const { header, redactions } = gitAuthExtraHeaderFromToken(authToken);
-        await execCommand(
-            `git -c http.extraHeader=\"${header}\" clone --branch ${branch} ${safeRepoUrl} ${destDir}`,
-            { redact: redactions }
-        );
+        await execCommand([
+            'git',
+            '-c',
+            `http.extraHeader=${header}`,
+            'clone',
+            '--branch',
+            String(branch || ''),
+            safeRepoUrl,
+            destDir,
+        ], { redact: redactions });
         return;
     }
 
-    await execCommand(`git clone --branch ${branch} ${safeRepoUrl} ${destDir}`);
+    await execCommand(['git', 'clone', '--branch', String(branch || ''), safeRepoUrl, destDir]);
 }
 
 async function gitUpdate({ repoDir, repoUrl, branch, authToken }) {
@@ -143,31 +149,31 @@ async function gitUpdate({ repoDir, repoUrl, branch, authToken }) {
         const safeRepoUrl = normalizeGitUrlForHttp(repoUrl);
         const { header, redactions } = gitAuthExtraHeaderFromToken(authToken);
 
-        await execCommand(`git -c http.extraHeader=\"${header}\" fetch ${safeRepoUrl} ${branch}`, {
+        await execCommand(['git', '-c', `http.extraHeader=${header}`, 'fetch', safeRepoUrl, String(branch || '')], {
             cwd: repoDir,
             redact: redactions,
         });
 
         try {
-            await execCommand(`git checkout ${branch}`, { cwd: repoDir, redact: redactions });
+            await execCommand(['git', 'checkout', String(branch || '')], { cwd: repoDir, redact: redactions });
         } catch {
-            await execCommand(`git checkout -B ${branch}`, { cwd: repoDir, redact: redactions });
+            await execCommand(['git', 'checkout', '-B', String(branch || '')], { cwd: repoDir, redact: redactions });
         }
 
-        await execCommand(`git -c http.extraHeader=\"${header}\" pull ${safeRepoUrl} ${branch}`, {
+        await execCommand(['git', '-c', `http.extraHeader=${header}`, 'pull', safeRepoUrl, String(branch || '')], {
             cwd: repoDir,
             redact: redactions,
         });
         return;
     }
 
-    await execCommand(`git fetch origin`, { cwd: repoDir });
+    await execCommand(['git', 'fetch', 'origin'], { cwd: repoDir });
     try {
-        await execCommand(`git checkout ${branch}`, { cwd: repoDir });
+        await execCommand(['git', 'checkout', String(branch || '')], { cwd: repoDir });
     } catch {
-        await execCommand(`git checkout -B ${branch}`, { cwd: repoDir });
+        await execCommand(['git', 'checkout', '-B', String(branch || '')], { cwd: repoDir });
     }
-    await execCommand(`git pull origin ${branch}`, { cwd: repoDir });
+    await execCommand(['git', 'pull', 'origin', String(branch || '')], { cwd: repoDir });
 }
 
 async function gitCloneOrUpdateWithAuthAttempts({ deploymentId, repoDir, repoUrl, branch, attempts, sendLogFn }) {
@@ -201,7 +207,7 @@ async function gitCloneOrUpdateWithAuthAttempts({ deploymentId, repoDir, repoUrl
             sendLogFn?.(deploymentId, `🔐 Trying git auth: ${label}`, 'info');
 
             // Always start from a clean slate for each attempt.
-            await execCommand(`rm -rf ${repoDir}`);
+            try { fs.rmSync(repoDir, { recursive: true, force: true }); } catch {}
             await gitClone({ repoUrl, branch, destDir: repoDir, authToken: token });
             return { usedAuth: true, label };
         } catch {
@@ -337,7 +343,7 @@ function startAppEnforcer(applicationId, appConfig, composeDir) {
         state.lastBelowAt = 0;
         console.warn(`[Enforcer] Pausing app ${key}: ${reason}`);
         for (const id of containerIds) {
-            try { await execCommand(`docker pause ${dockerSafeName(id)}`, { timeout: 10000 }); } catch {}
+            try { await execCommand(['docker', 'pause', dockerSafeName(id)], { timeout: 10000 }); } catch {}
         }
     };
 
@@ -346,7 +352,7 @@ function startAppEnforcer(applicationId, appConfig, composeDir) {
         if (!state.paused) return;
         console.log(`[Enforcer] Unpausing app ${key}: ${reason}`);
         for (const id of containerIds) {
-            try { await execCommand(`docker unpause ${dockerSafeName(id)}`, { timeout: 10000 }); } catch {}
+            try { await execCommand(['docker', 'unpause', dockerSafeName(id)], { timeout: 10000 }); } catch {}
         }
         state.paused = false;
         state.lastBelowAt = 0;
@@ -354,10 +360,7 @@ function startAppEnforcer(applicationId, appConfig, composeDir) {
 
     const getProjectContainerIds = async () => {
         try {
-            const out = await execCommand(
-                `docker ps -q --filter "label=com.docker.compose.project=${composeProject}"`,
-                { timeout: 8000 }
-            );
+            const out = await execCommand(['docker', 'ps', '-q', '--filter', `label=com.docker.compose.project=${composeProject}`], { timeout: 8000 });
             return String(out || '').split('\n').map(s => s.trim()).filter(Boolean);
         } catch {
             return [];
@@ -374,7 +377,7 @@ function startAppEnforcer(applicationId, appConfig, composeDir) {
             state.lastStorageCheckAt = now;
             try {
                 // BusyBox du output: <KB> <path>
-                const duOut = await execCommand(`du -sk ${volumeRoot}`, { timeout: 15000 });
+                const duOut = await execCommand(['du', '-sk', volumeRoot], { timeout: 15000 });
                 const kb = parseInt(String(duOut || '').trim().split(/\s+/)[0], 10);
                 if (Number.isFinite(kb) && kb >= 0) {
                     const usedMb = Math.ceil(kb / 1024);
@@ -725,7 +728,7 @@ async function handlePortCheck(message) {
         try {
             // This tests OS-level port availability by asking Docker to bind the host port.
             // If the port is already in use (by any process), Docker will fail to start.
-            await execCommand(`docker run --rm -p ${port}:1 ${image} node -e "process.exit(0)"`, { timeout: 15000 });
+            await execCommand(['docker', 'run', '--rm', '-p', `${port}:1`, String(image), 'node', '-e', 'process.exit(0)'], { timeout: 15000 });
             free = true;
             lastError = null;
             break;
@@ -985,8 +988,14 @@ async function deployCompose(deploymentId, appConfig) {
         // Copy repository files to compose directory
         console.log(`[Agent] 📋 Copying files to compose directory`);
         sendLog(deploymentId, '📋 Preparing compose environment...', 'info');
-        await execCommand(`rm -rf ${composeDir}/*`);
-        await execCommand(`cp -r ${repoDir}/. ${composeDir}/`);
+        try {
+            for (const name of fs.readdirSync(composeDir)) {
+                const p = path.join(composeDir, name);
+                try { fs.rmSync(p, { recursive: true, force: true }); } catch {}
+            }
+        } catch {}
+
+        fs.cpSync(repoDir, composeDir, { recursive: true, force: true });
         console.log(`[Agent] ✓ Files copied to compose directory`);
     }
     
@@ -1375,7 +1384,7 @@ async function deployCompose(deploymentId, appConfig) {
     try {
         let resolvedCompose = '';
         try {
-            resolvedCompose = await execCommand('docker compose --env-file .env config', { cwd: composeDir });
+            resolvedCompose = await execCommand(['docker', 'compose', '--env-file', '.env', 'config'], { cwd: composeDir });
         } catch {
             // Fall back to raw file if compose config is unavailable.
             resolvedCompose = fs.readFileSync(path.join(composeDir, 'docker-compose.yml'), 'utf8');
@@ -1397,7 +1406,7 @@ async function deployCompose(deploymentId, appConfig) {
     try {
         console.log(`[Agent] 🛑 Stopping existing services...`);
         const safeAppId = String(applicationId).trim();
-        await execCommand(`docker compose -p chap-${safeAppId} down`, { cwd: composeDir });
+        await execCommand(['docker', 'compose', '-p', `chap-${safeAppId}`, 'down'], { cwd: composeDir });
     } catch (err) {
         // Ignore if nothing to stop
     }
@@ -1410,7 +1419,7 @@ async function deployCompose(deploymentId, appConfig) {
         const safeAppId = String(applicationId).trim();
         // NOTE: Without --compatibility, docker compose ignores deploy.resources limits (non-swarm).
         // Chap uses deploy.resources.limits for CPU/memory; --compatibility translates them into container runtime flags.
-        const composeOutput = await execCommand(`docker compose --compatibility -p chap-${safeAppId} up -d --build`, { cwd: composeDir });
+        const composeOutput = await execCommand(['docker', 'compose', '--compatibility', '-p', `chap-${safeAppId}`, 'up', '-d', '--build'], { cwd: composeDir });
         console.log(`[Agent] ✓ Docker Compose services started`);
         sendLog(deploymentId, '✓ Docker Compose services started', 'info');
     } catch (err) {
@@ -1424,7 +1433,7 @@ async function deployCompose(deploymentId, appConfig) {
     
     // Get the list of started containers
     try {
-        const psOutput = await execCommand(`docker compose -p chap-${safeId(applicationId)} ps --format json`, { cwd: composeDir });
+        const psOutput = await execCommand(['docker', 'compose', '-p', `chap-${safeId(applicationId)}`, 'ps', '--format', 'json'], { cwd: composeDir });
         const containers = psOutput.trim().split('\n').filter(Boolean).map(line => {
             try {
                 return JSON.parse(line);
@@ -1480,7 +1489,7 @@ async function isContainerRunning(containerNameOrId) {
 
     try {
         // Exact-name match for containers we manage.
-        const out = await execCommand(`docker ps --filter "name=^/${name}$" --format "{{.ID}}"`, { timeout: 5000 });
+        const out = await execCommand(['docker', 'ps', '--filter', `name=^/${name}$`, '--format', '{{.ID}}'], { timeout: 5000 });
         if (String(out || '').trim()) return true;
     } catch (err) {
         // ignore
@@ -1488,7 +1497,7 @@ async function isContainerRunning(containerNameOrId) {
 
     // Fallback: treat as ID and inspect
     try {
-        const running = await execCommand(`docker inspect -f "{{.State.Running}}" ${name}`, { timeout: 5000 });
+        const running = await execCommand(['docker', 'inspect', '-f', '{{.State.Running}}', name], { timeout: 5000 });
         return String(running || '').trim() === 'true';
     } catch (err) {
         return false;
@@ -1565,7 +1574,7 @@ async function handleApplicationDelete(message) {
         if (composeProject) {
             if (fs.existsSync(composeFilePath)) {
                 try {
-                    await execCommand(`docker compose -p ${dockerSafeName(composeProject)} down -v`, { cwd: composeDirPath, timeout: 60000 });
+                    await execCommand(['docker', 'compose', '-p', dockerSafeName(composeProject), 'down', '-v'], { cwd: composeDirPath, timeout: 60000 });
                     console.log(`[Agent] ✓ docker compose down -v (${composeProject})`);
                 } catch (err) {
                     console.warn(`[Agent] ⚠️  docker compose down failed (${composeProject}): ${err.message}`);
@@ -1575,10 +1584,10 @@ async function handleApplicationDelete(message) {
             // Fallback cleanup by compose project label (works even if compose files are gone).
             // Remove containers
             try {
-                const ids = (await execCommand(`docker ps -aq --filter "label=com.docker.compose.project=${dockerSafeName(composeProject)}"`, { timeout: 15000 }))
+                const ids = (await execCommand(['docker', 'ps', '-aq', '--filter', `label=com.docker.compose.project=${dockerSafeName(composeProject)}`], { timeout: 15000 }))
                     .split('\n').map(s => s.trim()).filter(Boolean);
                 for (const cid of ids) {
-                    try { await execCommand(`docker rm -f ${dockerSafeName(cid)}`, { timeout: 15000 }); } catch {}
+                    try { await execCommand(['docker', 'rm', '-f', dockerSafeName(cid)], { timeout: 15000 }); } catch {}
                 }
                 if (ids.length) console.log(`[Agent] ✓ Removed ${ids.length} container(s) for ${composeProject}`);
             } catch (err) {
@@ -1587,10 +1596,10 @@ async function handleApplicationDelete(message) {
 
             // Remove volumes
             try {
-                const vols = (await execCommand(`docker volume ls -q --filter "label=com.docker.compose.project=${dockerSafeName(composeProject)}"`, { timeout: 15000 }))
+                const vols = (await execCommand(['docker', 'volume', 'ls', '-q', '--filter', `label=com.docker.compose.project=${dockerSafeName(composeProject)}`], { timeout: 15000 }))
                     .split('\n').map(s => s.trim()).filter(Boolean);
                 for (const v of vols) {
-                    try { await execCommand(`docker volume rm -f ${dockerSafeName(v)}`, { timeout: 15000 }); } catch {}
+                    try { await execCommand(['docker', 'volume', 'rm', '-f', dockerSafeName(v)], { timeout: 15000 }); } catch {}
                 }
                 if (vols.length) console.log(`[Agent] ✓ Removed ${vols.length} volume(s) for ${composeProject}`);
             } catch (err) {
@@ -1599,10 +1608,10 @@ async function handleApplicationDelete(message) {
 
             // Remove networks
             try {
-                const nets = (await execCommand(`docker network ls -q --filter "label=com.docker.compose.project=${dockerSafeName(composeProject)}"`, { timeout: 15000 }))
+                const nets = (await execCommand(['docker', 'network', 'ls', '-q', '--filter', `label=com.docker.compose.project=${dockerSafeName(composeProject)}`], { timeout: 15000 }))
                     .split('\n').map(s => s.trim()).filter(Boolean);
                 for (const n of nets) {
-                    try { await execCommand(`docker network rm ${dockerSafeName(n)}`, { timeout: 15000 }); } catch {}
+                    try { await execCommand(['docker', 'network', 'rm', dockerSafeName(n)], { timeout: 15000 }); } catch {}
                 }
                 if (nets.length) console.log(`[Agent] ✓ Removed ${nets.length} network(s) for ${composeProject}`);
             } catch (err) {
@@ -1676,10 +1685,10 @@ async function handleStop(message) {
         console.log(`[Agent] Stopping compose services...`);
         const safeAppId = String(applicationUuid).trim();
         try {
-            await execCommand(`docker compose -p chap-${safeAppId} stop --timeout 30`, { cwd: composeDir, timeout: 35000 });
+            await execCommand(['docker', 'compose', '-p', `chap-${safeAppId}`, 'stop', '--timeout', '30'], { cwd: composeDir, timeout: 35000 });
         } catch (err) {
             // If stop hangs or fails, force kill.
-            try { await execCommand(`docker compose -p chap-${safeAppId} kill`, { cwd: composeDir, timeout: 15000 }); } catch (e) {}
+            try { await execCommand(['docker', 'compose', '-p', `chap-${safeAppId}`, 'kill'], { cwd: composeDir, timeout: 15000 }); } catch (e) {}
         }
         console.log(`[Agent] ✓ Compose services stopped`);
         
@@ -1731,7 +1740,7 @@ async function handleRestart(message) {
         // Restart compose services
         console.log(`[Agent] Restarting compose services...`);
         const safeAppId = String(applicationUuid).trim();
-        await execCommand(`docker compose -p chap-${safeAppId} restart`, { cwd: composeDir });
+        await execCommand(['docker', 'compose', '-p', `chap-${safeAppId}`, 'restart'], { cwd: composeDir });
         console.log(`[Agent] ✓ Compose services restarted`);
         
         send('restarted', { 
@@ -1760,7 +1769,7 @@ async function handleExec(message) {
     const { applicationId, containerId, command } = message;
     const containerName = containerId || `chap-${safeId(applicationId)}`;
     
-    // Security: Validate command
+    // Security: Validate command and tokenize it for argv execution.
     const validation = security.validateExecCommand(command);
     if (!validation.valid) {
         console.warn(`[Agent] 🔒 Exec blocked: ${validation.error}`);
@@ -1768,12 +1777,23 @@ async function handleExec(message) {
         send('execResult', { applicationId, error: `Security: ${validation.error}` });
         return;
     }
+
+    let argv;
+    try {
+        argv = security.tokenizeExecCommand(command);
+    } catch (e) {
+        const msg = String(e && e.message ? e.message : e);
+        console.warn(`[Agent] 🔒 Exec blocked: ${msg}`);
+        security.auditLog('exec_blocked', { applicationId, command, reason: msg });
+        send('execResult', { applicationId, error: `Security: ${msg}` });
+        return;
+    }
     
     security.auditLog('exec_command', { applicationId, containerName, command });
     
     try {
         // Security: Run exec with timeout and no tty to prevent escape
-        const output = await execCommand(`docker exec --no-tty ${containerName} ${command}`, { timeout: 30000 });
+        const output = await execCommand(['docker', 'exec', '--no-tty', dockerSafeName(containerName), ...argv], { timeout: 30000 });
         send('execResult', { applicationId, output });
     } catch (err) {
         send('execResult', { applicationId, error: err.message });
@@ -1845,7 +1865,15 @@ async function sendStatus() {
         };
 
         // Get container list (only Chap-managed containers)
-        const containersRaw = await execCommand('docker ps -a --filter "label=chap.managed=true" --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}|{{.Labels}}"');
+        const containersRaw = await execCommand([
+            'docker',
+            'ps',
+            '-a',
+            '--filter',
+            'label=chap.managed=true',
+            '--format',
+            '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}|{{.Labels}}',
+        ]);
         const containers = containersRaw.trim().split('\n').filter(Boolean).map(line => {
             const [id, dockerName, image, status, ports, labelsRaw] = line.split('|');
             const labels = parseLabels(labelsRaw);
@@ -1886,18 +1914,50 @@ async function sendStatus() {
 }
 
 /**
- * Execute shell command
+ * Execute a command without invoking a shell.
+ *
+ * IMPORTANT: Always pass argv arrays. This prevents command injection when
+ * untrusted values (repo URLs, branches, paths, etc.) are involved.
  */
-function execCommand(command, options = {}) {
+function execCommand(argv, options = {}) {
+    if (!Array.isArray(argv) || argv.length === 0) {
+        return Promise.reject(new Error('execCommand expects argv array'));
+    }
+
+    const { redact, timeout, cwd, env } = options || {};
+    const timeoutMs = Number.isFinite(timeout) ? Number(timeout) : 0;
+
     return new Promise((resolve, reject) => {
-        const { redact, ...execOptions } = options || {};
-        exec(command, execOptions, (error, stdout, stderr) => {
-            if (error) {
-                const msg = redactSecrets(stderr || error.message, redact || []);
-                reject(new Error(String(msg || 'Command failed').trim()));
-            } else {
-                resolve(stdout);
-            }
+        const proc = spawn(String(argv[0]), argv.slice(1).map((x) => String(x)), {
+            cwd: cwd || undefined,
+            env: env || process.env,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+
+        let stdout = '';
+        let stderr = '';
+        let killed = false;
+
+        let t = null;
+        if (timeoutMs > 0) {
+            t = setTimeout(() => {
+                killed = true;
+                try { proc.kill('SIGTERM'); } catch {}
+                setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 1000);
+            }, timeoutMs);
+        }
+
+        proc.stdout.on('data', (b) => { stdout += b.toString('utf8'); });
+        proc.stderr.on('data', (b) => { stderr += b.toString('utf8'); });
+        proc.on('error', (err) => {
+            if (t) clearTimeout(t);
+            reject(err);
+        });
+        proc.on('close', (code) => {
+            if (t) clearTimeout(t);
+            if (code === 0 && !killed) return resolve(stdout);
+            const msg = killed ? 'Command timed out' : (stderr || stdout || `Command exited ${code}`);
+            reject(new Error(String(redactSecrets(msg, redact || [])).trim()));
         });
     });
 }
@@ -2003,7 +2063,10 @@ async function composeProjectHasContainers(projectName) {
     const proj = dockerSafeName(projectName);
     if (!proj) return false;
     try {
-        const out = await execCommand(`docker ps -aq --filter "label=com.docker.compose.project=${proj}"`, { timeout: 15000 });
+        const out = await execCommand(
+            ['docker', 'ps', '-aq', '--filter', `label=com.docker.compose.project=${proj}`],
+            { timeout: 15000 }
+        );
         return out.split('\n').map(s => s.trim()).filter(Boolean).length > 0;
     } catch {
         return false;
@@ -2014,38 +2077,38 @@ async function cleanupDockerByComposeProject(projectName, dryRun = false) {
     const proj = dockerSafeName(projectName);
     if (!proj) return;
 
-    const run = async (cmd) => {
+    const run = async (argv) => {
         if (dryRun) {
-            console.log(`[Sweeper] DRY RUN ${cmd}`);
+            console.log(`[Sweeper] DRY RUN ${Array.isArray(argv) ? argv.join(' ') : String(argv)}`);
             return '';
         }
-        return execCommand(cmd, { timeout: 20000 });
+        return execCommand(argv, { timeout: 20000 });
     };
 
     // Containers
     try {
-        const ids = (await execCommand(`docker ps -aq --filter "label=com.docker.compose.project=${proj}"`, { timeout: 15000 }))
+        const ids = (await execCommand(['docker', 'ps', '-aq', '--filter', `label=com.docker.compose.project=${proj}`], { timeout: 15000 }))
             .split('\n').map(s => s.trim()).filter(Boolean);
         for (const cid of ids) {
-            try { await run(`docker rm -f ${dockerSafeName(cid)}`); } catch {}
+            try { await run(['docker', 'rm', '-f', dockerSafeName(cid)]); } catch {}
         }
     } catch {}
 
     // Volumes
     try {
-        const vols = (await execCommand(`docker volume ls -q --filter "label=com.docker.compose.project=${proj}"`, { timeout: 15000 }))
+        const vols = (await execCommand(['docker', 'volume', 'ls', '-q', '--filter', `label=com.docker.compose.project=${proj}`], { timeout: 15000 }))
             .split('\n').map(s => s.trim()).filter(Boolean);
         for (const v of vols) {
-            try { await run(`docker volume rm -f ${dockerSafeName(v)}`); } catch {}
+            try { await run(['docker', 'volume', 'rm', '-f', dockerSafeName(v)]); } catch {}
         }
     } catch {}
 
     // Networks
     try {
-        const nets = (await execCommand(`docker network ls -q --filter "label=com.docker.compose.project=${proj}"`, { timeout: 15000 }))
+        const nets = (await execCommand(['docker', 'network', 'ls', '-q', '--filter', `label=com.docker.compose.project=${proj}`], { timeout: 15000 }))
             .split('\n').map(s => s.trim()).filter(Boolean);
         for (const n of nets) {
-            try { await run(`docker network rm ${dockerSafeName(n)}`); } catch {}
+            try { await run(['docker', 'network', 'rm', dockerSafeName(n)]); } catch {}
         }
     } catch {}
 }

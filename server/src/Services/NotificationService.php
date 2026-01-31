@@ -10,6 +10,7 @@ use Chap\Models\Node;
 use Chap\Models\Team;
 use Chap\Models\User;
 use Chap\Services\Mailer;
+use Chap\Security\OutboundUrlValidator;
 
 class NotificationService
 {
@@ -560,7 +561,7 @@ class NotificationService
         $webhook = $channels['webhook'] ?? [];
         $webhookEnabled = (bool)($webhook['enabled'] ?? false);
         $webhookUrl = trim((string)($webhook['url'] ?? ''));
-        if ($webhookEnabled && $webhookUrl !== '' && self::isValidWebhookUrl($webhookUrl)) {
+        if ($webhookEnabled && $webhookUrl !== '' && OutboundUrlValidator::validateWebhookUrl($webhookUrl)['valid'] ?? false) {
             self::sendWebhook($webhookUrl, $payload, $event);
         }
     }
@@ -635,9 +636,15 @@ class NotificationService
 
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        // Prevent SSRF via redirects.
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 0);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+        curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
             'User-Agent: Chap-Webhook/1.0',
@@ -678,10 +685,6 @@ class NotificationService
 
     private static function isValidWebhookUrl(string $url): bool
     {
-        if (!filter_var($url, FILTER_VALIDATE_URL)) {
-            return false;
-        }
-        $scheme = parse_url($url, PHP_URL_SCHEME);
-        return in_array($scheme, ['http', 'https'], true);
+        return OutboundUrlValidator::validateWebhookUrl($url)['valid'] ?? false;
     }
 }

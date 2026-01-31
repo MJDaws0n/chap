@@ -179,7 +179,7 @@ docker compose exec chap-server php bin/migrate.php
 docker compose exec chap-server php bin/seed.php
 
 # Access at http://localhost:8080
-# Default login: max@chap.dev / password
+# Default login: admin@chap.dev / password
 ```
 
 ### Adding a Node

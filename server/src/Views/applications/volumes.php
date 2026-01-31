@@ -33,8 +33,8 @@ $wsUrl = $browserWebsocketUrl ?? '';
                 <div class="flex items-center justify-between gap-4 flex-wrap">
                     <div class="flex items-center gap-3 flex-wrap">
                         <span class="badge badge-default" id="vm-status">Connecting…</span>
-                        <span class="text-sm text-secondary" id="vm-summary"></span>
-                        <span class="text-sm text-secondary" id="vm-progress"></span>
+                        <span class="text-sm text-secondary break-all" id="vm-summary"></span>
+                        <span class="text-sm text-secondary break-all" id="vm-progress"></span>
                         <button type="button" class="btn btn-ghost btn-sm hidden" id="vm-cancel">Cancel</button>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">

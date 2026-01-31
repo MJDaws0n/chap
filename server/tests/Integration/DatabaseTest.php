@@ -214,10 +214,10 @@ class DatabaseTest extends TestCase
         $db = $this->getDb();
         
         // Create a test record (will use existing seeded data check)
-        $users = $db->query("SELECT * FROM users WHERE email = ?", ['max@chap.dev']);
+        $users = $db->query("SELECT * FROM users WHERE email = ?", ['admin@chap.dev']);
         
         $this->assertNotEmpty($users, 'Seeded user should exist');
-        $this->assertEquals('max@chap.dev', $users[0]['email']);
+        $this->assertEquals('admin@chap.dev', $users[0]['email']);
     }
     
     /**

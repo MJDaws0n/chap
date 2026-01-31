@@ -39,7 +39,7 @@ try {
     
     $userId = $db->insert('users', [
         'uuid' => $uuid,
-        'email' => 'max@chap.dev',
+        'email' => 'admin@chap.dev',
         'username' => 'MJDawson',
         'password_hash' => $passwordHash,
         'name' => 'Max',
@@ -47,7 +47,7 @@ try {
         'email_verified_at' => date('Y-m-d H:i:s'),
     ]);
     
-    echo "Created user: MJDawson (email: max@chap.dev)\n";
+    echo "Created user: MJDawson (email: admin@chap.dev)\n";
     echo "Default password: password\n\n";
     
     // Create personal team

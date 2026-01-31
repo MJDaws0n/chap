@@ -65,11 +65,11 @@
         </div>
 
         <?php if (!empty($pagination) && ($pagination['last_page'] ?? 1) > 1): ?>
-            <div class="card-body flex items-center justify-between">
+            <div class="card-body flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div class="text-sm text-secondary">
                     Page <?= (int)($pagination['page'] ?? 1) ?> of <?= (int)($pagination['last_page'] ?? 1) ?>
                 </div>
-                <div class="flex gap-2">
+                <div class="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                     <?php $page = (int)($pagination['page'] ?? 1); ?>
                     <?php if ($page > 1): ?>
                         <a class="btn btn-ghost btn-sm" href="/admin/users?page=<?= $page - 1 ?>">Previous</a>

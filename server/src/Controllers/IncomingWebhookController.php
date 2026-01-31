@@ -17,7 +17,7 @@ use Chap\Services\DeploymentService;
 class IncomingWebhookController extends BaseController
 {
     /**
-     * Create a new incoming webhook for an application (GitHub).
+    * Create a new incoming webhook for an application.
      */
     public function store(string $applicationUuid): void
     {
@@ -39,9 +39,21 @@ class IncomingWebhookController extends BaseController
         $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
         $this->requireTeamPermission('applications', 'write', $teamId);
 
-        $name = trim((string)($_POST['name'] ?? 'GitHub'));
+        $provider = strtolower(trim((string)($_POST['provider'] ?? 'github')));
+        if (!in_array($provider, ['github', 'gitlab', 'bitbucket', 'custom'], true)) {
+            $provider = 'github';
+        }
+
+        $defaultName = match ($provider) {
+            'gitlab' => 'GitLab',
+            'bitbucket' => 'Bitbucket',
+            'custom' => 'Custom',
+            default => 'GitHub',
+        };
+
+        $name = trim((string)($_POST['name'] ?? $defaultName));
         if ($name === '') {
-            $name = 'GitHub';
+            $name = $defaultName;
         }
 
         $branch = trim((string)($_POST['branch'] ?? ''));
@@ -51,7 +63,7 @@ class IncomingWebhookController extends BaseController
 
         $webhook = IncomingWebhook::create([
             'application_id' => $application->id,
-            'provider' => 'github',
+            'provider' => $provider,
             'name' => $name,
             'secret' => $secret,
             'branch' => $branch,
@@ -316,6 +328,381 @@ class IncomingWebhookController extends BaseController
         ]);
 
         $this->json(['status' => 'ok']);
+    }
+
+    /**
+     * GitLab webhook receiver.
+     *
+     * Verifies X-Gitlab-Token matches the stored secret.
+     */
+    public function gitlab(string $webhookUuid): void
+    {
+        $incoming = IncomingWebhook::findByUuid($webhookUuid);
+        if (!$incoming || $incoming->provider !== 'gitlab' || !$incoming->is_active) {
+            $this->json(['error' => 'Not found'], 404);
+            return;
+        }
+
+        $application = $incoming->application();
+        if (!$application) {
+            $this->json(['error' => 'Not found'], 404);
+            return;
+        }
+
+        $token = (string)($_SERVER['HTTP_X_GITLAB_TOKEN'] ?? '');
+        if ($incoming->secret === '' || $token === '' || !hash_equals($incoming->secret, $token)) {
+            $incoming->update([
+                'last_received_at' => date('Y-m-d H:i:s'),
+                'last_event' => (string)($_SERVER['HTTP_X_GITLAB_EVENT'] ?? ''),
+                'last_delivery_id' => (string)($_SERVER['HTTP_X_GITLAB_EVENT_UUID'] ?? ''),
+                'last_status' => 'rejected',
+                'last_error' => 'Invalid token',
+            ]);
+            $this->json(['error' => 'Invalid token'], 401);
+            return;
+        }
+
+        $payloadRaw = (string)file_get_contents('php://input');
+        $contentType = (string)($_SERVER['CONTENT_TYPE'] ?? '');
+        $data = $this->parsePayload($payloadRaw, $contentType);
+
+        $event = (string)($_SERVER['HTTP_X_GITLAB_EVENT'] ?? ($data['object_kind'] ?? ''));
+        $deliveryId = (string)($_SERVER['HTTP_X_GITLAB_EVENT_UUID'] ?? '');
+
+        // Dedupe when possible.
+        if ($deliveryId !== '') {
+            $inserted = IncomingWebhookDelivery::tryInsert(
+                $incoming->id,
+                'gitlab',
+                $deliveryId,
+                $event ?: null,
+                null,
+                null
+            );
+
+            if (!$inserted) {
+                $incoming->update([
+                    'last_received_at' => date('Y-m-d H:i:s'),
+                    'last_event' => $event ?: null,
+                    'last_delivery_id' => $deliveryId,
+                    'last_status' => 'duplicate',
+                    'last_error' => null,
+                ]);
+                $this->json(['status' => 'duplicate']);
+                return;
+            }
+        }
+
+        if ($event === 'Push Hook' || $event === 'push') {
+            $ref = (string)($data['ref'] ?? '');
+            $branch = str_replace('refs/heads/', '', $ref);
+            $expectedBranch = (string)($incoming->effectiveBranch($application) ?? '');
+            if ($expectedBranch !== '' && $branch !== $expectedBranch) {
+                $incoming->update([
+                    'last_received_at' => date('Y-m-d H:i:s'),
+                    'last_event' => 'push',
+                    'last_delivery_id' => $deliveryId ?: null,
+                    'last_status' => 'ignored',
+                    'last_error' => 'Branch mismatch',
+                ]);
+                $this->json(['status' => 'ignored']);
+                return;
+            }
+
+            $commitSha = $data['checkout_sha'] ?? ($data['after'] ?? null);
+            $commitMessage = $data['commits'][0]['message'] ?? null;
+            if (!empty($commitSha)) {
+                $application->update(['git_commit_sha' => $commitSha]);
+            }
+
+            try {
+                $deployment = DeploymentService::create($application, $commitSha ?: null, [
+                    'triggered_by' => 'webhook:gitlab',
+                    'triggered_by_name' => 'GitLab Webhook',
+                ]);
+
+                $incoming->update([
+                    'last_received_at' => date('Y-m-d H:i:s'),
+                    'last_event' => 'push',
+                    'last_delivery_id' => $deliveryId ?: null,
+                    'last_status' => 'deployed',
+                    'last_error' => null,
+                ]);
+
+                $this->json([
+                    'status' => 'deployed',
+                    'deployment' => ['uuid' => $deployment->uuid],
+                    'commit' => [
+                        'sha' => $commitSha,
+                        'message' => $commitMessage,
+                        'branch' => $branch,
+                    ],
+                ], 202);
+                return;
+            } catch (\Throwable $e) {
+                $incoming->update([
+                    'last_received_at' => date('Y-m-d H:i:s'),
+                    'last_event' => 'push',
+                    'last_delivery_id' => $deliveryId ?: null,
+                    'last_status' => 'error',
+                    'last_error' => $e->getMessage(),
+                ]);
+                $this->json(['status' => 'error'], 202);
+                return;
+            }
+        }
+
+        $incoming->update([
+            'last_received_at' => date('Y-m-d H:i:s'),
+            'last_event' => $event ?: null,
+            'last_delivery_id' => $deliveryId ?: null,
+            'last_status' => 'ok',
+            'last_error' => null,
+        ]);
+        $this->json(['status' => 'ok']);
+    }
+
+    /**
+     * Bitbucket webhook receiver.
+     *
+     * Bitbucket doesn't reliably provide a shared-secret header in all setups.
+     * We accept Bearer auth or a `secret` query param.
+     */
+    public function bitbucket(string $webhookUuid): void
+    {
+        $incoming = IncomingWebhook::findByUuid($webhookUuid);
+        if (!$incoming || $incoming->provider !== 'bitbucket' || !$incoming->is_active) {
+            $this->json(['error' => 'Not found'], 404);
+            return;
+        }
+
+        $application = $incoming->application();
+        if (!$application) {
+            $this->json(['error' => 'Not found'], 404);
+            return;
+        }
+
+        $secret = (string)($_GET['secret'] ?? '');
+        $auth = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? '');
+        if ($secret === '' && str_starts_with($auth, 'Bearer ')) {
+            $secret = trim(substr($auth, 7));
+        }
+        if ($incoming->secret === '' || $secret === '' || !hash_equals($incoming->secret, $secret)) {
+            $incoming->update([
+                'last_received_at' => date('Y-m-d H:i:s'),
+                'last_event' => (string)($_SERVER['HTTP_X_EVENT_KEY'] ?? ''),
+                'last_delivery_id' => (string)($_SERVER['HTTP_X_REQUEST_UUID'] ?? ''),
+                'last_status' => 'rejected',
+                'last_error' => 'Invalid secret',
+            ]);
+            $this->json(['error' => 'Invalid secret'], 401);
+            return;
+        }
+
+        $payloadRaw = (string)file_get_contents('php://input');
+        $contentType = (string)($_SERVER['CONTENT_TYPE'] ?? '');
+        $data = $this->parsePayload($payloadRaw, $contentType);
+
+        $event = (string)($_SERVER['HTTP_X_EVENT_KEY'] ?? '');
+        $deliveryId = (string)($_SERVER['HTTP_X_REQUEST_UUID'] ?? '');
+
+        if ($deliveryId !== '') {
+            $inserted = IncomingWebhookDelivery::tryInsert(
+                $incoming->id,
+                'bitbucket',
+                $deliveryId,
+                $event ?: null,
+                null,
+                null
+            );
+            if (!$inserted) {
+                $incoming->update([
+                    'last_received_at' => date('Y-m-d H:i:s'),
+                    'last_event' => $event ?: null,
+                    'last_delivery_id' => $deliveryId,
+                    'last_status' => 'duplicate',
+                    'last_error' => null,
+                ]);
+                $this->json(['status' => 'duplicate']);
+                return;
+            }
+        }
+
+        // Push events trigger auto-redeploy
+        if (isset($data['push']['changes']) && is_array($data['push']['changes'])) {
+            foreach ($data['push']['changes'] as $change) {
+                $branch = (string)($change['new']['name'] ?? '');
+                if ($branch === '') continue;
+
+                $expectedBranch = (string)($incoming->effectiveBranch($application) ?? '');
+                if ($expectedBranch !== '' && $branch !== $expectedBranch) {
+                    continue;
+                }
+
+                $commitSha = $change['new']['target']['hash'] ?? null;
+                $commitMessage = $change['new']['target']['message'] ?? null;
+
+                if (!empty($commitSha)) {
+                    $application->update(['git_commit_sha' => $commitSha]);
+                }
+
+                try {
+                    $deployment = DeploymentService::create($application, $commitSha ?: null, [
+                        'triggered_by' => 'webhook:bitbucket',
+                        'triggered_by_name' => 'Bitbucket Webhook',
+                    ]);
+
+                    $incoming->update([
+                        'last_received_at' => date('Y-m-d H:i:s'),
+                        'last_event' => $event ?: 'push',
+                        'last_delivery_id' => $deliveryId ?: null,
+                        'last_status' => 'deployed',
+                        'last_error' => null,
+                    ]);
+
+                    $this->json([
+                        'status' => 'deployed',
+                        'deployment' => ['uuid' => $deployment->uuid],
+                        'commit' => [
+                            'sha' => $commitSha,
+                            'message' => $commitMessage,
+                            'branch' => $branch,
+                        ],
+                    ], 202);
+                    return;
+                } catch (\Throwable $e) {
+                    $incoming->update([
+                        'last_received_at' => date('Y-m-d H:i:s'),
+                        'last_event' => $event ?: 'push',
+                        'last_delivery_id' => $deliveryId ?: null,
+                        'last_status' => 'error',
+                        'last_error' => $e->getMessage(),
+                    ]);
+                    $this->json(['status' => 'error'], 202);
+                    return;
+                }
+            }
+
+            $incoming->update([
+                'last_received_at' => date('Y-m-d H:i:s'),
+                'last_event' => $event ?: 'push',
+                'last_delivery_id' => $deliveryId ?: null,
+                'last_status' => 'ignored',
+                'last_error' => 'Branch mismatch',
+            ]);
+            $this->json(['status' => 'ignored']);
+            return;
+        }
+
+        $incoming->update([
+            'last_received_at' => date('Y-m-d H:i:s'),
+            'last_event' => $event ?: null,
+            'last_delivery_id' => $deliveryId ?: null,
+            'last_status' => 'ok',
+            'last_error' => null,
+        ]);
+        $this->json(['status' => 'ok']);
+    }
+
+    /**
+     * Custom webhook receiver.
+     *
+     * Verifies Bearer auth or a `secret` query param.
+     */
+    public function custom(string $webhookUuid): void
+    {
+        $incoming = IncomingWebhook::findByUuid($webhookUuid);
+        if (!$incoming || $incoming->provider !== 'custom' || !$incoming->is_active) {
+            $this->json(['error' => 'Not found'], 404);
+            return;
+        }
+
+        $application = $incoming->application();
+        if (!$application) {
+            $this->json(['error' => 'Not found'], 404);
+            return;
+        }
+
+        $secret = (string)($_GET['secret'] ?? '');
+        $auth = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? '');
+        if ($secret === '' && str_starts_with($auth, 'Bearer ')) {
+            $secret = trim(substr($auth, 7));
+        }
+
+        if ($incoming->secret === '' || $secret === '' || !hash_equals($incoming->secret, $secret)) {
+            $incoming->update([
+                'last_received_at' => date('Y-m-d H:i:s'),
+                'last_event' => 'custom',
+                'last_delivery_id' => null,
+                'last_status' => 'rejected',
+                'last_error' => 'Invalid secret',
+            ]);
+            $this->json(['error' => 'Invalid secret'], 401);
+            return;
+        }
+
+        $payloadRaw = (string)file_get_contents('php://input');
+        $contentType = (string)($_SERVER['CONTENT_TYPE'] ?? '');
+        $data = $this->parsePayload($payloadRaw, $contentType);
+
+        $branch = (string)($data['branch'] ?? '');
+        if ($branch === '' && isset($data['ref'])) {
+            $branch = str_replace('refs/heads/', '', (string)$data['ref']);
+        }
+        $expectedBranch = (string)($incoming->effectiveBranch($application) ?? '');
+        if ($expectedBranch !== '' && $branch !== '' && $branch !== $expectedBranch) {
+            $incoming->update([
+                'last_received_at' => date('Y-m-d H:i:s'),
+                'last_event' => 'custom',
+                'last_delivery_id' => null,
+                'last_status' => 'ignored',
+                'last_error' => 'Branch mismatch',
+            ]);
+            $this->json(['status' => 'ignored']);
+            return;
+        }
+
+        $commitSha = $data['commit'] ?? null;
+        $commitMessage = $data['message'] ?? 'Manual trigger';
+        if (!empty($commitSha)) {
+            $application->update(['git_commit_sha' => $commitSha]);
+        }
+
+        try {
+            $deployment = DeploymentService::create($application, $commitSha ?: null, [
+                'triggered_by' => 'webhook:custom',
+                'triggered_by_name' => 'Custom Webhook',
+            ]);
+
+            $incoming->update([
+                'last_received_at' => date('Y-m-d H:i:s'),
+                'last_event' => 'custom',
+                'last_delivery_id' => null,
+                'last_status' => 'deployed',
+                'last_error' => null,
+            ]);
+
+            $this->json([
+                'status' => 'deployed',
+                'deployment' => ['uuid' => $deployment->uuid],
+                'commit' => [
+                    'sha' => $commitSha,
+                    'message' => $commitMessage,
+                    'branch' => $branch,
+                ],
+            ], 202);
+            return;
+        } catch (\Throwable $e) {
+            $incoming->update([
+                'last_received_at' => date('Y-m-d H:i:s'),
+                'last_event' => 'custom',
+                'last_delivery_id' => null,
+                'last_status' => 'error',
+                'last_error' => $e->getMessage(),
+            ]);
+            $this->json(['status' => 'error'], 202);
+            return;
+        }
     }
 
     private function verifyGitHubSignature(string $payloadRaw, string $signatureHeader, string $secret): bool

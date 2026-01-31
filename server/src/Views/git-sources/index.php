@@ -21,7 +21,7 @@
         </div>
     </div>
 
-    <div class="tabs">
+    <div class="tabs tabs-scroll">
         <a class="tab <?= ($tab ?? 'github-apps') === 'github-apps' ? 'active' : '' ?>" href="/git-sources?tab=github-apps">GitHub Apps</a>
         <a class="tab <?= ($tab ?? '') === 'oauth' ? 'active' : '' ?>" href="/git-sources?tab=oauth">OAuth</a>
         <a class="tab <?= ($tab ?? '') === 'deploy-keys' ? 'active' : '' ?>" href="/git-sources?tab=deploy-keys">Deploy Keys</a>
@@ -40,7 +40,7 @@
                         </div>
                         <p class="empty-state-title">No GitHub Apps added</p>
                         <p class="empty-state-description">Add one so Chap can access private repositories.</p>
-                        <div class="flex items-center gap-3">
+                        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                             <a href="/git-sources/github-apps/manifest/create" class="btn btn-secondary btn-sm">Auto-create</a>
                             <a href="/git-sources/github-apps/create" class="btn btn-primary btn-sm">Add manually</a>
                         </div>
@@ -79,14 +79,16 @@
                                         <?php endif; ?>
                                     </td>
                                     <td class="text-right">
-                                        <?php if (empty($app->github_app_installation_id)): ?>
-                                            <a href="/git-sources/github-apps/<?= e($app->uuid ?? (string)$app->id) ?>/installations" class="btn btn-secondary-ghost">Finish setup</a>
-                                        <?php endif; ?>
-                                        <form method="POST" action="/git-sources/github-apps/<?= e($app->uuid ?? (string)$app->id) ?>" class="inline-block">
-                                            <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
-                                            <input type="hidden" name="_method" value="DELETE">
-                                            <button type="submit" class="btn btn-danger-ghost">Remove</button>
-                                        </form>
+                                        <div class="flex flex-wrap items-center justify-end gap-2">
+                                            <?php if (empty($app->github_app_installation_id)): ?>
+                                                <a href="/git-sources/github-apps/<?= e($app->uuid ?? (string)$app->id) ?>/installations" class="btn btn-secondary-ghost btn-sm">Finish setup</a>
+                                            <?php endif; ?>
+                                            <form method="POST" action="/git-sources/github-apps/<?= e($app->uuid ?? (string)$app->id) ?>" class="inline-block">
+                                                <input type="hidden" name="_csrf_token" value="<?= csrf_token() ?>">
+                                                <input type="hidden" name="_method" value="DELETE">
+                                                <button type="submit" class="btn btn-danger-ghost btn-sm">Remove</button>
+                                            </form>
+                                        </div>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>

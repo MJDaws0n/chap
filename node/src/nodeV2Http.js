@@ -10,7 +10,8 @@ const path = require('path');
 const crypto = require('crypto');
 const url = require('url');
 const os = require('os');
-const { spawn, exec } = require('child_process');
+const { spawn } = require('child_process');
+const Busboy = require('busboy');
 
 function b64urlDecode(s) {
     const ss = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
@@ -231,7 +232,10 @@ function makeNodeV2RequestHandler(deps) {
     } = deps;
 
     const getNodeId = () => String(config.nodeId || '').trim();
-    const secret = String(process.env.CHAP_NODE_ACCESS_TOKEN_SECRET || '').trim();
+
+    // Use per-node secret (NODE_TOKEN) so compromise of one node does not
+    // let an attacker forge tokens for all nodes.
+    const secret = String(config.nodeToken || '').trim();
 
     const jobs = new Map();
 
@@ -268,21 +272,6 @@ function makeNodeV2RequestHandler(deps) {
                     resolve(stdout);
                 } else {
                     reject(new Error(String(stderr || stdout || `Docker exited ${code}` ).trim()));
-                }
-            });
-        });
-    }
-
-    function run(cmd, options = {}) {
-        if (typeof execCommand === 'function') {
-            return execCommand(cmd, options);
-        }
-        return new Promise((resolve, reject) => {
-            exec(cmd, options, (error, stdout, stderr) => {
-                if (error) {
-                    reject(new Error(String(stderr || error.message || error).trim()));
-                } else {
-                    resolve(stdout);
                 }
             });
         });
@@ -376,7 +365,7 @@ function makeNodeV2RequestHandler(deps) {
                 return;
             }
             if (!secret) {
-                json(res, 503, { error: { code: 'server_misconfigured', message: 'Missing CHAP_NODE_ACCESS_TOKEN_SECRET on node' } });
+                json(res, 503, { error: { code: 'server_misconfigured', message: 'Missing NODE_TOKEN on node' } });
                 return;
             }
 
@@ -387,17 +376,38 @@ function makeNodeV2RequestHandler(deps) {
                 return;
             }
 
-            if (payload.aud && payload.aud !== 'chap-node') {
+            // Tighten validation: server always sets these claims.
+            if (String(payload.iss || '') !== 'chap-server') {
+                json(res, 401, { error: { code: 'unauthorized', message: 'Invalid token issuer' } });
+                return;
+            }
+            if (String(payload.aud || '') !== 'chap-node') {
                 json(res, 401, { error: { code: 'unauthorized', message: 'Invalid token audience' } });
                 return;
             }
-            if (payload.exp && Number(payload.exp) <= Math.floor(Date.now() / 1000)) {
+
+            const nowSec = Math.floor(Date.now() / 1000);
+            const exp = Number(payload.exp);
+            const iat = Number(payload.iat);
+            if (!Number.isFinite(exp) || exp <= nowSec) {
                 json(res, 401, { error: { code: 'unauthorized', message: 'Token expired' } });
                 return;
             }
-            if (nodeId && payload.node_id && String(payload.node_id) !== nodeId) {
-                json(res, 403, { error: { code: 'forbidden', message: 'Token not valid for this node' } });
+            if (!Number.isFinite(iat) || iat > nowSec + 30) {
+                json(res, 401, { error: { code: 'unauthorized', message: 'Invalid token issued-at' } });
                 return;
+            }
+            // Reject unusually long-lived tokens (defense-in-depth).
+            if ((exp - iat) > 600) {
+                json(res, 401, { error: { code: 'unauthorized', message: 'Token TTL too long' } });
+                return;
+            }
+
+            if (nodeId) {
+                if (!payload.node_id || String(payload.node_id) !== nodeId) {
+                    json(res, 403, { error: { code: 'forbidden', message: 'Token not valid for this node' } });
+                    return;
+                }
             }
 
             const scopes = Array.isArray(payload.scopes) ? payload.scopes : [];
@@ -1379,78 +1389,156 @@ function makeNodeV2RequestHandler(deps) {
                     return;
                 }
 
-                const ct = String(req.headers['content-type'] || '');
-                const m = ct.match(/boundary=([^;]+)/i);
-                const boundary = m ? String(m[1]).trim().replace(/^"|"$/g, '') : '';
-                if (!boundary) {
-                    json(res, 400, { error: { code: 'invalid_request', message: 'Missing multipart boundary' } });
+                const fileLimit = maxBytes !== null ? Math.max(1024, maxBytes) : 15 * 1024 * 1024;
+                let bb;
+                try {
+                    bb = Busboy({
+                        headers: req.headers,
+                        limits: {
+                            files: 1,
+                            fileSize: fileLimit,
+                            fields: 10,
+                            fieldSize: 8 * 1024,
+                            parts: 20,
+                        },
+                    });
+                } catch {
+                    json(res, 400, { error: { code: 'invalid_request', message: 'Invalid multipart request' } });
                     return;
                 }
-
-                const buf = await readBodyBuffer(req, maxBytes !== null ? Math.max(1024, maxBytes) : 15 * 1024 * 1024);
-                const raw = buf.toString('latin1');
-                const marker = '--' + boundary;
-                const parts = raw.split(marker).slice(1, -1);
 
                 let virtualPath = '';
-                let fileBytes = null;
+                const tmpPath = path.join(os.tmpdir(), `chap-upload-${crypto.randomBytes(16).toString('hex')}`);
+                let writeStream = null;
+                let gotFile = false;
+                let bytes = 0;
+                let failed = false;
+                let tooLarge = false;
+                let parserFinished = false;
+                let streamFinished = false;
+                let finalized = false;
 
-                for (const part of parts) {
-                    const p = part.replace(/^\r\n/, '');
-                    const idx = p.indexOf('\r\n\r\n');
-                    if (idx === -1) continue;
-                    const headers = p.slice(0, idx);
-                    let body = p.slice(idx + 4);
-                    if (body.endsWith('\r\n')) body = body.slice(0, -2);
+                const cleanup = () => {
+                    try { if (writeStream) writeStream.destroy(); } catch {}
+                    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch {}
+                };
 
-                    const disp = headers.match(/content-disposition:\s*form-data;\s*([^\r\n]+)/i);
-                    const dispParams = disp ? disp[1] : '';
-                    const nameMatch = dispParams.match(/name="([^"]+)"/i);
-                    const field = nameMatch ? nameMatch[1] : '';
+                req.on('aborted', cleanup);
+                req.on('close', () => {
+                    if (!res.headersSent) cleanup();
+                });
 
-                    if (field === 'path') {
-                        virtualPath = String(body || '').trim();
-                    } else if (field === 'file') {
-                        fileBytes = Buffer.from(body, 'latin1');
+                bb.on('field', (name, val) => {
+                    if (name === 'path') {
+                        virtualPath = String(val || '').trim();
                     }
-                }
+                });
 
-                if (!virtualPath || !fileBytes) {
-                    json(res, 422, { error: { code: 'validation_error', message: 'Validation error', details: { field: 'path/file' } } });
-                    return;
-                }
-                if (!allowedByPathsConstraint(virtualPath, allowedPaths)) {
-                    json(res, 403, { error: { code: 'forbidden', message: 'Path not allowed by token constraints' } });
-                    return;
-                }
-                if (maxBytes !== null && fileBytes.length > maxBytes) {
-                    json(res, 413, { error: { code: 'too_large', message: 'Upload exceeds max_bytes constraint' } });
-                    return;
-                }
+                bb.on('file', (name, file) => {
+                    if (failed) {
+                        file.resume();
+                        return;
+                    }
+                    if (name !== 'file') {
+                        file.resume();
+                        return;
+                    }
+                    gotFile = true;
+                    writeStream = fs.createWriteStream(tmpPath, { mode: 0o600 });
+                    file.on('data', (chunk) => { bytes += chunk.length; });
+                    file.on('limit', () => { tooLarge = true; });
+                    file.on('error', () => { failed = true; });
+                    writeStream.on('error', () => { failed = true; });
+                    writeStream.on('finish', () => { streamFinished = true; maybeFinalize(); });
+                    writeStream.on('close', () => { streamFinished = true; maybeFinalize(); });
+                    file.pipe(writeStream);
+                });
 
-                const resolved = resolveNodePath({ storage, applicationId, virtualPath });
-                if (!resolved) {
-                    json(res, 400, { error: { code: 'invalid_request', message: 'Invalid path' } });
-                    return;
-                }
-                const { abs, rootDir } = resolved;
-                const parent = path.dirname(abs);
-                let rootReal = '';
-                try { rootReal = fs.realpathSync(rootDir); } catch { rootReal = ''; }
-                if (!rootReal) {
-                    json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
-                    return;
-                }
-                const parentResolved = path.resolve(parent);
-                const prefix = rootReal.endsWith(path.sep) ? rootReal : rootReal + path.sep;
-                if (parentResolved !== rootReal && !parentResolved.startsWith(prefix)) {
-                    json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
-                    return;
-                }
+                bb.on('error', () => { failed = true; });
 
-                fs.mkdirSync(parent, { recursive: true });
-                fs.writeFileSync(abs, fileBytes);
-                json(res, 200, { data: { ok: true, bytes: fileBytes.length } });
+                const maybeFinalize = () => {
+                    if (finalized) return;
+                    if (!parserFinished) return;
+                    if (gotFile && writeStream && !streamFinished) return;
+
+                    finalized = true;
+                    if (!gotFile || !virtualPath) {
+                        cleanup();
+                        json(res, 422, { error: { code: 'validation_error', message: 'Validation error', details: { field: 'path/file' } } });
+                        return;
+                    }
+                    if (failed) {
+                        cleanup();
+                        json(res, 400, { error: { code: 'invalid_request', message: 'Upload failed' } });
+                        return;
+                    }
+                    if (tooLarge) {
+                        cleanup();
+                        json(res, 413, { error: { code: 'too_large', message: 'Upload exceeds max_bytes constraint' } });
+                        return;
+                    }
+                    if (!allowedByPathsConstraint(virtualPath, allowedPaths)) {
+                        cleanup();
+                        json(res, 403, { error: { code: 'forbidden', message: 'Path not allowed by token constraints' } });
+                        return;
+                    }
+
+                    const resolved = resolveNodePath({ storage, applicationId, virtualPath });
+                    if (!resolved) {
+                        cleanup();
+                        json(res, 400, { error: { code: 'invalid_request', message: 'Invalid path' } });
+                        return;
+                    }
+                    const { abs, rootDir } = resolved;
+                    const parent = path.dirname(abs);
+                    let rootReal = '';
+                    try { rootReal = fs.realpathSync(rootDir); } catch { rootReal = ''; }
+                    if (!rootReal) {
+                        cleanup();
+                        json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
+                        return;
+                    }
+                    const parentResolved = path.resolve(parent);
+                    const prefix = rootReal.endsWith(path.sep) ? rootReal : rootReal + path.sep;
+                    if (parentResolved !== rootReal && !parentResolved.startsWith(prefix)) {
+                        cleanup();
+                        json(res, 403, { error: { code: 'forbidden', message: 'Path escapes sandbox' } });
+                        return;
+                    }
+
+                    try {
+                        if (fs.existsSync(abs) && fs.lstatSync(abs).isDirectory()) {
+                            cleanup();
+                            json(res, 409, { error: { code: 'conflict', message: 'A directory exists at that path' } });
+                            return;
+                        }
+                    } catch {
+                        // ignore
+                    }
+
+                    fs.mkdirSync(parent, { recursive: true });
+                    try {
+                        fs.renameSync(tmpPath, abs);
+                    } catch {
+                        try {
+                            fs.copyFileSync(tmpPath, abs);
+                            try { fs.unlinkSync(tmpPath); } catch {}
+                        } catch {
+                            cleanup();
+                            json(res, 500, { error: { code: 'server_error', message: 'Failed to write file' } });
+                            return;
+                        }
+                    }
+
+                    json(res, 200, { data: { ok: true, bytes } });
+                };
+
+                bb.on('finish', () => {
+                    parserFinished = true;
+                    maybeFinalize();
+                });
+
+                req.pipe(bb);
                 return;
             }
 

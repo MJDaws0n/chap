@@ -41,8 +41,8 @@ $applicationUuid = (isset($application) && is_object($application) && isset($app
                     <div class="flex items-center gap-3 flex-wrap">
                         <!-- Container Dropdown (like Live Logs) -->
                         <div class="dropdown" id="fm-container-dropdown">
-                            <button type="button" class="btn btn-secondary" id="fm-container-select-btn" data-dropdown-trigger="fm-container-dropdown-menu" data-dropdown-placement="bottom-start">
-                                <span id="fm-selected-container-name">Select container...</span>
+                            <button type="button" class="btn btn-secondary w-full sm:w-auto min-w-0" id="fm-container-select-btn" data-dropdown-trigger="fm-container-dropdown-menu" data-dropdown-placement="bottom-start">
+                                <span class="break-all" id="fm-selected-container-name">Select container...</span>
                                 <svg class="icon dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
                                 </svg>
@@ -67,7 +67,7 @@ $applicationUuid = (isset($application) && is_object($application) && isset($app
                             <button type="button" class="btn btn-ghost btn-sm hidden" id="fm-transfer-cancel">Cancel</button>
                         </div>
 
-                        <span class="text-sm text-secondary" id="fm-root"></span>
+                        <span class="text-sm text-secondary break-all" id="fm-root"></span>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap">
                         <input type="file" id="fm-upload-input" class="hidden" multiple>

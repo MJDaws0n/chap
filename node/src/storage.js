@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 class Storage {
 
@@ -61,10 +62,15 @@ class Storage {
         getDiskUsage() {
             // Use statvfs via os module if available, else fallback to 'df' command
             try {
-                const stat = fs.statSync(this.baseDir);
+                fs.statSync(this.baseDir);
                 // Node.js does not provide statvfs, so use 'df -k' as a fallback
-                const { execSync } = require('child_process');
-                const output = execSync(`df -k '${this.baseDir}'`).toString().split('\n')[1];
+                // Use argv execution to avoid shell interpolation.
+                const res = spawnSync('df', ['-k', String(this.baseDir)], { encoding: 'utf8' });
+                if (res.status !== 0) {
+                    throw new Error(String(res.stderr || res.error || 'df failed').trim());
+                }
+                const lines = String(res.stdout || '').trim().split('\n').filter(Boolean);
+                const output = lines.length ? lines[lines.length - 1] : '';
                 const parts = output.trim().split(/\s+/);
                 // Filesystem 1K-blocks Used Available Use% Mounted on
                 const total = parseInt(parts[1], 10) * 1024;

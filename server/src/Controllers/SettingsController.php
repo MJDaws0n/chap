@@ -7,6 +7,7 @@ use Chap\App;
 use Chap\Models\ApiToken;
 use Chap\Services\ApiV2\ApiTokenService;
 use Chap\Services\NotificationService;
+use Chap\Security\OutboundUrlValidator;
 
 /**
  * Settings Controller
@@ -89,13 +90,11 @@ class SettingsController extends BaseController
             if ($webhookEnabled) {
                 if ($webhookUrl === '') {
                     $errors['notify_webhook_url'] = 'Webhook URL is required when webhook delivery is enabled';
-                } elseif (!filter_var($webhookUrl, FILTER_VALIDATE_URL)) {
-                    $errors['notify_webhook_url'] = 'Webhook URL must be a valid URL';
-                } else {
-                    $scheme = parse_url($webhookUrl, PHP_URL_SCHEME);
-                    if (!in_array($scheme, ['http', 'https'], true)) {
-                        $errors['notify_webhook_url'] = 'Webhook URL must start with http:// or https://';
-                    }
+                    } else {
+                        $validated = OutboundUrlValidator::validateWebhookUrl($webhookUrl);
+                        if (!($validated['valid'] ?? false)) {
+                            $errors['notify_webhook_url'] = (string)($validated['error'] ?? 'Webhook URL is not allowed');
+                        }
                 }
             }
 

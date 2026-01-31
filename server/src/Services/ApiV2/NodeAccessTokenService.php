@@ -2,7 +2,7 @@
 
 namespace Chap\Services\ApiV2;
 
-use Chap\Config;
+use Chap\Models\Node;
 
 class NodeAccessTokenService
 {
@@ -25,10 +25,14 @@ class NodeAccessTokenService
             'constraints' => (object)$constraints,
         ];
 
-        $secret = (string)(getenv('CHAP_NODE_ACCESS_TOKEN_SECRET') ?: Config::get('app.secret', ''));
+        // Prefer a per-node signing secret to avoid a single shared secret for all nodes.
+        // This uses the node's existing token (also used for node<->server auth).
+        $node = Node::findByUuid($nodeUuid);
+        $secret = $node ? trim((string)($node->token ?? '')) : '';
+
         if ($secret === '') {
             // Fail closed.
-            throw new \RuntimeException('Server is missing CHAP_NODE_ACCESS_TOKEN_SECRET');
+            throw new \RuntimeException('Server is missing node token (required for node access tokens)');
         }
 
         $jwt = JwtService::signHs256($claims, $secret);

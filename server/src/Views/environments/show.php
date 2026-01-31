@@ -47,12 +47,12 @@
 
     <!-- Applications Section -->
     <section class="flex flex-col gap-4">
-        <div class="flex items-center justify-between gap-4">
-            <div class="flex items-center gap-3">
-                <h2 class="text-xl font-semibold text-primary">Applications</h2>
+        <div class="flex items-center justify-between gap-4 flex-wrap">
+            <div class="flex items-center gap-3 min-w-0">
+                <h2 class="text-xl font-semibold text-primary truncate">Applications</h2>
                 <span class="badge badge-neutral"><?= count($applications) ?></span>
             </div>
-            <a href="/environments/<?= e($environment->uuid) ?>/applications/create" class="btn btn-primary">+ New Application</a>
+            <a href="/environments/<?= e($environment->uuid) ?>/applications/create" class="btn btn-primary w-full sm:w-auto">+ New Application</a>
         </div>
 
         <?php if (empty($applications)): ?>
