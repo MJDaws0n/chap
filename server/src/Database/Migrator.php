@@ -33,8 +33,24 @@ class Migrator
             echo "Migrating: {$name}\n";
 
             $migration = require $file;
-            if (is_array($migration) && isset($migration['up']) && is_callable($migration['up'])) {
-                $migration['up']($db);
+            $ran = false;
+            try {
+                if (is_array($migration) && isset($migration['up']) && is_callable($migration['up'])) {
+                    $migration['up']($db);
+                    $ran = true;
+                } elseif (is_object($migration) && method_exists($migration, 'up')) {
+                    $migration->up($db);
+                    $ran = true;
+                } elseif (is_callable($migration)) {
+                    $migration($db);
+                    $ran = true;
+                }
+            } catch (\Throwable $e) {
+                throw new Exception("Migration {$name} failed: " . $e->getMessage(), 0, $e);
+            }
+
+            if (!$ran) {
+                throw new Exception("Invalid migration format for {$name} (expected ['up' => callable], callable, or object with up())");
             }
 
             $db->insert('migrations', [
@@ -86,16 +102,28 @@ class Migrator
             . "  id INT PRIMARY KEY AUTO_INCREMENT,\n"
             . "  migration VARCHAR(255) NOT NULL,\n"
             . "  batch INT NOT NULL,\n"
-            . "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n"
-            . ")"
+            . "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n"
+            . "  UNIQUE KEY unique_migration (migration)\n"
+            . ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
         );
+
+        // Best-effort: add unique index if table existed without it.
+        $idx = $db->fetch("SHOW INDEX FROM migrations WHERE Key_name = 'unique_migration'");
+        if (!$idx) {
+            try {
+                $db->query("ALTER TABLE migrations ADD UNIQUE KEY unique_migration (migration)");
+            } catch (Exception $e) {
+                // Ignore if another process added it concurrently or permissions prevent it.
+            }
+        }
     }
 
     /** @return string[] */
     private static function getCompletedMigrationNames(Connection $db): array
     {
         $completed = $db->fetchAll("SELECT migration FROM migrations") ?: [];
-        return array_values(array_filter(array_column($completed, 'migration')));
+        $names = array_values(array_filter(array_column($completed, 'migration')));
+        return array_values(array_unique($names));
     }
 
     private static function nextBatchNumber(Connection $db): int

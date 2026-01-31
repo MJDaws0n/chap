@@ -5,10 +5,21 @@
 
 return [
     'up' => function($db) {
+        // Repair: older migrator versions could mark migration 021 as completed without executing it.
+        // Ensure logs_websocket_url exists so later migrations and features don't break.
+        $logsCol = $db->fetch("SHOW COLUMNS FROM nodes LIKE 'logs_websocket_url'");
+        if (!$logsCol) {
+            $db->query("ALTER TABLE nodes ADD COLUMN logs_websocket_url VARCHAR(255) NULL AFTER description");
+        }
+
         // Connection has no getColumnNames(); use MySQL's SHOW COLUMNS for idempotency.
         $col = $db->fetch("SHOW COLUMNS FROM nodes LIKE 'api_url'");
         if (!$col) {
-            $db->query("ALTER TABLE nodes ADD COLUMN api_url VARCHAR(500) NULL AFTER logs_websocket_url");
+            $after = 'description';
+            if ($db->fetch("SHOW COLUMNS FROM nodes LIKE 'logs_websocket_url'")) {
+                $after = 'logs_websocket_url';
+            }
+            $db->query("ALTER TABLE nodes ADD COLUMN api_url VARCHAR(500) NULL AFTER {$after}");
         }
 
         // Create the index if missing.
