@@ -22,8 +22,8 @@ services:
   # PHP Server with Apache
   server:
     build:
-      context: ./server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: server/Dockerfile
     container_name: chap-server
     restart: unless-stopped
     environment:

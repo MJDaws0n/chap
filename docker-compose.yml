@@ -45,7 +45,6 @@ services:
       - APP_URL=${APP_URL:-http://localhost:8080}
       - APP_SECRET=${APP_SECRET:-change_this_to_random_secret_key}
       - DB_HOST=mysql
-      - DB_PORT=3306
       - DB_DATABASE=${DB_DATABASE:-chap}
       - DB_USERNAME=${DB_USERNAME:-chap}
       - DB_PASSWORD=${DB_PASSWORD:-chap_secret}

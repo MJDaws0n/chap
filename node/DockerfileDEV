@@ -1,7 +1,7 @@
 FROM node:20-alpine
 
-# Install Docker CLI + compose + buildx (for controlling Docker on host via socket mount) and git for cloning repos
-RUN apk add --no-cache docker-cli docker-cli-compose docker-cli-buildx git
+# Install Docker CLI (for controlling Docker on host via socket mount) and git for cloning repos
+RUN apk add --no-cache docker-cli docker-cli-compose git
 
 # Create app directory
 WORKDIR /app

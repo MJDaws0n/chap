@@ -6,6 +6,7 @@
  */
 
 const path = require('path');
+const os = require('os');
 const yaml = require('yaml');
 
 function parseDockerMemoryToBytes(value) {
@@ -62,7 +63,16 @@ function clampDockerMemory(requested, maxAllowed) {
  */
 const SECURITY_CONFIG = {
     // Maximum resource limits for containers
-    maxCpus: parseFloat(process.env.CHAP_MAX_CPUS || '20'),
+    // NOTE: Docker rejects --cpus values above the host's CPU count.
+    // Treat <= 0 (including -1) as "no cap" i.e. use all host CPUs.
+    maxCpus: (() => {
+        const hostCpus = Math.max(1, (os.cpus() || []).length || 1);
+        const raw = String(process.env.CHAP_MAX_CPUS || '').trim();
+        const parsed = raw === '' ? NaN : parseFloat(raw);
+        const requested = Number.isFinite(parsed) ? parsed : hostCpus;
+        const effective = requested > 0 ? requested : hostCpus;
+        return Math.min(effective, hostCpus);
+    })(),
     maxMemory: process.env.CHAP_MAX_MEMORY || '20g',
     maxPids: parseInt(process.env.CHAP_MAX_PIDS || '256', 10),
     

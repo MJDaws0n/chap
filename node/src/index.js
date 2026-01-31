@@ -1936,12 +1936,12 @@ function execCommand(argv, options = {}) {
     const { redact, timeout, cwd, env } = options || {};
     const timeoutMs = Number.isFinite(timeout) ? Number(timeout) : 0;
 
-    return new Promise((resolve, reject) => {
+    const runOnce = (runEnv) => new Promise((resolve, reject) => {
         // Use the allowlisted base name as the executable to prevent callers from
         // influencing the path.
         const proc = spawn(cmdBase, argv.slice(1).map((x) => String(x)), {
             cwd: cwd || undefined,
-            env: env || process.env,
+            env: runEnv || process.env,
             stdio: ['ignore', 'pipe', 'pipe'],
         });
 
@@ -1970,6 +1970,26 @@ function execCommand(argv, options = {}) {
             const msg = killed ? 'Command timed out' : (stderr || stdout || `Command exited ${code}`);
             reject(new Error(String(redactSecrets(msg, redact || [])).trim()));
         });
+    });
+
+    const baseEnv = env || process.env;
+    return runOnce(baseEnv).catch(async (err) => {
+        const msg = String(err && err.message ? err.message : err);
+        // Docker CLI talking to an older daemon: retry with daemon's max API version.
+        // Example: "client version 1.52 is too new. Maximum supported API version is 1.43"
+        const m = msg.match(/Maximum supported API version is\s+([0-9.]+)/i);
+        if (!m) throw err;
+
+        const maxApi = String(m[1] || '').trim();
+        if (!maxApi) throw err;
+
+        // If user already pinned DOCKER_API_VERSION, don't override it.
+        const alreadyPinned = baseEnv && typeof baseEnv === 'object' && String(baseEnv.DOCKER_API_VERSION || '').trim();
+        if (alreadyPinned) throw err;
+
+        console.warn(`[Agent] Docker daemon is older; retrying with DOCKER_API_VERSION=${maxApi}`);
+        const nextEnv = { ...baseEnv, DOCKER_API_VERSION: maxApi };
+        return runOnce(nextEnv);
     });
 }
 
