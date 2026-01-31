@@ -1937,7 +1937,9 @@ function execCommand(argv, options = {}) {
     const timeoutMs = Number.isFinite(timeout) ? Number(timeout) : 0;
 
     return new Promise((resolve, reject) => {
-        const proc = spawn(String(argv[0]), argv.slice(1).map((x) => String(x)), {
+        // Use the allowlisted base name as the executable to prevent callers from
+        // influencing the path.
+        const proc = spawn(cmdBase, argv.slice(1).map((x) => String(x)), {
             cwd: cwd || undefined,
             env: env || process.env,
             stdio: ['ignore', 'pipe', 'pipe'],

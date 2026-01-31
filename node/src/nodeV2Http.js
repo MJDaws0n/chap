@@ -16,6 +16,23 @@ const Busboy = require('busboy');
 const HARD_MAX_FILE_READ_BYTES = 1024 * 1024; // 1MiB per request
 const HARD_MAX_SSE_EVENT_BYTES = 128 * 1024; // 128KiB per event
 
+function safeJsonStringify(value) {
+    const seen = new WeakSet();
+    try {
+        return JSON.stringify(value, (k, v) => {
+            if (k === 'stack' || k === 'trace') return undefined;
+            if (v instanceof Error) return { message: String(v.message || 'Error') };
+            if (v && typeof v === 'object') {
+                if (seen.has(v)) return '[Circular]';
+                seen.add(v);
+            }
+            return v;
+        });
+    } catch {
+        return JSON.stringify({ error: { code: 'serialize_failed', message: 'Failed to serialize response' } });
+    }
+}
+
 function b64urlDecode(s) {
     const ss = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
     const pad = ss.length % 4;
@@ -85,7 +102,7 @@ function json(res, status, obj, extraHeaders = {}) {
         'X-Content-Type-Options': 'nosniff',
         ...extraHeaders,
     });
-    res.end(JSON.stringify(sanitizeJsonForResponse(obj)));
+    res.end(safeJsonStringify(sanitizeJsonForResponse(obj)));
 }
 
 function readBody(req) {
@@ -249,8 +266,18 @@ function sseSanitizeEventName(event) {
 }
 
 function sseSanitizeData(data) {
-    let payload = typeof data === 'string' ? data : JSON.stringify(data);
-    payload = String(payload);
+    // Always send JSON for SSE so clients can JSON.parse(e.data).
+    // If callers pass a string, wrap it rather than sending raw text.
+    const asJson = typeof data === 'string' ? { message: data } : data;
+    let payload = safeJsonStringify(asJson);
+
+    // Prevent XSS in downstream clients that may inject `event.data` into the DOM.
+    // Using JSON unicode escapes preserves the decoded value after JSON.parse.
+    payload = payload
+        .replace(/</g, '\\u003c')
+        .replace(/>/g, '\\u003e')
+        .replace(/&/g, '\\u0026');
+
     // Prevent SSE splitting / control chars.
     payload = payload.replace(/\0/g, '').replace(/\r/g, '');
     if (payload.length > HARD_MAX_SSE_EVENT_BYTES) {
