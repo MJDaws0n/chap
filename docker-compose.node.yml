@@ -1,18 +1,12 @@
 services:
   node:
-    build:
-      context: ./node
-      dockerfile: Dockerfile
     container_name: chap-node
     restart: unless-stopped
     environment:
       - NODE_ID=${NODE_ID:?NODE_ID is required - get this from the Chap dashboard}
       - NODE_TOKEN=${NODE_TOKEN:?NODE_TOKEN is required - get this from the Chap dashboard}
       - CHAP_SERVER_URL=${CHAP_SERVER_URL:?CHAP_SERVER_URL is required - e.g. ws://your-server:8081}
-      # Node API tokens are signed/verified with NODE_TOKEN
       - CHAP_DATA_DIR=/data
-      - BROWSER_WS_HOST=${BROWSER_WS_HOST:-0.0.0.0}
-      - BROWSER_WS_PORT=${BROWSER_WS_PORT:-6002}
       - CHAP_MAX_CPUS=${CHAP_MAX_CPUS:-20}
       - CHAP_MAX_MEMORY=${CHAP_MAX_MEMORY:-20g}
       - CHAP_MAX_PIDS=${CHAP_MAX_PIDS:-10000}
@@ -20,7 +14,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - chap_data:/data
     ports:
-      - "${BROWSER_WS_PORT:-6002}:${BROWSER_WS_PORT:-6002}"
+      - "${BROWSER_WS_PORT:-6002}:6002"
     networks:
       - chap-node-network
     # Security: Run as non-root user (requires docker group)
