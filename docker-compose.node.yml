@@ -1,5 +1,9 @@
 services:
   node:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    image: chap-node:local
     container_name: chap-node
     restart: unless-stopped
     environment:
