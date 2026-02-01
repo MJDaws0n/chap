@@ -86,7 +86,7 @@ git clone https://github.com/MJDaws0n/chap.git ~/temp && rsync -a --exclude='.en
 ```
 assuming it's in your users folder at ~/chap-server.
 
-Then you need to restart obviously.
+Then you need to restart obviously and use the --build to re-build.
 
 ## Installation
 
