@@ -73,6 +73,21 @@ Chap consists of two components that run on **separate (or same) servers**:
 ```
 ---
 
+## Update
+After installiation, one line command to update the node:
+```
+git clone https://github.com/MJDaws0n/chap.git ~/temp && rsync -a --exclude='.env' ~/temp/ ~/chap-node/ && rm -rf ~/temp
+```
+assuming it's in your users folder at ~/chap-node
+
+And for the server update using:
+```
+git clone https://github.com/MJDaws0n/chap.git ~/temp && rsync -a --exclude='.env' ~/temp/ ~/chap-server/ && rm -rf ~/temp
+```
+assuming it's in your users folder at ~/chap-server.
+
+Then you need to restart obviously.
+
 ## Installation
 
 ### Prerequisites
