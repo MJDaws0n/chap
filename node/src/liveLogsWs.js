@@ -1249,7 +1249,34 @@ function createLiveLogsWs(deps) {
                 const name = String(payload.name || '').trim();
                 if (!await ensureVolumeBelongsToApp(browserWs, name)) return volumesReply(browserWs, requestId, false, 'Volume not found for application');
 
-                const proc = spawn('docker', ['volume', 'rm', '--force', name], { stdio: ['ignore', 'pipe', 'pipe'] });
+                // Force cleanup: remove any containers (running or stopped) attached to this volume first.
+                // Docker won't let us delete the volume otherwise.
+                try {
+                    const idsRaw = await new Promise((resolve, reject) => {
+                         const p = spawn('docker', ['ps', '-aq', '--filter', `volume=${name}`], { stdio: ['ignore', 'pipe', 'ignore'] });
+                         let out = '';
+                         p.stdout.on('data', c => { out += c.toString(); });
+                         p.on('close', code => {
+                             if (code !== 0) return reject(new Error('Failed to list containers'));
+                             resolve(out);
+                         });
+                         p.on('error', reject);
+                    });
+                    
+                    const ids = String(idsRaw).split(/\s+/).filter(Boolean);
+                    if (ids.length > 0) {
+                        await new Promise((resolve, reject) => {
+                            const p = spawn('docker', ['rm', '-f', ...ids], { stdio: 'ignore' });
+                            p.on('close', resolve);
+                            p.on('error', reject);
+                        });
+                    }
+                } catch (err) {
+                    // Log but proceed to try removing volume anyway
+                    console.warn(`[Agent] Failed to cleanup containers for volume ${name}: ${err.message}`);
+                }
+
+                const proc = spawn('docker', ['volume', 'rm', '-f', name], { stdio: ['ignore', 'pipe', 'pipe'] });
                 let stderr = '';
                 proc.stderr.on('data', (c) => { stderr += c.toString(); });
                 proc.on('close', (code) => {

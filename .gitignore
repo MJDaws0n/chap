@@ -48,3 +48,5 @@ mysql-data/
 # Misc
 *.bak
 *.tmp
+server/Dockerfiled
+node/Dockerfiled

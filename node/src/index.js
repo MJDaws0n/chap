@@ -1141,6 +1141,10 @@ async function deployCompose(deploymentId, appConfig) {
         const memRawFallback = appConfig.memory_limit ?? appConfig.memoryLimit ?? appConfig.ram_limit ?? appConfig.ramLimit;
         const memRaw = normalized.memoryLimit ?? memRawFallback;
 
+        const pidsRaw = appConfig.pids_limit ?? appConfig.pidsLimit;
+        const pidsParsed = parseInt(pidsRaw, 10);
+        const pidsExplicitUnlimited = Number.isFinite(pidsParsed) && pidsParsed <= 0;
+
         const cpuRequested = normalized.cpuCores !== null
             ? normalized.cpuCores
             : (cpuRaw === null || cpuRaw === undefined ? null : parseFloat(String(cpuRaw).trim()));
@@ -1164,7 +1168,7 @@ async function deployCompose(deploymentId, appConfig) {
             : (Number.isFinite(pidsRequested) && pidsRequested > 0 ? pidsRequested : null);
         const pidsLimited = Number.isFinite(pidsTotal) && pidsTotal > 0;
 
-        if (!cpuLimited && !memLimited && !pidsLimited) {
+        if (!cpuLimited && !memLimited && !pidsLimited && !pidsExplicitUnlimited) {
             return raw;
         }
 
@@ -1224,17 +1228,25 @@ async function deployCompose(deploymentId, appConfig) {
             memRemainderMiB = totalMiB - (perWeightMemMiB * totalWeight);
         }
 
-        // PIDs: distribute as ints.
-        let pidsRemainder = 0;
-        let perWeightPids = 0;
-        if (pidsLimited) {
-            const pidsTotalInt = Math.floor(pidsTotal);
-            perWeightPids = Math.floor(pidsTotalInt / totalWeight);
-            pidsRemainder = pidsTotalInt - (perWeightPids * totalWeight);
-        }
+        // PIDs: do NOT distribute across services.
+        // pids_limit is a per-container limit; dividing it can create unusably small limits
+        // (e.g. 1) that break common images (mysql entrypoint spawns multiple processes).
+        // We enforce it as an upper-bound per service instead.
+        const pidsPerServiceCap = pidsLimited ? Math.max(64, Math.floor(pidsTotal)) : null;
 
         for (const entry of weights) {
             const { name, service, weight } = entry;
+
+            // If the app explicitly requests unlimited PIDs (0/-1), ensure we don't
+            // carry forward any previously injected limits.
+            if (pidsExplicitUnlimited) {
+                if (Object.prototype.hasOwnProperty.call(service, 'pids_limit')) {
+                    delete service.pids_limit;
+                }
+                if (service?.deploy?.resources?.limits && Object.prototype.hasOwnProperty.call(service.deploy.resources.limits, 'pids')) {
+                    delete service.deploy.resources.limits.pids;
+                }
+            }
 
             if (cpuLimited) {
                 let cpuMilli = perWeightCpuMilli * weight;
@@ -1285,14 +1297,17 @@ async function deployCompose(deploymentId, appConfig) {
             }
 
             if (pidsLimited) {
-                let pidsForService = perWeightPids * weight;
-                if (pidsRemainder > 0) {
-                    const extra = Math.min(pidsRemainder, weight);
-                    pidsForService += extra;
-                    pidsRemainder -= extra;
-                }
+                const cap = pidsPerServiceCap;
+                const existing = (() => {
+                    const a = service?.pids_limit;
+                    const b = service?.deploy?.resources?.limits?.pids;
+                    const n1 = a === undefined ? NaN : parseInt(a, 10);
+                    const n2 = b === undefined ? NaN : parseInt(b, 10);
+                    const pick = Number.isFinite(n1) && n1 > 0 ? n1 : (Number.isFinite(n2) && n2 > 0 ? n2 : null);
+                    return pick;
+                })();
 
-                if (pidsForService <= 0) pidsForService = 1;
+                const pidsForService = existing !== null ? Math.min(existing, cap) : cap;
 
                 service.deploy = service.deploy && typeof service.deploy === 'object' ? service.deploy : {};
                 service.deploy.resources = service.deploy.resources && typeof service.deploy.resources === 'object' ? service.deploy.resources : {};
@@ -1328,13 +1343,14 @@ async function deployCompose(deploymentId, appConfig) {
         console.log(`[Agent] 📝 Writing docker-compose.yml from config`);
         // Security: Sanitize compose file to remove dangerous options
         try {
-            dockerCompose = security.sanitizeComposeFile(dockerCompose);
+            dockerCompose = security.sanitizeComposeFile(dockerCompose, { applicationId });
 
             // Ensure compose services are tagged as Chap-managed so metrics can find them.
             dockerCompose = injectChapLabels(dockerCompose);
 
             // Enforce app-level CPU/memory caps by dividing across services.
             dockerCompose = applyAppResourceCapsToCompose(dockerCompose);
+
 
             console.log(`[Agent] 🔒 Docker Compose file sanitized for security`);
             sendLog(deploymentId, '🔒 Compose file security validated', 'info');
@@ -1350,7 +1366,7 @@ async function deployCompose(deploymentId, appConfig) {
         if (fs.existsSync(existingComposePath)) {
             try {
                 const existingCompose = fs.readFileSync(existingComposePath, 'utf8');
-                let sanitizedCompose = security.sanitizeComposeFile(existingCompose);
+                let sanitizedCompose = security.sanitizeComposeFile(existingCompose, { applicationId });
 
                 // Ensure compose services are tagged as Chap-managed so metrics can find them.
                 sanitizedCompose = injectChapLabels(sanitizedCompose);
@@ -1360,7 +1376,6 @@ async function deployCompose(deploymentId, appConfig) {
 
                 fs.writeFileSync(existingComposePath, sanitizedCompose);
                 console.log(`[Agent] 🔒 Existing compose file sanitized for security`);
-                sendLog(deploymentId, '🔒 Compose file security validated', 'info');
             } catch (err) {
                 console.error(`[Agent] ❌ Security validation failed:`, err.message);
                 sendLog(deploymentId, `❌ Security validation failed: ${err.message}`, 'error');
@@ -1370,11 +1385,50 @@ async function deployCompose(deploymentId, appConfig) {
     }
 
     // Write .env file with sanitized environment variables (used by docker compose interpolation)
-    console.log(`[Agent] 🔐 Writing environment variables (${Object.keys(safeEnvVars).length} vars)`);
-    const envContent = Object.entries(safeEnvVars)
+    // IMPORTANT: Don't clobber a repo-provided .env. Many compose setups rely on it for interpolation.
+    // Merge it (sanitized) and let Chap-provided env vars win.
+    const parseDotEnv = (raw) => {
+        const out = {};
+        const text = String(raw ?? '');
+        for (const lineRaw of text.split(/\r?\n/)) {
+            const line = String(lineRaw).trim();
+            if (!line || line.startsWith('#')) continue;
+            const withoutExport = line.startsWith('export ') ? line.slice('export '.length).trim() : line;
+            const eq = withoutExport.indexOf('=');
+            if (eq <= 0) continue;
+            const key = withoutExport.slice(0, eq).trim();
+            let value = withoutExport.slice(eq + 1);
+            // Remove surrounding quotes (best-effort, matches common dotenv behavior)
+            const v = value.trim();
+            if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+                value = v.slice(1, -1);
+            } else {
+                value = value.trim();
+            }
+            if (!key) continue;
+            out[key] = value;
+        }
+        return out;
+    };
+
+    const envPath = path.join(composeDir, '.env');
+    let repoEnvVars = {};
+    try {
+        if (fs.existsSync(envPath)) {
+            repoEnvVars = parseDotEnv(fs.readFileSync(envPath, 'utf8'));
+        }
+    } catch (_) {
+        repoEnvVars = {};
+    }
+
+    const safeRepoEnvVars = security.sanitizeEnvVars(repoEnvVars);
+    const mergedEnvVars = { ...safeRepoEnvVars, ...safeEnvVars };
+
+    console.log(`[Agent] 🔐 Writing environment variables (${Object.keys(mergedEnvVars).length} vars; repo=${Object.keys(safeRepoEnvVars).length}, chap=${Object.keys(safeEnvVars).length})`);
+    const envContent = Object.entries(mergedEnvVars)
         .map(([k, v]) => `${k}=${v}`)
         .join('\n');
-    fs.writeFileSync(path.join(composeDir, '.env'), envContent);
+    fs.writeFileSync(envPath, envContent);
 
     // Runtime enforcement: compose may only publish allocated host ports.
     // Important: resolve ${VARS} using the just-written .env so defaults like ${PORT:-8080}
@@ -1399,17 +1453,8 @@ async function deployCompose(deploymentId, appConfig) {
     }
     
     // Log the .env contents (without sensitive values)
-    console.log(`[Agent] Environment variables:`, Object.keys(safeEnvVars).join(', '));
-    sendLog(deploymentId, `Environment: ${Object.keys(safeEnvVars).join(', ')}`, 'info');
-    
-    // Stop any existing compose project
-    try {
-        console.log(`[Agent] 🛑 Stopping existing services...`);
-        const safeAppId = String(applicationId).trim();
-        await execCommand(['docker', 'compose', '-p', `chap-${safeAppId}`, 'down'], { cwd: composeDir });
-    } catch (err) {
-        // Ignore if nothing to stop
-    }
+    console.log(`[Agent] Environment variables:`, Object.keys(mergedEnvVars).join(', '));
+    sendLog(deploymentId, `Environment: ${Object.keys(mergedEnvVars).join(', ')}`, 'info');
     
     console.log(`[Agent] 🚀 Starting services with Docker Compose...`);
     sendLog(deploymentId, '🚀 Starting services with Docker Compose...', 'info');
@@ -1419,7 +1464,14 @@ async function deployCompose(deploymentId, appConfig) {
         const safeAppId = String(applicationId).trim();
         // NOTE: Without --compatibility, docker compose ignores deploy.resources limits (non-swarm).
         // Chap uses deploy.resources.limits for CPU/memory; --compatibility translates them into container runtime flags.
-        const composeOutput = await execCommand(['docker', 'compose', '--compatibility', '-p', `chap-${safeAppId}`, 'up', '-d', '--build'], { cwd: composeDir });
+        // IMPORTANT: do NOT run `docker compose down` automatically on each deploy.
+        // `down` removes the project network, which changes subnets/IPs and can break apps that
+        // rely on stable internal source subnets (common with DB allowlists).
+        const composeOutput = await execCommand([
+            'docker', 'compose', '--compatibility',
+            '-p', `chap-${safeAppId}`,
+            'up', '-d', '--build', '--remove-orphans'
+        ], { cwd: composeDir });
         console.log(`[Agent] ✓ Docker Compose services started`);
         sendLog(deploymentId, '✓ Docker Compose services started', 'info');
     } catch (err) {
@@ -1445,10 +1497,35 @@ async function deployCompose(deploymentId, appConfig) {
         console.log(`[Agent] 📦 Services running: ${containers.length}`);
         sendLog(deploymentId, `📦 Started ${containers.length} container(s)`, 'info');
         
-        containers.forEach(container => {
-            console.log(`[Agent]   - ${container.Service || container.Name}: ${container.State}`);
-            sendLog(deploymentId, `  ✓ ${container.Service || container.Name}: ${container.State}`, 'info');
-        });
+        for (const container of containers) {
+            const displayName = container.Service || container.Name;
+            const stateText = String(container.State || '').trim();
+            console.log(`[Agent]   - ${displayName}: ${stateText}`);
+            sendLog(deploymentId, `  ✓ ${displayName}: ${stateText}`, 'info');
+
+            // If a container isn't clearly running/healthy, gather more diagnostics.
+            const looksRunning = /\brunning\b|\bup\b/i.test(stateText) && !/\bexited\b|\bdead\b|\brestarting\b/i.test(stateText);
+            const inspectId = container.ID || container.Name;
+            if (!inspectId || looksRunning) {
+                continue;
+            }
+
+            try {
+                const inspectLine = await execCommand([
+                    'docker', 'inspect',
+                    '-f',
+                    'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} err={{.State.Error}} health={{if .State.Health}}{{.State.Health.Status}}{{end}} mem={{.HostConfig.Memory}} nanoCpus={{.HostConfig.NanoCpus}} pids={{.HostConfig.PidsLimit}}',
+                    String(inspectId),
+                ], { timeout: 8000 });
+
+                const msg = String(inspectLine || '').trim();
+                if (msg) {
+                    sendLog(deploymentId, `  ⚠ ${displayName} diagnostics: ${msg}`, 'warn');
+                }
+            } catch (e) {
+                sendLog(deploymentId, `  ⚠ ${displayName} diagnostics unavailable: ${e.message}`, 'warn');
+            }
+        }
     } catch (err) {
         console.warn(`[Agent] ⚠ Could not list containers:`, err.message);
     }
@@ -2186,6 +2263,52 @@ async function runSweeperOnce() {
         safeStorageRemove(pCompose, `compose dir ${name}`, dryRun);
         safeStorageRemove(path.join(storage.dirs.apps, `app-${uuid}`), `app dir app-${uuid}`, dryRun);
         safeStorageRemove(path.join(storage.dirs.volumes, `app-${uuid}`), `volume dir app-${uuid}`, dryRun);
+    }
+
+    // 3) Orphan docker resources for chap compose projects even if local directories are gone.
+    // This catches cases where compose/app dirs were manually deleted or a prior bug left volumes behind.
+    try {
+        const uuidRe2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const candidates = new Set();
+
+        // Compose-managed volumes are usually named: chap-<uuid>_<volname>
+        const volNames = (await execCommand(['docker', 'volume', 'ls', '--format', '{{.Name}}'], { timeout: 20000 }))
+            .split('\n').map(s => s.trim()).filter(Boolean);
+        for (const v of volNames) {
+            if (!v.startsWith('chap-')) continue;
+            const proj = v.split('_')[0];
+            const uuid = proj.slice('chap-'.length);
+            if (uuidRe2.test(uuid)) candidates.add(proj);
+        }
+
+        // Compose-managed networks are usually named: chap-<uuid>_<net>
+        const netNames = (await execCommand(['docker', 'network', 'ls', '--format', '{{.Name}}'], { timeout: 20000 }))
+            .split('\n').map(s => s.trim()).filter(Boolean);
+        for (const n of netNames) {
+            if (!n.startsWith('chap-')) continue;
+            const proj = n.split('_')[0];
+            const uuid = proj.slice('chap-'.length);
+            if (uuidRe2.test(uuid)) candidates.add(proj);
+        }
+
+        for (const project of candidates) {
+            const uuid = project.slice('chap-'.length).toLowerCase();
+
+            // Skip if still has containers.
+            const hasContainers = await composeProjectHasContainers(project);
+            if (hasContainers) continue;
+
+            // If local dirs exist, step (2) handles them; only clean when they are gone.
+            const localCompose = path.join(storage.dirs.compose, `service-${uuid}`);
+            const localApp = path.join(storage.dirs.apps, `app-${uuid}`);
+            const localVol = path.join(storage.dirs.volumes, `app-${uuid}`);
+            const anyLocal = [localCompose, localApp, localVol].some(p => fs.existsSync(p));
+            if (anyLocal) continue;
+
+            await cleanupDockerByComposeProject(project, dryRun);
+        }
+    } catch (e) {
+        console.warn(`[Sweeper] Orphan docker cleanup failed: ${e.message}`);
     }
 }
 

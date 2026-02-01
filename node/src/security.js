@@ -74,7 +74,9 @@ const SECURITY_CONFIG = {
         return Math.min(effective, hostCpus);
     })(),
     maxMemory: process.env.CHAP_MAX_MEMORY || '20g',
-    maxPids: parseInt(process.env.CHAP_MAX_PIDS || '256', 10),
+    // Default is intentionally high to avoid breaking common images (e.g. MySQL) on nodes
+    // where CHAP_MAX_PIDS isn't set. Operators can still clamp it via CHAP_MAX_PIDS.
+    maxPids: parseInt(process.env.CHAP_MAX_PIDS || '10000', 10),
     
     // Network settings
     defaultNetwork: 'chap-apps',
@@ -182,6 +184,7 @@ const BLOCKED_COMPOSE_OPTIONS = {
         'cgroup_parent',
         'devices',
         'device_cgroup_rules',
+        'container_name', // Block strict container naming to prevent collisions
     ],
     // Network modes to block
     networkModes: ['host', 'container:'],
@@ -528,7 +531,7 @@ function tokenizeExecCommand(command) {
 /**
  * Validate and sanitize docker-compose content
  */
-function sanitizeComposeFile(composeContent) {
+function sanitizeComposeFile(composeContent, options = {}) {
     let compose;
     
     try {
@@ -540,12 +543,108 @@ function sanitizeComposeFile(composeContent) {
     if (!compose || typeof compose !== 'object') {
         throw new Error('Invalid docker-compose structure');
     }
+
+    // Note: We intentionally do NOT assign fixed IPAM subnets here.
+    // Picking a hard-coded subnet can overlap with existing docker networks on the node.
+    // Subnet selection (if desired) must be done at deploy time, with access to docker's
+    // current network inventory.
+
+    // Normalize networks so compose behaves consistently under Chap.
+    // Key points:
+    // - Ensure any service-referenced networks exist at top-level.
+    // - Prevent user compose files from forcing global/shared network names (networks.*.name)
+    //   or joining external networks (networks.*.external). In Chap, networks should be
+    //   scoped to the compose project to avoid cross-app traffic and strange behavior.
+    if (compose.networks === undefined || compose.networks === null) {
+        compose.networks = {};
+    }
+    if (typeof compose.networks !== 'object') {
+        // If networks is invalid, drop it (compose will use the default network).
+        console.warn('[Security] Removed invalid top-level networks definition');
+        compose.networks = {};
+    }
+
+    const ensureNetworkDefined = (name) => {
+        if (!name) return;
+        if (compose.networks[name] === undefined) {
+            compose.networks[name] = {};
+        }
+        const cfg = compose.networks[name];
+        if (cfg === null || cfg === true || cfg === false || typeof cfg === 'string') {
+            compose.networks[name] = {};
+        }
+    };
+
+    // Sanitize existing network configs.
+    for (const [netName, netCfgRaw] of Object.entries(compose.networks)) {
+        if (!netName) continue;
+        ensureNetworkDefined(netName);
+        const netCfg = compose.networks[netName];
+        if (!netCfg || typeof netCfg !== 'object') continue;
+
+        // In standard Chap mode, we allow external networks and custom names
+        // so behavior matches manual `docker compose up`.
+        // The isolation is provided by the fact that apps run in their own project.
+        // If users explicitly want to join an external network (e.g. proxy), we allow it.
+        // if (netCfg.external) { ... } // Removed restriction
+
+        // Check if name is fixed (potential collision if multiple apps use same name)
+        // We allow it to support "Exact manual parity", but log it.
+        if (netCfg.name) {
+             // console.warn(`[Security] Note: networks.${netName} uses a fixed name '${netCfg.name}'`);
+        }
+
+        compose.networks[netName] = netCfg;
+    }
     
     // Process each service
     if (compose.services) {
+        const serviceNames = new Set(Object.keys(compose.services));
+
+        const extractServiceFromContainerRef = (ref) => {
+            const raw = String(ref || '').trim().replace(/^\/+/, '');
+            if (!raw) return null;
+            if (serviceNames.has(raw)) return raw;
+
+            // Common docker compose container naming: <project>_<service>_<index>
+            // e.g. chap-<uuid>_db_1 -> db
+            const byUnderscore = raw.split('_').filter(Boolean);
+            if (byUnderscore.length >= 3) {
+                const idx = byUnderscore[byUnderscore.length - 1];
+                const svc = byUnderscore[byUnderscore.length - 2];
+                if (/^\d+$/.test(idx) && serviceNames.has(svc)) {
+                    return svc;
+                }
+            }
+
+            // Sometimes people reference container names like <service>-1; keep this conservative.
+            const m = raw.match(/^([a-zA-Z0-9][a-zA-Z0-9_.-]*)[-_](\d+)$/);
+            if (m && serviceNames.has(m[1])) {
+                return m[1];
+            }
+
+            return null;
+        };
+
         for (const [serviceName, service] of Object.entries(compose.services)) {
             if (!service || typeof service !== 'object') {
                 continue;
+            }
+
+            // Ensure any referenced networks are defined.
+            // Compose requires top-level network definitions; outside Chap people often rely on
+            // project-scoped defaults and expect this to "just work".
+            if (service.networks) {
+                if (Array.isArray(service.networks)) {
+                    for (const n of service.networks) {
+                        if (typeof n === 'string') ensureNetworkDefined(n);
+                        else if (n && typeof n === 'object' && typeof n.name === 'string') ensureNetworkDefined(n.name);
+                    }
+                } else if (service.networks && typeof service.networks === 'object') {
+                    for (const n of Object.keys(service.networks)) {
+                        ensureNetworkDefined(n);
+                    }
+                }
             }
 
             // Enable stdin by default so the browser console can send input via `docker attach`.
@@ -564,12 +663,27 @@ function sanitizeComposeFile(composeContent) {
             
             // Check network_mode
             if (service.network_mode) {
-                const isBlocked = BLOCKED_COMPOSE_OPTIONS.networkModes.some(blocked =>
-                    service.network_mode === blocked || service.network_mode.startsWith(blocked)
-                );
-                if (isBlocked) {
-                    console.warn(`[Security] Removed blocked network_mode from service ${serviceName}: ${service.network_mode}`);
+                const mode = String(service.network_mode).trim();
+
+                if (mode === 'host') {
+                    console.warn(`[Security] Removed blocked network_mode from service ${serviceName}: ${mode}`);
                     delete service.network_mode;
+                } else if (mode.toLowerCase().startsWith('container:')) {
+                    // Generic compatibility fix:
+                    // Compose files sometimes use `network_mode: container:<service>` to make a sidecar share the
+                    // target service's network namespace (e.g. so 127.0.0.1 works). Our security rules block
+                    // arbitrary `container:` joins, but we can safely rewrite the common in-project case.
+                    const targetRaw = mode.slice('container:'.length).trim();
+                    const target = targetRaw.replace(/^\/+/, '');
+                    const svc = extractServiceFromContainerRef(target);
+
+                    if (svc) {
+                        service.network_mode = `service:${svc}`;
+                        console.warn(`[Security] Rewrote network_mode for service ${serviceName}: container:${target} -> service:${svc}`);
+                    } else {
+                        console.warn(`[Security] Removed blocked network_mode from service ${serviceName}: ${mode}`);
+                        delete service.network_mode;
+                    }
                 }
             }
             
@@ -605,8 +719,29 @@ function sanitizeComposeFile(composeContent) {
             
             const currentMemory = service.deploy.resources.limits.memory || SECURITY_CONFIG.maxMemory;
             service.deploy.resources.limits.memory = clampDockerMemory(currentMemory, SECURITY_CONFIG.maxMemory);
-            
-            service.deploy.resources.limits.pids = SECURITY_CONFIG.maxPids;
+
+            // PIDs: clamp rather than always forcing max (so users can request lower caps).
+            // Treat <= 0 (including -1) as "unlimited" but still enforce node maximum.
+            const pidsMax = Number.isFinite(SECURITY_CONFIG.maxPids) && SECURITY_CONFIG.maxPids > 0
+                ? SECURITY_CONFIG.maxPids
+                : 10000;
+
+            const existingDeployPidsRaw = service.deploy.resources.limits.pids;
+            const existingDeployPids = existingDeployPidsRaw === undefined ? NaN : parseInt(existingDeployPidsRaw, 10);
+            const effectiveDeployPids = Number.isFinite(existingDeployPids) && existingDeployPids > 0
+                ? Math.min(existingDeployPids, pidsMax)
+                : pidsMax;
+
+            service.deploy.resources.limits.pids = effectiveDeployPids;
+
+            // Also set the non-swarm compose key so the cap applies even without --compatibility.
+            // Compose supports pids_limit as a per-container cap.
+            const existingServicePidsRaw = service.pids_limit;
+            const existingServicePids = existingServicePidsRaw === undefined ? NaN : parseInt(existingServicePidsRaw, 10);
+            const effectiveServicePids = Number.isFinite(existingServicePids) && existingServicePids > 0
+                ? Math.min(existingServicePids, pidsMax)
+                : effectiveDeployPids;
+            service.pids_limit = effectiveServicePids;
         }
     }
     

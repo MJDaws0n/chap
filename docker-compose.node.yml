@@ -10,10 +10,12 @@ services:
       - NODE_ID=${NODE_ID:?NODE_ID is required - get this from the Chap dashboard}
       - NODE_TOKEN=${NODE_TOKEN:?NODE_TOKEN is required - get this from the Chap dashboard}
       - CHAP_SERVER_URL=${CHAP_SERVER_URL:?CHAP_SERVER_URL is required - e.g. ws://your-server:8081}
-      # Compatibility: some hosts run an older Docker Engine.
-      # If you see "client version X is too new. Maximum supported API version is 1.43",
-      # either upgrade Docker on the host or keep this pinned.
-      - DOCKER_API_VERSION=${DOCKER_API_VERSION:-1.43}
+      # Compatibility: Docker API version override.
+      # If you see "client version X is too old. Minimum supported API version is 1.44",
+      # upgrade the client or bump this value.
+      # If you see "client version X is too new. Maximum supported API version is ...",
+      # lower this value (or upgrade the Docker daemon).
+      - DOCKER_API_VERSION=${DOCKER_API_VERSION:-1.44}
       - CHAP_DATA_DIR=/data
       - CHAP_MAX_CPUS=${CHAP_MAX_CPUS:-20}
       - CHAP_MAX_MEMORY=${CHAP_MAX_MEMORY:-20g}
