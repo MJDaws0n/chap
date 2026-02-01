@@ -169,7 +169,10 @@
           }
 
           const status = data && data.status ? String(data.status) : '';
-          if (status && !['queued', 'building', 'deploying'].includes(status)) {
+          const isFinal = status && !['queued', 'building', 'deploying'].includes(status);
+          const isFailed = status && ['failed', 'error', 'timed_out', 'cancelled'].includes(status);
+
+          if (isFinal) {
             if (poll) clearInterval(poll);
             poll = null;
 
@@ -181,13 +184,33 @@
               btn.textContent = 'Redeploy';
             }
 
-            // Return to container logs after a short pause.
-            setTimeout(() => {
-              setMode('logs');
-              showToast('success', 'Deployment finished');
-            }, 700);
+            // Remove generated Cancel button if any, show Stop button if successful?
+            // Actually, we will reload on success, so state handles itself.
+            // On failure, we stay here.
+
+            if (isFailed) {
+                if (deployStatus) {
+                    deployStatus.textContent = simplifiedStatus(status);
+                    deployStatus.className = 'text-sm text-danger font-bold';
+                }
+                showToast('error', `Deployment ${status}`);
+                // Restore Stop button if it was hidden? Or just leave as is. 
+                // We should probably toggle buttons back.
+                toggleCancelButton(false); 
+            } else {
+                // Success
+                if (deployStatus) {
+                    deployStatus.textContent = 'Success!';
+                    deployStatus.className = 'text-sm text-success font-bold';
+                }
+                showToast('success', 'Deployment finished');
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            }
           }
         } catch (e) {
+            console.error(e);
           // keep polling but show status
           if (deployStatus) deployStatus.textContent = 'Status: error fetching logs';
         }
@@ -197,15 +220,68 @@
       poll = setInterval(tick, 2000);
     }
 
-    deployForm.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
+    // Helper functions for buttons
+    function toggleCancelButton(show, deploymentUuid) {
+        const actionsWrap = qs('#app-actions');
+        if (!actionsWrap) return;
 
-      const btn = deployForm.querySelector('button[type="submit"]');
-      if (btn) {
-        btn.disabled = true;
-        btn.setAttribute('aria-disabled', 'true');
-        btn.textContent = 'Deploying…';
+        const stopForm = qs('form[data-stop-form]', actionsWrap);
+        let cancelForm = qs('form[data-cancel-deploy-form]', actionsWrap);
+
+        if (show && deploymentUuid) {
+            if (stopForm) stopForm.classList.add('hidden');
+            
+            // Create Cancel form if not exists
+            if (!cancelForm) {
+                 const csrf = getCsrfToken(deployForm);
+                 const formHtml = `
+                    <form method="POST" action="/deployments/${encodeURIComponent(deploymentUuid)}/cancel" class="inline-block" data-cancel-deploy-form>
+                        <input type="hidden" name="_csrf_token" value="${escapeHtml(csrf)}">
+                        <button type="submit" class="btn btn-secondary">Cancel</button>
+                    </form>
+                 `;
+                 // Append before usage (after deploy form) or just append
+                 const temp = document.createElement('div');
+                 temp.innerHTML = formHtml;
+                 cancelForm = temp.firstElementChild;
+                 actionsWrap.appendChild(cancelForm);
+                 
+                 // Bind event to new form
+                 bindCancelForm(cancelForm);
+            } else {
+                cancelForm.action = `/deployments/${encodeURIComponent(deploymentUuid)}/cancel`;
+                cancelForm.classList.remove('hidden');
+            }{
+            deployStatus.textContent = 'Status: starting…';
+            deployStatus.className = 'text-sm text-secondary';
+        }
+        deployLogs.innerHTML = `<div class="text-sm text-secondary">Starting deployment…</div>`;
+        setMode('deploy');
+        
+        toggleCancelButton(true, uuid);
+
+        await pollDeployment(uuid);
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        showToast('error', msg);
+        // Do not switch back to logs if we failed to even start, but if we are in 'deploy' mode?
+        // If startRes failed, we probably didn't switch mode yet unless we did.
+        // We switch mode AFTER successful startRes.
+        // So here e is request error.
+        
+        if (btn) {
+          btn.disabled = false;
+          btn.removeAttribute('aria-disabled');
+          // best-effort label
+          btn.textContent = 'Deploy';
+        }
       }
+    });
+
+    // Cancel button (existing)
+    const cancelForm = qs('form[data-cancel-deploy-form]');
+    if (cancelForm) {
+        bindCancelForm(cancelForm
 
       try {
         const csrf = getCsrfToken(deployForm);

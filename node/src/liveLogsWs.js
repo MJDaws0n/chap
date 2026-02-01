@@ -1196,6 +1196,38 @@ function createLiveLogsWs(deps) {
             }
         }
 
+        const app = safeId(applicationUuid);
+        const addVolumeName = (name) => {
+            const volName = String(name || '').trim();
+            if (!volName) return;
+            if (!byName.has(volName)) {
+                byName.set(volName, {
+                    name: volName,
+                    type: 'volume',
+                    mounts: new Set(),
+                    used_by: new Set(),
+                });
+            }
+        };
+
+        // Also include any compose/project-labeled volumes (even if containers are stopped).
+        try {
+            const labelFilters = [
+                [`label=chap.app=${app}`],
+                [`label=com.docker.compose.project=chap-${app}`],
+            ];
+
+            for (const filters of labelFilters) {
+                const argv = ['docker', 'volume', 'ls', '-q'];
+                for (const f of filters) argv.push('--filter', f);
+                const out = await execCommand(argv, { timeout: 15000 });
+                const names = String(out || '').trim().split('\n').map((x) => x.trim()).filter(Boolean);
+                for (const name of names) addVolumeName(name);
+            }
+        } catch {
+            // ignore volume ls failures
+        }
+
         const vols = Array.from(byName.values()).map((v) => ({
             name: v.name,
             type: v.type,
@@ -2698,10 +2730,16 @@ function createLiveLogsWs(deps) {
                     // This is just a best-effort nudge if docker logs exits unexpectedly.
                     try {
                         const all = await getAppContainers(applicationUuid, true);
-                        const latest = all.filter((c) => isRunningLike(c.status));
-                        const idsKey = latest.map(x => x.id).sort().join(',');
+                        
+                        // Check if container is still running. If stopped/exited, do not loop restart.
+                        const current = findContainerById(all, containerId);
+                        if (!current || !isRunningLike(current.status)) return;
+
+                        const loggable = all.filter((c) => c.status && c.status !== 'removed' && c.status !== 'dead');
+                        const idsKey = loggable.map(x => x.id).sort().join(',');
+                        
                         if (browserWs._containerIdsKey && browserWs._containerIdsKey !== idsKey) return;
-                        startLogStreams(browserWs, applicationUuid, latest);
+                        startLogStreams(browserWs, applicationUuid, loggable);
                     } catch {
                         // ignore
                     }
@@ -2732,8 +2770,11 @@ function createLiveLogsWs(deps) {
 
             try {
                 const containers = await getAppContainers(applicationUuid, true);
-                const running = containers.filter((c) => isRunningLike(c.status));
-                const idsKey = running.map((c) => c.id).sort().join(',');
+                
+                // Include stopped containers so we can view their logs (user request for persistence)
+                // Filter out completely dead/removed ones if needed, but 'exited' is fine.
+                const loggable = containers.filter((c) => c.status && c.status !== 'removed' && c.status !== 'dead');
+                const idsKey = loggable.map((c) => c.id).sort().join(',');
 
                 // Avoid spam: hash only stable fields (id/name/status)
                 const hash = JSON.stringify(containers.map((c) => ({ id: c.id, name: c.name, status: c.status })));
@@ -2749,7 +2790,7 @@ function createLiveLogsWs(deps) {
 
                 if (browserWs._containerIdsKey !== idsKey) {
                     browserWs._containerIdsKey = idsKey;
-                    startLogStreams(browserWs, applicationUuid, running);
+                    startLogStreams(browserWs, applicationUuid, loggable);
                 }
             } finally {
                 browserWs._discoveryInFlight = false;

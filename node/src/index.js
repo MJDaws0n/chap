@@ -1104,6 +1104,38 @@ async function deployCompose(deploymentId, appConfig) {
             doc.services[serviceName] = service;
         }
 
+        if (doc.volumes && typeof doc.volumes === 'object') {
+            for (const [volumeName, volumeConfigRaw] of Object.entries(doc.volumes)) {
+                if (!volumeName) continue;
+                let volumeConfig = volumeConfigRaw;
+                if (!volumeConfig || typeof volumeConfig !== 'object') {
+                    volumeConfig = {};
+                }
+
+                const requiredLabels = {
+                    'chap.managed': 'true',
+                    'chap.app': String(applicationId),
+                    'chap.deployment': String(deploymentId),
+                };
+
+                if (Array.isArray(volumeConfig.labels)) {
+                    const existing = new Set(volumeConfig.labels.map((x) => String(x)));
+                    for (const [k, v] of Object.entries(requiredLabels)) {
+                        const kv = `${k}=${v}`;
+                        if (!existing.has(kv)) volumeConfig.labels.push(kv);
+                    }
+                } else if (volumeConfig.labels && typeof volumeConfig.labels === 'object') {
+                    for (const [k, v] of Object.entries(requiredLabels)) {
+                        volumeConfig.labels[k] = v;
+                    }
+                } else {
+                    volumeConfig.labels = { ...requiredLabels };
+                }
+
+                doc.volumes[volumeName] = volumeConfig;
+            }
+        }
+
         return yaml.stringify(doc);
     };
 
