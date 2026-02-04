@@ -39,6 +39,7 @@ $showCancel = $isDeploying && $canCancel;
 $showStop = !$showCancel && in_array(($application->status ?? ''), ['running', 'restarting'], true);
 
 $logsHref = '/applications/' . e($application->uuid) . '/logs';
+$bashHref = '/applications/' . e($application->uuid) . '/bash';
 $usageHref = '/applications/' . e($application->uuid) . '/usage';
 $volumesHref = '/applications/' . e($application->uuid) . '/volumes';
 $filesHref = '/applications/' . e($application->uuid) . '/files';
@@ -105,6 +106,7 @@ $configHref = '/applications/' . e($application->uuid) . '?tab=config';
     <div class="mt-4 overflow-x-auto">
         <div class="tabs tabs-scroll app-tabs" role="tablist" aria-label="Application navigation">
             <a class="tab <?= $activeTab === 'logs' ? 'active' : '' ?>" role="tab" aria-selected="<?= $activeTab === 'logs' ? 'true' : 'false' ?>" href="<?= e($logsHref) ?>">Live Logs</a>
+            <a class="tab <?= $activeTab === 'bash' ? 'active' : '' ?>" role="tab" aria-selected="<?= $activeTab === 'bash' ? 'true' : 'false' ?>" href="<?= e($bashHref) ?>">Bash Execution</a>
             <a class="tab <?= $activeTab === 'volume-files' ? 'active' : '' ?>" role="tab" aria-selected="<?= $activeTab === 'volume-files' ? 'true' : 'false' ?>" href="<?= e($volumesHref) ?>">Volume Files</a>
             <a class="tab <?= $activeTab === 'container-filesystem' ? 'active' : '' ?>" role="tab" aria-selected="<?= $activeTab === 'container-filesystem' ? 'true' : 'false' ?>" href="<?= e($filesHref) ?>">Container filesystem</a>
             <a class="tab <?= $activeTab === 'usage' ? 'active' : '' ?>" role="tab" aria-selected="<?= $activeTab === 'usage' ? 'true' : 'false' ?>" href="<?= e($usageHref) ?>">Usage</a>

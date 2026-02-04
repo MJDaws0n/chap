@@ -73,8 +73,11 @@ class IncomingWebhookController extends BaseController
         $_SESSION['incoming_webhook_reveals'] = $_SESSION['incoming_webhook_reveals'] ?? [];
         $_SESSION['incoming_webhook_reveals'][$webhook->uuid] = $secret;
 
-        flash('success', 'Incoming webhook created');
-        $this->redirect('/applications/' . $application->uuid);
+        // Store the new webhook UUID to highlight it after redirect
+        $_SESSION['highlight_webhook'] = $webhook->uuid;
+
+        flash('success', 'Incoming webhook created. Copy the secret now - it won\'t be shown again!');
+        $this->redirect('/applications/' . $application->uuid . '?tab=deploy#webhook-' . $webhook->uuid);
     }
 
     /**
@@ -116,8 +119,11 @@ class IncomingWebhookController extends BaseController
         $_SESSION['incoming_webhook_reveals'] = $_SESSION['incoming_webhook_reveals'] ?? [];
         $_SESSION['incoming_webhook_reveals'][$webhook->uuid] = $secret;
 
-        flash('success', 'Webhook secret rotated');
-        $this->redirect('/applications/' . $application->uuid);
+        // Store the rotated webhook UUID to highlight it after redirect
+        $_SESSION['highlight_webhook'] = $webhook->uuid;
+
+        flash('success', 'Webhook secret rotated. Copy the new secret now - it won\'t be shown again!');
+        $this->redirect('/applications/' . $application->uuid . '?tab=deploy#webhook-' . $webhook->uuid);
     }
 
     /**

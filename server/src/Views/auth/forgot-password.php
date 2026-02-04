@@ -27,6 +27,8 @@ unset($_SESSION['_old_input']);
         <?php endif; ?>
     </div>
 
+    <?php include __DIR__ . '/../partials/captcha.php'; ?>
+
     <button type="submit" class="btn btn-primary w-full">
         Send Reset Link
     </button>

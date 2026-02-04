@@ -233,6 +233,12 @@ class AuthController extends BaseController
 
         $email = trim($this->input('email', ''));
 
+        if (!CaptchaVerifier::verify($_POST, $_SERVER['REMOTE_ADDR'] ?? null)) {
+            flash('error', 'Please complete the captcha verification.');
+            $_SESSION['_old_input'] = ['email' => $email];
+            $this->redirect('/forgot-password');
+        }
+
         if (empty($email)) {
             flash('error', 'Please enter your email address');
             $this->redirect('/forgot-password');

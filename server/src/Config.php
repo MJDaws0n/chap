@@ -12,7 +12,7 @@ class Config
      *
      * Update this value when you release a new server version.
      */
-    public const SERVER_VERSION = '0.1.0';
+    public const SERVER_VERSION = '0.1.1';
 
     /**
      * Return server version.

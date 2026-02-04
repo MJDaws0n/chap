@@ -1193,6 +1193,61 @@ class ApplicationController extends BaseController
     }
 
     /**
+     * Bash execution page for application (WebSocket-based).
+     * Allows authorized users to run bash commands inside containers.
+     */
+    public function bash(string $uuid): void
+    {
+        $team = $this->currentTeam();
+        $application = Application::findByUuid($uuid);
+
+        if (!$this->canAccessApplication($application, $team)) {
+            if ($this->isApiRequest()) {
+                $this->json(['error' => 'Application not found'], 404);
+            } else {
+                flash('error', 'Application not found');
+                $this->redirect('/projects');
+            }
+            return;
+        }
+
+        $teamId = (int) ($application->environment()?->project()?->team_id ?? 0);
+        // Require 'exec' permission (write-level access to execute commands)
+        $this->requireTeamPermission('exec', 'write', $teamId);
+
+        if ($this->isApiRequest()) {
+            $this->json(['error' => 'Bash execution requires WebSocket'], 400);
+            return;
+        }
+
+        $node = $application->node();
+        if (!$node && $application->node_id) {
+            $node = \Chap\Models\Node::find($application->node_id);
+        }
+
+        $logsWebsocketUrl = $node ? ($node->logs_websocket_url ?? null) : null;
+        $latest = Deployment::forApplication((int) $application->id, 1);
+
+        // Log the access for audit purposes
+        ActivityLog::log(
+            'application.bash.access',
+            'application',
+            (int)$application->id,
+            ['application_uuid' => $application->uuid]
+        );
+
+        $this->view('applications/bash', [
+            'title' => 'Bash Execution - ' . $application->name,
+            'application' => $application,
+            'environment' => $application->environment(),
+            'project' => $application->environment()->project(),
+            'logsWebsocketUrl' => $logsWebsocketUrl,
+            'sessionId' => session_id(),
+            'latestDeployment' => !empty($latest) ? $latest[0] : null,
+        ]);
+    }
+
+    /**
      * Resource usage page for application (WebSocket-only, browser connects to node).
      */
     public function usage(string $uuid): void

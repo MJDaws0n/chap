@@ -29,6 +29,8 @@ if (!empty($envArr)) {
 
 $incomingWebhooks = $incomingWebhooks ?? [];
 $incomingWebhookReveals = $incomingWebhookReveals ?? [];
+$highlightWebhook = $_SESSION['highlight_webhook'] ?? null;
+unset($_SESSION['highlight_webhook']);
 $allocatedPorts = $allocatedPorts ?? [];
 $allocatedPorts = array_values(array_map('intval', is_array($allocatedPorts) ? $allocatedPorts : []));
 
@@ -251,11 +253,12 @@ $appNotifyMode = array_key_exists('notify_app_deployments_mode', $old)
                                         <?php
                                             $endpointUrl = url('/webhooks/' . $wh->provider . '/' . $wh->uuid);
                                             $revealed = ($incomingWebhookReveals[$wh->uuid] ?? null);
+                                            $isHighlighted = ($highlightWebhook === $wh->uuid);
                                             $branchLabel = $wh->branch ? $wh->branch : ($application->git_branch ?: '-');
                                             $last = $wh->last_received_at ? time_ago($wh->last_received_at) : 'Never';
                                             $secretLabel = $revealed ? $revealed : '••••••••';
                                         ?>
-                                        <tr>
+                                        <tr id="webhook-<?= e($wh->uuid) ?>" class="<?= $isHighlighted ? 'webhook-highlight' : '' ?>">
                                             <td class="font-medium truncate">
                                                 <?= e($wh->name) ?>
                                                 <?php if (!($wh->is_active ?? true)): ?>
@@ -1016,6 +1019,63 @@ document.querySelectorAll('[data-delete-incoming-webhook]').forEach(form => {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
+    }
+})();
+</script>
+
+<style>
+/* Webhook highlight animation */
+.webhook-highlight {
+    animation: webhook-glow 2s ease-in-out;
+    background-color: var(--accent-green-alpha, rgba(16, 185, 129, 0.15));
+}
+
+@keyframes webhook-glow {
+    0% {
+        background-color: var(--accent-green-alpha, rgba(16, 185, 129, 0.3));
+        box-shadow: 0 0 20px var(--accent-green-alpha, rgba(16, 185, 129, 0.3));
+    }
+    50% {
+        background-color: var(--accent-green-alpha, rgba(16, 185, 129, 0.2));
+        box-shadow: 0 0 10px var(--accent-green-alpha, rgba(16, 185, 129, 0.2));
+    }
+    100% {
+        background-color: var(--accent-green-alpha, rgba(16, 185, 129, 0.1));
+        box-shadow: none;
+    }
+}
+
+/* Revealed secret styling */
+.webhook-secret-revealed {
+    background-color: var(--bg-secondary);
+    border: 2px solid var(--accent-green);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2);
+}
+</style>
+
+<script>
+(function() {
+    'use strict';
+    
+    // Scroll to and highlight webhook if hash is present
+    function scrollToWebhook() {
+        const hash = window.location.hash;
+        if (!hash || !hash.startsWith('#webhook-')) return;
+        
+        const el = document.querySelector(hash);
+        if (!el) return;
+        
+        // Wait a bit for page to settle
+        setTimeout(function() {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 100);
+    }
+    
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', scrollToWebhook);
+    } else {
+        scrollToWebhook();
     }
 })();
 </script>

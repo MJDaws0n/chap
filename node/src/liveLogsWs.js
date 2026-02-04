@@ -3167,6 +3167,7 @@ function createLiveLogsWs(deps) {
 
         if (!browserWs || browserWs.readyState !== WebSocket.OPEN) return;
         if (!browserWs.authenticated) return reject('Not authenticated');
+        if (!hasPerm(browserWs, 'exec', 'write')) return reject('Not authorized - exec:write permission required');
         if (!requestId || !containerId || !command) return reject('Missing request_id, container_id, or command');
         if (browserWs._execInFlight) return reject('Exec already running');
         if (!checkExecRateLimit(browserWs)) return reject('Rate limit exceeded');
@@ -3191,6 +3192,9 @@ function createLiveLogsWs(deps) {
 
         const canonicalContainerId = String(target.id || '').trim();
         if (!canonicalContainerId) return reject('Invalid container id');
+
+        // Audit log for bash execution
+        console.log(`[BrowserWS] exec app=${appUuid} container=${canonicalContainerId} user=${browserWs.userId || 'unknown'} command="${command.slice(0, 100)}${command.length > 100 ? '...' : ''}"`);
 
         browserWs._execInFlight = true;
         const startedAt = Date.now();

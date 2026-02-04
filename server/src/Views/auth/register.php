@@ -71,41 +71,7 @@ unset($_SESSION['_old_input']);
         >
     </div>
 
-    <?php $captchaProvider = config('captcha.provider', 'none'); ?>
-    <?php if ($captchaProvider === 'recaptcha'): ?>
-        <?php $siteKey = config('captcha.recaptcha.site_key', ''); ?>
-        <?php if (!empty($siteKey)): ?>
-            <div class="mb-6">
-                <div class="g-recaptcha" data-sitekey="<?= e($siteKey) ?>"></div>
-            </div>
-            <script src="https://www.google.com/recaptcha/api.js" async defer></script>
-        <?php endif; ?>
-    <?php elseif ($captchaProvider === 'autogate'): ?>
-        <?php $publicKey = config('captcha.autogate.public_key', ''); ?>
-        <?php $theme = config('captcha.theme', 'dark'); ?>
-        <?php if (!empty($publicKey)): ?>
-            <div class="mb-6">
-                <div id="captcha"></div>
-                <input type="hidden" name="captcha_token" id="captcha_token">
-            </div>
-            <script src="https://autogate.mjdawson.net/lib/autogate.js"></script>
-            <script>
-            (() => {
-                const el = document.getElementById('captcha');
-                const tokenEl = document.getElementById('captcha_token');
-                if (!el || !tokenEl) return;
-
-                const gate = new AutoGate('#captcha', <?= json_encode($publicKey) ?>, {
-                    theme: <?= json_encode($theme) ?>,
-                });
-
-                gate.onSuccess = (token) => {
-                    tokenEl.value = token;
-                };
-            })();
-            </script>
-        <?php endif; ?>
-    <?php endif; ?>
+    <?php include __DIR__ . '/../partials/captcha.php'; ?>
 
     <button type="submit" class="btn btn-primary w-full">
         Create Account
