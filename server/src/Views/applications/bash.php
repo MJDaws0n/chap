@@ -481,16 +481,15 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
         if (state.isConnecting) return;
 
         state.isConnecting = true;
+        state.wsConnected = false;
         state.intentionalClose = false;
+        showLoading();
         showStatus('connecting', 'Connecting...');
 
-        const url = new URL(config.logsWebsocketUrl);
-        url.searchParams.set('session_id', config.sessionId);
-        url.searchParams.set('application_uuid', config.applicationUuid);
-
         try {
-            state.ws = new WebSocket(url.toString());
+            state.ws = new WebSocket(config.logsWebsocketUrl);
         } catch (e) {
+            hideLoading();
             showStatus('disconnected', 'Failed to connect');
             state.isConnecting = false;
             scheduleReconnect();
@@ -498,15 +497,16 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
         }
 
         state.ws.onopen = () => {
-            state.isConnecting = false;
-            state.wsConnected = true;
-            showStatus('live', 'Connected');
-            startKeepAlive();
-            updateControls();
-            // Request containers list after connecting
+            // Mirror Live Logs: authenticate after socket open
             try {
-                state.ws.send(JSON.stringify({ type: 'containers:request' }));
-            } catch (e) {}
+                state.ws.send(JSON.stringify({
+                    type: 'auth',
+                    session_id: config.sessionId,
+                    application_uuid: config.applicationUuid,
+                }));
+            } catch (e) {
+                // auth send failed; onclose will handle reconnect
+            }
         };
 
         state.ws.onmessage = (event) => {
@@ -523,6 +523,7 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
             state.wsConnected = false;
             stopKeepAlive();
             showStatus('disconnected', 'Disconnected');
+            hideLoading();
             updateControls();
             if (!state.intentionalClose) {
                 scheduleReconnect();
@@ -531,6 +532,7 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
 
         state.ws.onerror = () => {
             state.isConnecting = false;
+            hideLoading();
             showStatus('disconnected', 'Connection error');
         };
     }
@@ -578,6 +580,21 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
         const type = data.type || '';
 
         switch (type) {
+            case 'auth:success':
+                state.wsConnected = true;
+                state.isConnecting = false;
+                hideLoading();
+                showStatus('live', 'Connected');
+                startKeepAlive();
+                updateControls();
+                break;
+            case 'auth:failed':
+                state.wsConnected = false;
+                state.isConnecting = false;
+                hideLoading();
+                showStatus('disconnected', 'Auth failed');
+                updateControls();
+                break;
             case 'containers':
                 handleContainersMessage(data);
                 break;
