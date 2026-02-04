@@ -503,6 +503,10 @@ $statusColor = $statusColors[$application->status] ?? 'badge-default';
             showStatus('live', 'Connected');
             startKeepAlive();
             updateControls();
+            // Request containers list after connecting
+            try {
+                state.ws.send(JSON.stringify({ type: 'containers:request' }));
+            } catch (e) {}
         };
 
         state.ws.onmessage = (event) => {
