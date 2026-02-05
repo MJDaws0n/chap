@@ -601,9 +601,21 @@ class NodeHandler implements MessageComponentInterface {
                 return;
             }
 
-            // Check session expiry (default 2 hour lifetime)
-            $lifetime = 120 * 60; // 2 hours in seconds
-            if (time() - $session['last_activity'] > $lifetime) {
+            // Check session expiry (matches AuthManager logic; supports remember-me sessions)
+            $defaultSeconds = (int)config('session.lifetime', 120) * 60;
+            $days = (int)config('session.remember_lifetime_days', 30);
+            $rememberSeconds = max(1, $days) * 86400;
+
+            $lifetimeSeconds = max(60, $defaultSeconds);
+            $payload = $session['payload'] ?? '';
+            if (is_string($payload) && $payload !== '') {
+                $decoded = json_decode($payload, true);
+                if (is_array($decoded) && !empty($decoded['remember'])) {
+                    $lifetimeSeconds = max($lifetimeSeconds, $rememberSeconds);
+                }
+            }
+
+            if (time() - (int)$session['last_activity'] > $lifetimeSeconds) {
                 $error = "Session expired: {$sessionId}";
                 error_log("[handleSessionValidate] $error");
                 $this->send($from, [

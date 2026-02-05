@@ -53,7 +53,7 @@ class AuthManager
     /**
      * Create session for user
      */
-    private static function createSession(array $userData): void
+    private static function createSession(array $userData, bool $remember = false): void
     {
         $db = App::db();
         
@@ -61,27 +61,34 @@ class AuthManager
         session_regenerate_id(true);
         
         $sessionId = session_id();
+
+        $payload = [
+            'user_id' => $userData['id'],
+            'remember' => $remember ? 1 : 0,
+        ];
         
         // Store session in database
         $db->query(
             "INSERT INTO sessions (id, user_id, ip_address, user_agent, payload, last_activity, created_at) 
              VALUES (?, ?, ?, ?, ?, ?, NOW())
-             ON DUPLICATE KEY UPDATE last_activity = ?, ip_address = ?",
+             ON DUPLICATE KEY UPDATE last_activity = ?, ip_address = ?, payload = ?",
             [
                 $sessionId,
                 $userData['id'],
                 $_SERVER['REMOTE_ADDR'] ?? '',
                 $_SERVER['HTTP_USER_AGENT'] ?? '',
-                json_encode(['user_id' => $userData['id']]),
+                json_encode($payload),
                 time(),
                 time(),
-                $_SERVER['REMOTE_ADDR'] ?? ''
+                $_SERVER['REMOTE_ADDR'] ?? '',
+                json_encode($payload),
             ]
         );
 
         // Store user ID in session
         $_SESSION['user_id'] = $userData['id'];
         $_SESSION['logged_in_at'] = time();
+        $_SESSION['remember'] = $remember ? 1 : 0;
         
         // Load user
         self::$user = User::find($userData['id']);
@@ -154,8 +161,8 @@ class AuthManager
         }
 
         // Check session expiry
-        $lifetime = config('session.lifetime', 120) * 60;
-        if (time() - $session['last_activity'] > $lifetime) {
+        $lifetimeSeconds = self::sessionLifetimeSeconds($session);
+        if (time() - (int)$session['last_activity'] > $lifetimeSeconds) {
             self::logout();
             return;
         }
@@ -171,16 +178,46 @@ class AuthManager
     }
 
     /**
+     * Determine how long this session should remain valid for inactivity.
+     *
+     * - Non-remembered sessions use `session.lifetime` (minutes)
+     * - Remembered sessions use `session.remember_lifetime_days` (days)
+     */
+    private static function sessionLifetimeSeconds(array $sessionRow): int
+    {
+        $defaultSeconds = (int)config('session.lifetime', 120) * 60;
+
+        $remember = (int)($_SESSION['remember'] ?? 0) === 1;
+        if (!$remember) {
+            $payload = $sessionRow['payload'] ?? null;
+            if (is_string($payload) && $payload !== '') {
+                $decoded = json_decode($payload, true);
+                if (is_array($decoded) && !empty($decoded['remember'])) {
+                    $remember = true;
+                }
+            }
+        }
+
+        if (!$remember) {
+            return max(60, $defaultSeconds);
+        }
+
+        $days = (int)config('session.remember_lifetime_days', 30);
+        $rememberSeconds = max(1, $days) * 86400;
+        return max(60, $defaultSeconds, $rememberSeconds);
+    }
+
+    /**
      * Login user directly
      */
-    public static function login(User $user): void
+    public static function login(User $user, bool $remember = false): void
     {
         $userData = [
             'id' => $user->id,
             'email' => $user->email,
             'username' => $user->username,
         ];
-        self::createSession($userData);
+        self::createSession($userData, $remember);
     }
 
     /**
@@ -190,7 +227,7 @@ class AuthManager
     {
         $user = User::find($userId);
         if ($user) {
-            self::login($user);
+            self::login($user, false);
             return true;
         }
         return false;

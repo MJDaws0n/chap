@@ -1,11 +1,5 @@
 # Chap UI Design System
 
-## Overview
-
-This document defines the UI design system for Chap. The design centers around a modern, clean aesthetic with a frosted glass effect (glassmorphism), smooth transitions, and readability in both light and dark modes.
-
----
-
 ## Color Palette
 
 ### Light Mode

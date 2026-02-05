@@ -84,6 +84,8 @@ class Config
             ],
             'session' => [
                 'lifetime' => env('SESSION_LIFETIME', 120),
+                // Days to keep "remember me" sessions alive (rolling expiry by activity).
+                'remember_lifetime_days' => env('SESSION_REMEMBER_LIFETIME_DAYS', 30),
                 'secure' => env('SESSION_SECURE', false),
             ],
             'websocket' => [

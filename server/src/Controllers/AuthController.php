@@ -63,23 +63,26 @@ class AuthController extends BaseController
         }
 
         if ($user) {
-            AuthManager::login($user);
+            AuthManager::login($user, $remember);
             // Log activity
             ActivityLog::log('user.login');
 
             // Handle remember me - extend session cookie
             if ($remember) {
-                $lifetime = time() + (60 * 60 * 24 * 30); // 30 days from now
                 $params = session_get_cookie_params();
-                setcookie(
-                    session_name(),
-                    session_id(),
-                    $lifetime,
-                    $params['path'],
-                    $params['domain'],
-                    $params['secure'],
-                    $params['httponly']
-                );
+                $days = (int)config('session.remember_lifetime_days', 30);
+                $expires = time() + (max(1, $days) * 86400);
+                $options = [
+                    'expires' => $expires,
+                    'path' => $params['path'] ?? '/',
+                    'secure' => (bool)($params['secure'] ?? false),
+                    'httponly' => (bool)($params['httponly'] ?? true),
+                    'samesite' => $params['samesite'] ?? 'Lax',
+                ];
+                if (!empty($params['domain'])) {
+                    $options['domain'] = $params['domain'];
+                }
+                setcookie(session_name(), session_id(), $options);
             }
 
             flash('success', 'Welcome back!');

@@ -61,7 +61,7 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="logs_websocket_url" class="form-label">Live Logs WebSocket URL <span class="text-muted">(optional)</span></label>
+                    <label for="logs_websocket_url" class="form-label">Live Logs WebSocket URL</span></label>
                     <input 
                         type="text" 
                         id="logs_websocket_url" 
@@ -70,20 +70,7 @@
                         placeholder="wss://node.example.com:6002 or ws://192.168.1.10:6002"
                         value="<?= htmlspecialchars($old['logs_websocket_url'] ?? '') ?>"
                     >
-                    <p class="form-hint">Direct WebSocket URL for live logs (browsers connect here). Leave blank to use polling.</p>
-                </div>
-
-                <div class="form-group">
-                    <label for="api_url" class="form-label">Node API URL <span class="text-muted">(optional)</span></label>
-                    <input
-                        type="text"
-                        id="api_url"
-                        name="api_url"
-                        class="input"
-                        placeholder="https://node.example.com:6002"
-                        value="<?= htmlspecialchars($old['api_url'] ?? '') ?>"
-                    >
-                    <p class="form-hint">Client-facing base URL for the Node API (used for /node/v2). If blank, Chap will attempt to derive it from the WebSocket URL.</p>
+                    <p class="form-hint">Direct WebSocket URL for live logs (browsers connect here).</p>
                 </div>
 
                 <div class="form-group">

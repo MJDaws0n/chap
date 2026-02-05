@@ -74,22 +74,25 @@ class TwoFactorController extends BaseController
             return;
         }
 
-        AuthManager::login($user);
+        $remember = (int)($_SESSION['mfa_pending_remember'] ?? 0) === 1;
+        AuthManager::login($user, $remember);
 
         // Remember-me handling mirrors AuthController
-        $remember = (int)($_SESSION['mfa_pending_remember'] ?? 0) === 1;
         if ($remember) {
-            $lifetime = time() + (60 * 60 * 24 * 30); // 30 days
             $params = session_get_cookie_params();
-            setcookie(
-                session_name(),
-                session_id(),
-                $lifetime,
-                $params['path'],
-                $params['domain'],
-                $params['secure'],
-                $params['httponly']
-            );
+            $days = (int)config('session.remember_lifetime_days', 30);
+            $expires = time() + (max(1, $days) * 86400);
+            $options = [
+                'expires' => $expires,
+                'path' => $params['path'] ?? '/',
+                'secure' => (bool)($params['secure'] ?? false),
+                'httponly' => (bool)($params['httponly'] ?? true),
+                'samesite' => $params['samesite'] ?? 'Lax',
+            ];
+            if (!empty($params['domain'])) {
+                $options['domain'] = $params['domain'];
+            }
+            setcookie(session_name(), session_id(), $options);
         }
 
         unset($_SESSION['mfa_pending_user_id'], $_SESSION['mfa_pending_started_at'], $_SESSION['mfa_pending_remember']);

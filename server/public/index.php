@@ -41,7 +41,12 @@ ini_set('session.cookie_secure', $secureCookie ? '1' : '0');
 ini_set('session.cookie_samesite', $sameSite);
 
 $lifetimeMinutes = (int)(getenv('SESSION_LIFETIME') ?: 120);
-$gcLifetime = max(300, $lifetimeMinutes * 60);
+// When using "remember me" we need PHP's session GC to retain session data long enough,
+// otherwise the browser cookie can outlive the server-side session storage.
+$rememberDays = (int)(getenv('SESSION_REMEMBER_LIFETIME_DAYS') ?: 30);
+$rememberLifetime = max(0, $rememberDays) * 86400;
+
+$gcLifetime = max(300, $lifetimeMinutes * 60, $rememberLifetime);
 ini_set('session.gc_maxlifetime', (string)$gcLifetime);
 
 // Start session

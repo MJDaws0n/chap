@@ -10,7 +10,7 @@
 	<header class="topbar">
 		<div class="wrap">
 			<div class="brand">Chap Install Guide</div>
-			<p class="subtitle">Production setup for chap-server + chap-node, live logs WebSockets, and reverse proxy options (Apache, NGINX, ProxyDNSCache)</p>
+			<p class="subtitle">Install and production setup for chap-server + chap-node, with reverse proxy (ProxyDNSCache recommended)</p>
 		</div>
 	</header>
 
@@ -18,341 +18,131 @@
 		<aside class="sidebar">
 			<h3>Contents</h3>
 			<nav class="nav">
-				<a href="#overview">Overview</a>
+				<a href="#install">Installation</a>
 				<a href="#prereqs">Prerequisites</a>
-				<div class="toc-sub">
-					<a href="#prereqs-ports">Ports & Firewall</a>
-					<a href="#prereqs-dns">Domains & DNS</a>
-					<a href="#prereqs-docker">Docker & Compose</a>
-				</div>
-				<a href="#install-server">Install chap-server</a>
-				<div class="toc-sub">
-					<a href="#server-env">Server .env</a>
-					<a href="#server-start">Start containers</a>
-					<a href="#server-first-login">First login</a>
-				</div>
-				<a href="#install-node">Install chap-node</a>
-				<div class="toc-sub">
-					<a href="#node-create">Create node in dashboard</a>
-					<a href="#node-env">Node .env</a>
-					<a href="#node-start">Start the agent</a>
-				</div>
-				<a href="#live-logs">Live Logs (WebSocket)</a>
-				<div class="toc-sub">
-					<a href="#live-logs-tls">TLS / mixed content</a>
-				</div>
 				<a href="#reverse-proxy">Reverse Proxy</a>
-				<div class="toc-sub">
-					<a href="#reverse-proxy-proxydnscache">ProxyDNSCache (recommended)</a>
-					<a href="#reverse-proxy-nginx">NGINX</a>
-					<a href="#reverse-proxy-apache">Apache</a>
-				</div>
-				<a href="#certbot">Certificates (Certbot)</a>
-				<div class="toc-sub">
-					<a href="#certbot-nginx">Certbot + NGINX</a>
-					<a href="#certbot-apache">Certbot + Apache</a>
-					<a href="#certbot-cloudflare-wildcard">Wildcard + Cloudflare DNS</a>
-				</div>
-				<a href="#troubleshooting">Troubleshooting</a>
-				<a href="#security">Security checklist</a>
+				<a href="#proxy-cert">ProxyDNSCache Certs</a>
+				<a href="#proxy-service">ProxyDNSCache Service</a>
+				<a href="#proxy-config">ProxyDNSCache Config</a>
+				<a href="#proxy-dns">DNS Records</a>
+				<a href="#server">Chap Server</a>
+				<a href="#node">Chap Node</a>
+				<a href="#update">Update</a>
 			</nav>
 		</aside>
 
 		<main>
-			<section id="overview" class="panel intro">
+			<section id="install" class="panel intro">
 				<div>
-					<h2>What you are installing</h2>
-					<p>Chap has a central server (dashboard + API + database) and one node agent per deployment host (Docker control + live logs WebSocket). This guide walks through production installs and three reverse proxy options.</p>
-				</div>
-				<div class="cta-row">
-					<a class="btn" href="../">Docs Home</a>
-					<a class="btn" href="../api/client-api.html">Client API Docs</a>
-					<a class="btn" href="../api/admin-api.html">Platform API Docs</a>
-					<a class="btn" href="https://github.com/mjdaws0n/chap" target="_blank" rel="noreferrer">GitHub</a>
-				</div>
-				<div class="callout">
-					<strong>Important:</strong> Chap uses a <em>direct</em> browser → node WebSocket for Live Logs. If you run the dashboard over HTTPS, the logs socket must be WSS with a valid certificate (or browsers will block it).
+					<h2>Installation</h2>
+					<p>This guide covers how to get chap-server and chap-node running with modern styles. ProxyDNSCache is strongly recommended for reverse proxy and wildcard subdomain TLS. You'll need Docker + Compose, open ports, and root/sudo for certs.</p>
 				</div>
 			</section>
 
 			<section id="prereqs" class="section">
 				<h3>Prerequisites</h3>
-				<p>Before you start, decide your topology (single machine for testing vs separate server + nodes for production), reserve ports, and prepare DNS/certificates.</p>
-
 				<div class="grid cards">
 					<div class="card">
-						<h3>Recommended OS</h3>
-						<p>Ubuntu 22.04+ (or Debian 12+) on server and nodes. Other Linux distros work if Docker Engine + Compose are available.</p>
+						<h3>Docker + Compose</h3>
+						<p>Docker and Docker Compose (API ≥ 1.53) on server and nodes.</p>
 					</div>
 					<div class="card">
-						<h3>Required software</h3>
-						<p>Docker Engine + Docker Compose plugin. Nodes also need access to <code>/var/run/docker.sock</code> to manage containers.</p>
+						<h3>No auto updates</h3>
+						<p>No version control: check the repo for updates manually.</p>
 					</div>
 					<div class="card">
-						<h3>Domains (recommended)</h3>
-						<p>Use a real domain for TLS: one for the dashboard (e.g. <code>chap.example.com</code>) and one per node logs endpoint (e.g. <code>node-1.example.com</code>), or a wildcard domain.</p>
+						<h3>SSL &amp; Proxy</h3>
+						<p>If using SSL/domain, a reverse proxy is required. ProxyDNSCache is built for Chap.</p>
 					</div>
-				</div>
-
-				<div id="prereqs-ports" class="group">
-					<h4>Ports & Firewall</h4>
-					<p class="meta">Adjust if you change <code>APP_PORT</code>, <code>WS_PORT</code>, or <code>BROWSER_WS_PORT</code>.</p>
-					<div class="grid cards">
-						<div class="card">
-							<h3>chap-server (central)</h3>
-							<p>
-								<strong>TCP 8080</strong> (dashboard HTTP) or <strong>80/443</strong> if reverse-proxied<br />
-								<strong>TCP 8081</strong> (server WebSocket that nodes connect to)
-							</p>
-						</div>
-						<div class="card">
-							<h3>chap-node (each node)</h3>
-							<p>
-								<strong>TCP 6002</strong> (browser → node live logs WebSocket). If you serve the dashboard over HTTPS, this must be exposed as WSS via TLS.
-							</p>
-						</div>
-						<div class="card">
-							<h3>MySQL</h3>
-							<p>In production, MySQL is bound to <code>127.0.0.1:3306</code> in the server compose file, so it is not exposed publicly.</p>
-						</div>
+					<div class="card">
+						<h3>Privileges</h3>
+						<p>Root/sudo access ideal (tested with it).</p>
 					</div>
-					<div class="callout">
-						If nodes cannot reach the server WebSocket, deployments and node communication will fail. Ensure nodes can reach <code>WS_PORT</code> (default 8081) or your reverse-proxied WSS endpoint.
-					</div>
-				</div>
-
-				<div id="prereqs-dns" class="group">
-					<h4>Domains & DNS</h4>
-					<div class="grid cards">
-						<div class="card">
-							<h3>Without a reverse proxy</h3>
-							<p>Point DNS directly at the server IP, then access <code>http://your-server:8080</code>. This is simplest, but not recommended for internet exposure.</p>
-						</div>
-						<div class="card">
-							<h3>With Apache/NGINX</h3>
-							<p>Point DNS at your reverse proxy (same host or separate), and proxy to <code>127.0.0.1:8080</code> (dashboard) and optionally <code>127.0.0.1:8081</code> (server WS).</p>
-						</div>
-						<div class="card">
-							<h3>With ProxyDNSCache</h3>
-							<p>Point an A/AAAA record at ProxyDNSCache, then create <strong>SRV</strong> records for each hostname to route traffic (details below).</p>
-						</div>
-					</div>
-				</div>
-
-				<div id="prereqs-docker" class="group">
-					<h4>Docker & Compose</h4>
-					<p>Install Docker Engine and the Compose plugin on each host. Verify:</p>
-					<pre class="code">docker --version
-docker compose version</pre>
-					<div class="callout">
-						If you are behind a restrictive firewall, ensure the host can pull images (e.g. <code>mysql:8.0</code>) and build local Dockerfiles.
-					</div>
-				</div>
-			</section>
-
-			<section id="install-server" class="section">
-				<h3>Install chap-server (central server)</h3>
-				<p>This is the dashboard, API, and MySQL database. Nodes connect to the server over WebSocket.</p>
-
-				<div class="group" id="server-env">
-					<h4>1) Configure the server environment (.env)</h4>
-					<p>On your central server:</p>
-					<pre class="code"># Clone
-git clone https://github.com/MJDaws0n/chap.git
-cd chap
-
-# Create env file
-cp .env.example .env</pre>
-					<p>Now edit <code>.env</code> and set at least:</p>
-					<div class="grid cards">
-						<div class="card">
-							<h3>APP_URL</h3>
-							<p>The public URL users will access (e.g. <code>https://chap.example.com</code>). If you are not using TLS yet, use <code>http://</code>.</p>
-						</div>
-						<div class="card">
-							<h3>APP_SECRET</h3>
-							<p>Set a long random value (32+ characters). Do not reuse passwords.</p>
-						</div>
-						<div class="card">
-							<h3>DB_PASSWORD / DB_ROOT_PASSWORD</h3>
-							<p>Change defaults. Even though MySQL is bound to localhost by default, treat it as sensitive.</p>
-						</div>
-					</div>
-					<div class="callout">
-						<strong>Production tip:</strong> set <code>APP_ENV=production</code> and <code>APP_DEBUG=false</code>.
-					</div>
-				</div>
-
-				<div class="group" id="server-start">
-					<h4>2) Start the server containers</h4>
-					<pre class="code">docker compose -f docker-compose.server.yml up -d --build</pre>
-					<p>Verify everything is healthy:</p>
-					<pre class="code">docker compose -f docker-compose.server.yml ps
-docker logs chap-server --tail=200</pre>
-				</div>
-
-				<div class="group" id="server-first-login">
-					<h4>3) Log in</h4>
-					<p>Open your dashboard URL (default: <code>http://your-server:8080</code>).</p>
-					<div class="callout">
-						<strong>Default login (seed):</strong><br />
-						Email: <code>admin@chap.dev</code><br />
-						Password: <code>password</code><br /><br />
-						Change the password immediately.
-					</div>
-				</div>
-			</section>
-
-			<section id="install-node" class="section">
-				<h3>Install chap-node (one per deployment host)</h3>
-				<p>The node agent manages Docker on that host and exposes the browser WebSocket used by the Live Logs UI.</p>
-
-				<div class="group" id="node-create">
-					<h4>1) Create a node in the dashboard</h4>
-					<p>In the Chap dashboard:</p>
-					<div class="grid cards">
-						<div class="card">
-							<h3>Go to Nodes → Add Node</h3>
-							<p>Create a name/ID and copy the <code>NODE_TOKEN</code>.</p>
-						</div>
-						<div class="card">
-							<h3>Set logs WebSocket URL</h3>
-							<p>This should point to the node’s browser socket (example: <code>wss://node-1.example.com</code> or <code>wss://node-1.example.com:443</code>).</p>
-						</div>
-						<div class="card">
-							<h3>Save</h3>
-							<p>You’ll use <code>NODE_ID</code> and <code>NODE_TOKEN</code> on the node host.</p>
-						</div>
-					</div>
-				</div>
-
-				<div class="group" id="node-env">
-					<h4>2) Configure the node environment (.env)</h4>
-					<p>On the node host:</p>
-					<pre class="code"># Clone
-git clone https://github.com/MJDaws0n/chap.git
-cd chap
-
-# Create env file for the node
-cp node/.env.example .env</pre>
-					<p>Edit <code>.env</code>:</p>
-					<pre class="code">NODE_ID=your-node-id-from-dashboard
-NODE_TOKEN=your-node-token-from-dashboard
-
-# Where the node connects back to the server
-# If your server is HTTP only:
-#   ws://chap.example.com:8081
-# If your server is HTTPS (recommended):
-#   wss://ws.chap.example.com
-CHAP_SERVER_URL=ws://your-chap-server:8081
-
-# Browser → node logs socket
-BROWSER_WS_HOST=0.0.0.0
-BROWSER_WS_PORT=6002</pre>
-				</div>
-
-				<div class="group" id="node-start">
-					<h4>3) Start the node agent</h4>
-					<pre class="code">docker compose -f docker-compose.node.yml up -d --build</pre>
-					<p>Verify:</p>
-					<pre class="code">docker compose -f docker-compose.node.yml ps
-docker logs chap-node --tail=200</pre>
-					<div class="callout">
-						The node container mounts <code>/var/run/docker.sock</code>. Only run the node on hosts you trust; Docker socket access is effectively root.
-					</div>
-				</div>
-			</section>
-
-			<section id="live-logs" class="section">
-				<h3>Live Logs (WebSocket)</h3>
-				<p>Live Logs use a direct WebSocket from the browser to the node. This is separate from the server’s node-connection WebSocket.</p>
-
-				<div class="group">
-					<h4>How it connects</h4>
-					<div class="grid cards">
-						<div class="card">
-							<h3>Browser → Node</h3>
-							<p><code>wss://node-1.example.com</code> (recommended) or <code>ws://node-1.example.com:6002</code> (non-TLS). This is configured in the dashboard per node.</p>
-						</div>
-						<div class="card">
-							<h3>Node → Server</h3>
-							<p><code>wss://ws.chap.example.com</code> or <code>ws://chap.example.com:8081</code>. This is <code>CHAP_SERVER_URL</code> on the node.</p>
-						</div>
-						<div class="card">
-							<h3>Dashboard → Server</h3>
-							<p><code>https://chap.example.com</code> (recommended) or <code>http://chap.example.com:8080</code>.</p>
-						</div>
-					</div>
-				</div>
-
-				<div class="group" id="live-logs-tls">
-					<h4>TLS / mixed content rules</h4>
-					<div class="callout">
-						If your dashboard URL is <strong>HTTPS</strong>, browsers will block a <strong>ws://</strong> logs socket (mixed content). Use <strong>wss://</strong> with a valid certificate for each node logs endpoint.
+					<div class="card">
+						<h3>Ports</h3>
+						<p>Server: two open ports. Node: one open port.</p>
 					</div>
 				</div>
 			</section>
 
 			<section id="reverse-proxy" class="section">
-				<h3>Reverse Proxy</h3>
-				<p>You have three common setups. Pick one:</p>
-				<div class="grid cards">
-					<div class="card">
-						<h3>ProxyDNSCache (recommended)</h3>
-						<p>Great if you want wildcard TLS and routing by DNS SRV records (handy for many nodes/apps). Terminates TLS and forwards traffic based on SNI.</p>
-					</div>
-					<div class="card">
-						<h3>NGINX</h3>
-						<p>Standard reverse proxy. Easy to run on the same host as Chap or separately.</p>
-					</div>
-					<div class="card">
-						<h3>Apache</h3>
-						<p>Also common and works well. Similar config to NGINX, plus direct Certbot integration.</p>
-					</div>
+				<h3>Reverse Proxy (ProxyDNSCache recommended)</h3>
+				<p>
+					Best to set up ProxyDNSCache first, on both server and nodes.<br>
+					Needs ports <strong>80</strong>, <strong>443</strong>, and <strong>441</strong> open.<br>
+					If you're running nginx/apache, move those off 80/443 and reverse proxy through ProxyDNSCache.
+				</p>
+				<div class="callout">
+					If your domain's on Cloudflare, the guide uses its API to automate wildcard TLS.
 				</div>
+			</section>
 
-				<div class="group" id="reverse-proxy-proxydnscache">
-					<h4>Option A: ProxyDNSCache (recommended)</h4>
-					<p class="meta">Based on https://github.com/MJDaws0n/ProxyDNSCache</p>
-					<div class="callout">
-						ProxyDNSCache routes TLS traffic based on SNI hostname. For an incoming hostname like <code>chap.example.com</code>, it looks up an SRV record named <code>_pdcache._tcp.chap.example.com</code> and forwards to the first result’s <code>target:port</code>.
-					</div>
+			<section id="proxy-cert" class="section">
+				<h3>ProxyDNSCache: Wildcard Cert with Certbot + Cloudflare</h3>
+				<p>
+					Wildcard allows you to add subdomains just by DNS.<br>
+					Follow <strong>on both server and nodes</strong>. Needs sudo.
+				</p>
+				<div class="group">
+					<h4>Remove old certbot</h4>
+					<pre class="code">
+sudo apt-get remove certbot
+sudo apt autoremove
+					</pre>
 
-					<h4>1) Plan hostnames</h4>
-					<p>Recommended minimum (you can rename these):</p>
-					<div class="grid cards">
-						<div class="card">
-							<h3>Dashboard</h3>
-							<p><code>chap.example.com</code> → forwards to chap-server on port 8080.</p>
-						</div>
-						<div class="card">
-							<h3>Server WebSocket</h3>
-							<p><code>ws.chap.example.com</code> → forwards to chap-server on port 8081 (node connections).</p>
-						</div>
-						<div class="card">
-							<h3>Node logs socket</h3>
-							<p><code>node-1.example.com</code> → forwards to node host on port 6002 (browser logs).</p>
-						</div>
-					</div>
+					<h4>Install dependencies</h4>
+					<pre class="code">
+sudo apt update
+sudo apt install python3 python3-dev python3-venv libaugeas-dev gcc
+					</pre>
 
-					<h4>2) Get TLS certificates</h4>
-					<p>ProxyDNSCache uses your certificate files (SNI). You can use a normal per-host cert, or a wildcard cert (recommended for many nodes).</p>
-					<p>If you want a wildcard cert with Cloudflare DNS, follow the step-by-step in <a href="#certbot-cloudflare-wildcard">Wildcard + Cloudflare DNS</a>.</p>
+					<h4>Create venv &amp; install pip/certbot</h4>
+					<pre class="code">
+sudo python3 -m venv /opt/certbot/
+sudo /opt/certbot/bin/pip install --upgrade pip
+sudo /opt/certbot/bin/pip install certbot
+sudo ln -s /opt/certbot/bin/certbot /usr/local/bin/certbot
+					</pre>
 
-					<h4>3) Install and run ProxyDNSCache</h4>
-					<p>You can run it from source with Node.js or run a standalone binary.</p>
-					<div class="grid cards">
-						<div class="card">
-							Download the latest version from 
-							<p><a class="link" href="https://github.com/MJDaws0n/ProxyDNSCache/releases" target="_blank" rel="noreferrer">https://github.com/MJDaws0n/ProxyDNSCache/releases</a></p>
-							<p class="meta">Note: Pick correctly between arm and x86_64 binaries.</p>
-						</div>
-						<div class="card">
-							<h3>Run as a systemd service (Linux)</h3>
-							<p>Create a service file:</p>
-							<pre class="code">sudo nano /etc/systemd/system/ProxyDNSCache.service</pre>
-							<p>Example minimal service (adjust paths):</p>
-							<pre class="code">[Unit]
+					<h4>Auto renew</h4>
+					<pre class="code">
+echo "0 0,12 * * * root /opt/certbot/bin/python -c 'import random; import time; time.sleep(random.random() * 3600)' && sudo certbot renew -q" | sudo tee -a /etc/crontab > /dev/null
+					</pre>
+
+					<h4>Cloudflare Plugin</h4>
+					<pre class="code">
+source /opt/certbot/bin/activate
+pip install certbot-dns-cloudflare
+deactivate
+					</pre>
+					<p>
+						Create <code>cloudflare.ini</code>:<br>
+						<pre class="code">
+dns_cloudflare_api_token = KEY HERE
+						</pre>
+						<small>Set permissions (& path):</small>
+						<pre class="code">
+sudo chmod 600 /path/to/cloudflare.ini
+						</pre>
+					</p>
+
+					<h4>Generate wildcard cert</h4>
+					<pre class="code">
+sudo certbot certonly --dns-cloudflare --dns-cloudflare-credentials /path/to/cloudflare.ini --preferred-challenges dns -d domain.com -d '*.domain.com'
+					</pre>
+				</div>
+			</section>
+
+			<section id="proxy-service" class="section">
+				<h3>ProxyDNSCache: systemd Service</h3>
+				<div class="group">
+					<h4>Create service file</h4>
+					<pre class="code">
+sudo nano /etc/systemd/system/ProxyDNSCache.service
+					</pre>
+					<p>Contents (fix <code>ExecStart</code>/paths):</p>
+					<pre class="code">
+[Unit]
 Description=ProxyDNSCache
 After=network.target
 
@@ -363,278 +153,165 @@ Restart=always
 Environment=NODE_ENV=production
 
 [Install]
-WantedBy=multi-user.target</pre>
-							<p>Enable and start:</p>
-							<pre class="code">sudo systemctl daemon-reload
+WantedBy=multi-user.target
+					</pre>
+					<p>
+						Non-root: allow privileged port bind
+						<pre class="code">
+sudo setcap 'cap_net_bind_service=+ep' /home/ProxyDNSCache/ProxyDNSCache-linux
+						</pre>
+					</p>
+
+					<h4>Enable / Start</h4>
+					<pre class="code">
+sudo systemctl daemon-reload
 sudo systemctl enable --now ProxyDNSCache
-sudo journalctl -u ProxyDNSCache -f</pre>
-							<p class="meta">If running as non-root, you can allow binding to 80/443 with: <code>sudo setcap 'cap_net_bind_service=+ep' /path/to/binary</code></p>
-						</div>
+sudo journalctl -u ProxyDNSCache -f
+					</pre>
+				</div>
+			</section>
+
+			<section id="proxy-config" class="section">
+				<h3>ProxyDNSCache: config.yml</h3>
+				<pre class="code">
+certs:
+    - "example.com":
+            - cert: "/etc/letsencrypt/live/example.com/fullchain.pem"
+                key: "/etc/letsencrypt/live/example.com/privkey.pem"
+    - "*.example.com":
+            - cert: "/etc/letsencrypt/live/example.com/fullchain.pem"
+                key: "/etc/letsencrypt/live/example.com/privkey.pem"
+				</pre>
+			</section>
+
+			<section id="proxy-dns" class="section">
+				<h3>DNS Records (ProxyDNSCache Routing)</h3>
+				<div class="grid cards">
+					<div class="card">
+						<h3>A Records</h3>
+						<p>For main panel, websocket, and each node.</p>
 					</div>
+					<div class="card">
+						<h3>SRV Records</h3>
+						<p>Each points <code>_pdcache._tcp.[domain]</code> to the right target + port.</p>
+					</div>
+				</div>
+				<pre class="code">
+# Main panel domain
+_pdcache._tcp.chap.example.com SRV 0 0 8080 localhost.
 
-					<h4>4) Configure ProxyDNSCache (config.yml)</h4>
-					<p>ProxyDNSCache uses two files (hot-reloaded): <code>config.yml</code> (certs and settings) and <code>cache.json</code> (SRV cache).</p>
-					<p>Example <code>config.yml</code> using a wildcard cert for <code>example.com</code>:</p>
-					<pre class="code">certs:
-  - "example.com":
-      - cert: "/etc/letsencrypt/live/example.com/fullchain.pem"
-        key: "/etc/letsencrypt/live/example.com/privkey.pem"
-  - "*.example.com":
-      - cert: "/etc/letsencrypt/live/example.com/fullchain.pem"
-        key: "/etc/letsencrypt/live/example.com/privkey.pem"
+# Server websocket
+_pdcache._tcp.chap-ws.example.com SRV 0 0 8081 localhost.
 
-# Optional (defaults shown)
-dnsServers:
-  - "1.1.1.1"
+# Each node
+_pdcache._tcp.chap-node-1.example.com SRV 0 0 6002 localhost.
+				</pre>
+			</section>
 
-tlsPorts:
-  - 443
-  - 441
-
-httpPort: 80</pre>
-
-					<h4>5) Create DNS records (A/AAAA + SRV routing)</h4>
-					<p>For each hostname you want ProxyDNSCache to serve:</p>
+			<section id="server" class="section">
+				<h3>Installing Chap Server</h3>
+				<div class="group">
+					<h4>Clone & setup</h4>
+					<pre class="code">
+cd ~/
+git clone https://github.com/MJDaws0n/chap.git
+mv chap chap-server
+cd chap-server
+cp .env.example .env
+nano .env
+					</pre>
 					<div class="grid cards">
-						<div class="card">
-							<h3>A/AAAA</h3>
-							<p>Create an A/AAAA record for <code>chap.example.com</code> (and <code>ws.chap.example.com</code>, <code>node-1.example.com</code>, etc) pointing at your ProxyDNSCache host.</p>
-						</div>
-						<div class="card">
-							<h3>SRV</h3>
-							<p>Create an SRV record named <code>_pdcache._tcp.&lt;hostname&gt;</code> pointing to your backend target and port.</p>
-						</div>
+						<div class="card"><h3>APP_URL</h3><p>Reverse proxy URL</p></div>
+						<div class="card"><h3>APP_SECRET</h3><p>Secure random string (don't share)</p></div>
+						<div class="card"><h3>APP_PORT</h3><p>Main panel port (matches proxy)</p></div>
+						<div class="card"><h3>WS_PORT</h3><p>Websocket port (matches proxy)</p></div>
+						<div class="card"><h3>DB_PASSWORD</h3><p>Secure random</p></div>
+						<div class="card"><h3>DB_ROOT_PASSWORD</h3><p>Secure random</p></div>
+						<div class="card"><h3>CAPTCHA_PROVIDER</h3><p>none/recaptcha/autogate</p></div>
 					</div>
-					<p>Example intent (format varies by DNS provider):</p>
-					<pre class="code"># chap.example.com  ->  chap-server host:8080
-_pdcache._tcp.chap.example.com  SRV  0 0 8080 chap-server.internal.
-
-# ws.chap.example.com -> chap-server host:8081
-_pdcache._tcp.ws.chap.example.com SRV 0 0 8081 chap-server.internal.
-
-# node-1.example.com -> node host:6002
-_pdcache._tcp.node-1.example.com SRV 0 0 6002 node-1.internal.</pre>
+					<h4>Build &amp; Start</h4>
+					<pre class="code">
+docker compose -f docker-compose.server.yml up --build
+docker compose -f docker-compose.server.yml up -d
+					</pre>
 					<div class="callout">
-						Update Chap settings:
-						<ul>
-							<li>Set server URL to <code>https://chap.example.com</code></li>
-							<li>Set node <code>CHAP_SERVER_URL</code> to <code>wss://ws.chap.example.com</code></li>
-							<li>Set each node’s dashboard logs WebSocket URL to <code>wss://node-1.example.com</code></li>
-						</ul>
+						Default: <code>admin@chap.dev</code> / <code>password</code> <br>
+						Change these right after logging in.
 					</div>
-				</div>
-
-				<div class="group" id="reverse-proxy-nginx">
-					<h4>Option B: NGINX reverse proxy</h4>
-					<p>This example terminates TLS on the same host as Chap, proxies the dashboard, and exposes the server WS on <code>/ws</code> (so nodes can use <code>wss://chap.example.com/ws</code>).</p>
-					<div class="callout"><strong>Assumptions:</strong> chap-server is bound to <code>127.0.0.1:8080</code> and server WS is on <code>127.0.0.1:8081</code>.</div>
-					<pre class="code"># /etc/nginx/sites-available/chap
-map $http_upgrade $connection_upgrade {
-  default upgrade;
-  '' close;
-}
-
-server {
-  listen 80;
-  server_name chap.example.com;
-  return 301 https://$host$request_uri;
-}
-
-server {
-  listen 443 ssl http2;
-  server_name chap.example.com;
-
-  ssl_certificate /etc/letsencrypt/live/chap.example.com/fullchain.pem;
-  ssl_certificate_key /etc/letsencrypt/live/chap.example.com/privkey.pem;
-
-  # Dashboard / API
-  location / {
-    proxy_pass http://127.0.0.1:8080;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-
-  # Server WebSocket for node connections
-  location /ws {
-    proxy_pass http://127.0.0.1:8081;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
-    proxy_set_header Host $host;
-  }
-}</pre>
-					<p>Enable and reload:</p>
-					<pre class="code">sudo ln -s /etc/nginx/sites-available/chap /etc/nginx/sites-enabled/chap
-sudo nginx -t
-sudo systemctl reload nginx</pre>
-					<p class="meta">Then set node <code>CHAP_SERVER_URL</code> to <code>wss://chap.example.com/ws</code>.</p>
-				</div>
-
-				<div class="group" id="reverse-proxy-apache">
-					<h4>Option C: Apache reverse proxy</h4>
-					<p>This example terminates TLS and proxies the dashboard to <code>127.0.0.1:8080</code> and the server WS to <code>/ws</code> (so nodes can use <code>wss://chap.example.com/ws</code>).</p>
-					<p>Enable required modules:</p>
-					<pre class="code">sudo a2enmod proxy proxy_http proxy_wstunnel headers ssl rewrite
-sudo systemctl reload apache2</pre>
-					<p>Example vhost:</p>
-					<pre class="code"># /etc/apache2/sites-available/chap.conf
-&lt;VirtualHost *:80&gt;
-  ServerName chap.example.com
-  RewriteEngine On
-  RewriteRule ^ https://%{SERVER_NAME}%{REQUEST_URI} [END,NE,R=permanent]
-&lt;/VirtualHost&gt;
-
-&lt;VirtualHost *:443&gt;
-  ServerName chap.example.com
-
-  SSLEngine on
-  SSLCertificateFile /etc/letsencrypt/live/chap.example.com/fullchain.pem
-  SSLCertificateKeyFile /etc/letsencrypt/live/chap.example.com/privkey.pem
-
-  ProxyPreserveHost On
-  RequestHeader set X-Forwarded-Proto "https"
-
-  ProxyPass / http://127.0.0.1:8080/
-  ProxyPassReverse / http://127.0.0.1:8080/
-
-  # Server WebSocket for node connections
-  ProxyPass /ws ws://127.0.0.1:8081/
-  ProxyPassReverse /ws ws://127.0.0.1:8081/
-&lt;/VirtualHost&gt;</pre>
-					<p>Enable and reload:</p>
-					<pre class="code">sudo a2ensite chap
-sudo apache2ctl configtest
-sudo systemctl reload apache2</pre>
-					<p class="meta">Then set node <code>CHAP_SERVER_URL</code> to <code>wss://chap.example.com/ws</code>.</p>
 				</div>
 			</section>
 
-			<section id="certbot" class="section">
-				<h3>Certificates (Certbot)</h3>
-				<p>This section covers two paths: (1) standard HTTP validation for Apache/NGINX and (2) DNS validation (Cloudflare) for wildcard certs (recommended for many nodes / ProxyDNSCache).</p>
-
-				<div class="group" id="certbot-nginx">
-					<h4>Certbot + NGINX (HTTP validation)</h4>
-					<pre class="code"># Ubuntu/Debian
-sudo apt update
-sudo apt install -y certbot python3-certbot-nginx
-
-# Obtain + install cert (adjust domain)
-sudo certbot --nginx -d chap.example.com</pre>
-					<p>Check auto-renew:</p>
-					<pre class="code">sudo systemctl list-timers | grep certbot || true
-sudo certbot renew --dry-run</pre>
-				</div>
-
-				<div class="group" id="certbot-apache">
-					<h4>Certbot + Apache (HTTP validation)</h4>
-					<pre class="code"># Ubuntu/Debian
-sudo apt update
-sudo apt install -y certbot python3-certbot-apache
-
-# Obtain + install cert (adjust domain)
-sudo certbot --apache -d chap.example.com</pre>
-					<p>Check auto-renew:</p>
-					<pre class="code">sudo systemctl list-timers | grep certbot || true
-sudo certbot renew --dry-run</pre>
-				</div>
-
-				<div class="group" id="certbot-cloudflare-wildcard">
-					<h4>Wildcard + Cloudflare DNS (Certbot DNS challenge)</h4>
-					<p>This approach is ideal if you want <code>*.example.com</code> for many nodes and/or ProxyDNSCache. It uses the Cloudflare DNS plugin to complete the DNS challenge automatically.</p>
-					<div class="callout">
-						These steps are based on the ProxyDNSCache README’s “How to setup auto renew for wildcard domains with cloudlfare and certbot”, but expanded so you can follow them end-to-end.
+			<section id="node" class="section">
+				<h3>Installing Chap Node</h3>
+				<div class="group">
+					<h4>Check Docker version</h4>
+					<pre class="code">
+docker version
+					</pre>
+					<p>
+						Must be ≥ 1.53 (see "API version" in Docker Engine section).
+					</p>
+					<h4>Add node in panel</h4>
+					<ol>
+						<li>Go to Nodes &gt; Add Node</li>
+						<li>Set port range</li>
+						<li>Note <code>NODE_ID</code> and <code>NODE_TOKEN</code></li>
+					</ol>
+					<h4>Clone & setup node</h4>
+					<pre class="code">
+cd ~/
+git clone https://github.com/MJDaws0n/chap.git
+mv chap chap-node
+cd chap-node
+cp node/.env.example .env
+nano .env
+					</pre>
+					<div class="grid cards">
+						<div class="card"><h3>NODE_ID</h3><p>From dashboard</p></div>
+						<div class="card"><h3>NODE_TOKEN</h3><p>From dashboard</p></div>
+						<div class="card"><h3>CHAP_SERVER_URL</h3><p>Websocket SRV domain (e.g. chap-ws.example.com)</p></div>
+						<div class="card"><h3>BROWSER_WS_PORT</h3><p>Proxy-set logs socket port</p></div>
 					</div>
-
-					<h4>1) Install a fresh Certbot (pip / venv)</h4>
-					<p>ProxyDNSCache recommends removing distro Certbot because it is often outdated:</p>
-					<pre class="code">sudo apt-get remove -y certbot || true
-sudo apt autoremove -y</pre>
-					<p>Install Certbot using the official pip/venv method (see certbot.eff.org for your OS). A common Linux layout:</p>
-					<pre class="code">sudo apt update
-sudo apt install -y python3 python3-venv
-
-sudo mkdir -p /opt/certbot
-sudo python3 -m venv /opt/certbot
-sudo /opt/certbot/bin/pip install --upgrade pip
-sudo /opt/certbot/bin/pip install certbot</pre>
-
-					<h4>2) Install the Cloudflare DNS plugin</h4>
-					<pre class="code"># Enter the venv
-source /opt/certbot/bin/activate
-
-# Install plugin
-pip install certbot-dns-cloudflare
-
-# Exit venv
-deactivate</pre>
-
-					<h4>3) Create a Cloudflare API token</h4>
-					<p>Create a Cloudflare API token with permissions to edit DNS records for your zone (the ProxyDNSCache README suggests read/write/delete for DNS records).</p>
-
-					<h4>4) Create credentials file (cloudflare.ini)</h4>
-					<pre class="code">sudo mkdir -p /etc/letsencrypt
-sudo nano /etc/letsencrypt/cloudflare.ini</pre>
-					<p>Contents:</p>
-					<pre class="code">dns_cloudflare_api_token = YOUR_TOKEN_HERE</pre>
-					<p>Lock down permissions:</p>
-					<pre class="code">sudo chmod 600 /etc/letsencrypt/cloudflare.ini</pre>
-
-					<h4>5) Request the wildcard certificate</h4>
-					<pre class="code">sudo /opt/certbot/bin/certbot certonly \
-  --dns-cloudflare \
-  --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
-  --preferred-challenges dns \
-  -d example.com \
-  -d '*.example.com'</pre>
-					<p class="meta">Certificates will be written under <code>/etc/letsencrypt/live/example.com/</code>.</p>
+					<h4>Build &amp; Start</h4>
+					<pre class="code">
+docker compose -f docker-compose.node.yml up --build
+docker compose -f docker-compose.node.yml up -d
+					</pre>
+					<div class="callout">
+						Node should show online in Chap panel.
+					</div>
 				</div>
 			</section>
 
-			<section id="troubleshooting" class="section">
-				<h3>Troubleshooting</h3>
+			<section id="update" class="section">
+				<h3>Updating</h3>
 				<div class="grid cards">
 					<div class="card">
-						<h3>Node won’t connect to server</h3>
-						<p>Check <code>CHAP_SERVER_URL</code>, ensure the server WebSocket is reachable, and ensure <code>NODE_TOKEN</code> is set correctly on the node.</p>
-					</div>
-					<div class="card">
-						<h3>Live Logs page is blank</h3>
-						<p>Make sure the node’s logs WebSocket URL in the dashboard points to the node’s browser socket, and that it uses <code>wss://</code> if the dashboard is HTTPS.</p>
-					</div>
-					<div class="card">
-						<h3>ProxyDNSCache not routing</h3>
-						<p>Verify your SRV record name is exactly <code>_pdcache._tcp.&lt;hostname&gt;</code> and that the SRV target resolves and is reachable on the specified port.</p>
-					</div>
-				</div>
-			</section>
+						<h3>Node update</h3>
+						<pre class="code">
+git clone https://github.com/MJDaws0n/chap.git ~/temp && rsync -a --exclude='.env' ~/temp/ ~/chap-node/ && rm -rf ~/temp
 
-			<section id="security" class="section">
-				<h3>Security checklist</h3>
-				<div class="grid cards">
-					<div class="card">
-						<h3>Change default password</h3>
-						<p>Do this immediately after first login.</p>
+cd ~/chap-node/
+docker compose -f docker-compose.node.yml up --build
+# Then:
+docker compose -f docker-compose.node.yml up -d
+						</pre>
 					</div>
 					<div class="card">
-						<h3>Use strong secrets</h3>
-						<p>Set a unique value for <code>APP_SECRET</code> and keep each node’s <code>NODE_TOKEN</code> private.</p>
-					</div>
-					<div class="card">
-						<h3>Lock down ports</h3>
-						<p>Only expose what you need publicly. Keep MySQL on localhost (default) and restrict node logs sockets if possible.</p>
-					</div>
-					<div class="card">
-						<h3>Enable HTTPS</h3>
-						<p>Use Certbot (or wildcard DNS challenge). HTTPS is required for secure WSS logs and modern browser compatibility.</p>
+						<h3>Server update</h3>
+						<pre class="code">
+git clone https://github.com/MJDaws0n/chap.git ~/temp && rsync -a --exclude='.env' ~/temp/ ~/chap-server/ && rm -rf ~/temp
+
+cd ~/chap-server/
+docker compose -f docker-compose.server.yml up --build
+# Then:
+docker compose -f docker-compose.server.yml up -d
+						</pre>
 					</div>
 				</div>
 			</section>
 		</main>
 	</div>
-
 	<div class="footer wrap">© MJDawson - Chap</div>
 	<div id="toast" class="toast" role="status" aria-live="polite"></div>
 	<script>

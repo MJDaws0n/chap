@@ -73,106 +73,14 @@ Chap consists of two components that run on **separate (or same) servers**:
 ```
 ---
 
-## Update
-After installiation, one line command to update the node:
-```
-git clone https://github.com/MJDaws0n/chap.git ~/temp && rsync -a --exclude='.env' ~/temp/ ~/chap-node/ && rm -rf ~/temp
-```
-assuming it's in your users folder at ~/chap-node
-
-And for the server update using:
-```
-git clone https://github.com/MJDaws0n/chap.git ~/temp && rsync -a --exclude='.env' ~/temp/ ~/chap-server/ && rm -rf ~/temp
-```
-assuming it's in your users folder at ~/chap-server.
-
-Then you need to restart obviously and use the --build to re-build.
-
 ## Installation
-
-### Prerequisites
-
-- Docker and Docker Compose installed on all nodes and the central server.
-- Network connectivity between server and nodes.
-
----
-
-## Step 1: Install the Server
-
-Run this on your **central server** (where you want the dashboard):
-
-```bash
-# Clone the repository
-git clone https://github.com/MJDaws0n/chap.git
-cd chap
-
-# Remove the node (if not running node on this server)
-rm -r node
-rm docker-compose.node.yml
-
-# Remove development file (can create confusion)
-rm docker-compose.yml
-
-# Copy and edit environment file
-cp .env.example .env
-nano .env  # Edit with your settings
-
-# Start the server
-docker compose -f docker-compose.server.yml up -d
-```
-
-Access the dashboard at `http://your-server:8080`
-
-Default login:
-- Email: `admin@chap.dev`
-- Password: `password`
-
-**⚠️ Change the default password immediately!**
-
----
-
-## Step 2: Install Nodes
-
-Run this on **each server** where you want to deploy applications.
-
-> **Note:** You only run ONE node per host. Each node connects back to your central Chap server, and the browsers client directly to the node.
-
-### Quick Install
-
-```bash
-# Clone the repository
-git clone https://github.com/MJDaws0n/chap.git
-cd chap
-
-# Remove the server (web inferface not needed)
-rm -r node
-rm docker-compose.server.yml
-
-# Remove development file (can create confusion)
-rm docker-compose.yml
-
-# Create environment file from the example (in node folder) and edit it
-cp node/.env.example .env
-nano .env  # set NODE_ID, NODE_TOKEN and CHAP_SERVER_URL (see notes below)
-
-# Start the node
-docker compose -f docker-compose.node.yml up -d
-```
-
-Note: when setting `CHAP_SERVER_URL` for a node, include the WebSocket scheme. Use `wss://` if your Chap server is served over HTTPS (TLS), or `ws://` for non-HTTPS setups. See the "Live Logging (WebSocket)" section below for certificate and reverse-proxy details.
-
-### Getting Node Credentials
-
-1. Log in to your Chap dashboard
-2. Go to **Nodes** → **Add Node**
-3. Create a name for your node and copy the `NODE_TOKEN`
-4. Use these in your node's environment variables
-
+[Github is a bit easier to read](https://github.com/MJDaws0n/chap/blob/main/install.md)
+[Docs has the same information but is harder to read](https://mjdaws0n.github.io/chap/install/)
 ---
 
 ## Development Setup
 
-For local development (runs server + node on same machine):
+For local development (runs server + node on same machine). You may need to use slighlty modified docker files as issues have occured.
 
 ```bash
 git clone https://github.com/MJDaws0n/chap.git
