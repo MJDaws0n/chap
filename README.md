@@ -76,7 +76,6 @@ Chap consists of two components that run on **separate (or same) servers**:
 ## Installation
 [Github is a bit easier to read](https://github.com/MJDaws0n/chap/blob/main/install.md)
 [Docs has the same information but is harder to read](https://mjdaws0n.github.io/chap/install/)
----
 
 ## Development Setup
 
