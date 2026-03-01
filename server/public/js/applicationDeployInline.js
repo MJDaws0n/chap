@@ -251,37 +251,64 @@
             } else {
                 cancelForm.action = `/deployments/${encodeURIComponent(deploymentUuid)}/cancel`;
                 cancelForm.classList.remove('hidden');
-            }{
-            deployStatus.textContent = 'Status: starting…';
-            deployStatus.className = 'text-sm text-secondary';
+            }
+        } else {
+            if (cancelForm) cancelForm.classList.add('hidden');
+            if (stopForm) stopForm.classList.remove('hidden');
         }
-        deployLogs.innerHTML = `<div class="text-sm text-secondary">Starting deployment…</div>`;
-        setMode('deploy');
-        
-        toggleCancelButton(true, uuid);
+    }
 
-        await pollDeployment(uuid);
-      } catch (e) {
-        const msg = e && e.message ? e.message : String(e);
-        showToast('error', msg);
-        // Do not switch back to logs if we failed to even start, but if we are in 'deploy' mode?
-        // If startRes failed, we probably didn't switch mode yet unless we did.
-        // We switch mode AFTER successful startRes.
-        // So here e is request error.
-        
-        if (btn) {
-          btn.disabled = false;
-          btn.removeAttribute('aria-disabled');
-          // best-effort label
-          btn.textContent = 'Deploy';
+    function simplifiedStatus(status) {
+      var map = {
+        'failed': 'Deployment failed',
+        'error': 'Deployment error',
+        'timed_out': 'Deployment timed out',
+        'cancelled': 'Deployment cancelled',
+      };
+      return map[status] || ('Status: ' + status);
+    }
+
+    function bindCancelForm(form) {
+      if (!form) return;
+      form.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        try {
+          const csrf = getCsrfToken(form);
+          const res = await fetch(form.action, {
+            method: 'POST',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+              ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+            },
+            body: JSON.stringify({ _csrf_token: csrf }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error((data && (data.error || data.message)) ? (data.error || data.message) : 'Failed to cancel deployment');
+
+          if (poll) clearInterval(poll);
+          poll = null;
+          showToast('success', 'Deployment cancelled');
+          setMode('logs');
+          toggleCancelButton(false);
+
+          // Give the server a moment then reload to update buttons/status.
+          setTimeout(() => { window.location.reload(); }, 600);
+        } catch (e) {
+          showToast('error', e && e.message ? e.message : String(e));
         }
+      });
+    }
+
+    deployForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const btn = deployForm.querySelector('button[type="submit"]');
+      if (btn) {
+        btn.disabled = true;
+        btn.setAttribute('aria-disabled', 'true');
+        btn.textContent = 'Deploying…';
       }
-    });
-
-    // Cancel button (existing)
-    const cancelForm = qs('form[data-cancel-deploy-form]');
-    if (cancelForm) {
-        bindCancelForm(cancelForm
 
       try {
         const csrf = getCsrfToken(deployForm);
@@ -327,55 +354,33 @@
 
         // Switch UI to deployment logs mode.
         lastCount = 0;
-        if (deployStatus) deployStatus.textContent = 'Status: starting…';
+        if (deployStatus) {
+          deployStatus.textContent = 'Status: starting…';
+          deployStatus.className = 'text-sm text-secondary';
+        }
         deployLogs.innerHTML = `<div class="text-sm text-secondary">Starting deployment…</div>`;
         setMode('deploy');
+
+        toggleCancelButton(true, uuid);
 
         await pollDeployment(uuid);
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
         showToast('error', msg);
         setMode('logs');
+        toggleCancelButton(false);
         if (btn) {
           btn.disabled = false;
           btn.removeAttribute('aria-disabled');
-          // best-effort label
           btn.textContent = 'Deploy';
         }
       }
     });
 
-    // Cancel button (if present)
+    // Cancel button (if present in HTML)
     const cancelForm = qs('form[data-cancel-deploy-form]');
     if (cancelForm) {
-      cancelForm.addEventListener('submit', async (ev) => {
-        ev.preventDefault();
-        try {
-          const csrf = getCsrfToken(cancelForm);
-          const res = await fetch(cancelForm.action, {
-            method: 'POST',
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'X-Requested-With': 'XMLHttpRequest',
-              ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
-            },
-            body: JSON.stringify({ _csrf_token: csrf }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error((data && (data.error || data.message)) ? (data.error || data.message) : 'Failed to cancel deployment');
-
-          if (poll) clearInterval(poll);
-          poll = null;
-          showToast('success', 'Deployment cancelled');
-          setMode('logs');
-
-          // Give the server a moment then reload to update buttons/status.
-          setTimeout(() => { window.location.reload(); }, 600);
-        } catch (e) {
-          showToast('error', e && e.message ? e.message : String(e));
-        }
-      });
+      bindCancelForm(cancelForm);
     }
   }
 
